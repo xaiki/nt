@@ -1,0 +1,20 @@
+[package]
+name = "nt_web"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+nt_core = { path = "../nt_core" }
+nt_inference = { path = "../nt_inference" }
+nt_scrappers = { path = "../nt_scrappers" }
+tokio = { workspace = true }
+axum = { workspace = true }
+tower = { workspace = true }
+tower-http = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+chrono = { workspace = true }
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true } 

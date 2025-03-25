@@ -1,0 +1,16 @@
+[package]
+name = "nt_inference"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+nt_core = { path = "../nt_core" }
+tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+chrono = { workspace = true }
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+async-trait = { workspace = true }
+reqwest = { workspace = true }
+chromadb = { workspace = true } 

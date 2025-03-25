@@ -1,0 +1,17 @@
+[package]
+name = "nt_cli"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "nt"
+path = "src/main.rs"
+
+[dependencies]
+nt_core = { path = "../nt_core" }
+nt_scrappers = { path = "../nt_scrappers" }
+nt_web = { path = "../nt_web" }
+nt_inference = { path = "../nt_inference" }
+tokio = { workspace = true }
+clap = { workspace = true }
+anyhow = { workspace = true } 
