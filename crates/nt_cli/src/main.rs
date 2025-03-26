@@ -1,7 +1,13 @@
 use clap::{Parser, Subcommand};
 use nt_core::{Result, storage::ArticleStorage, Article};
-use nt_storage::{InMemoryStorage, ChromaDBStorage, QdrantStorage, StorageBackend};
+use nt_storage::{InMemoryStorage, StorageBackend};
 use chrono::Utc;
+
+#[cfg(feature = "chroma")]
+use nt_storage::ChromaDBStorage;
+
+#[cfg(feature = "qdrant")]
+use nt_storage::QdrantStorage;
 
 async fn check_storage(storage: &Box<dyn ArticleStorage>) -> Result<()> {
     let test_article = Article {
@@ -61,9 +67,18 @@ async fn main() -> Result<()> {
     
     let (storage, error_message) = match cli.storage.as_str() {
         "memory" => create_storage::<InMemoryStorage>().await?,
+        #[cfg(feature = "chroma")]
         "chroma" => create_storage::<ChromaDBStorage>().await?,
+        #[cfg(feature = "qdrant")]
         "qdrant" => create_storage::<QdrantStorage>().await?,
-        _ => return Err(nt_core::Error::Storage(format!("Unknown storage backend: {}", cli.storage))),
+        _ => {
+            let mut msg = "Unknown storage backend. Available backends: memory".to_string();
+            #[cfg(feature = "chroma")]
+            msg.push_str(", chroma");
+            #[cfg(feature = "qdrant")]
+            msg.push_str(", qdrant");
+            return Err(nt_core::Error::Storage(msg));
+        }
     };
 
     // Check storage health before proceeding

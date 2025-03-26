@@ -1,5 +1,15 @@
-pub mod chroma;
+pub mod memory;
+
+#[cfg(feature = "qdrant")]
 pub mod qdrant;
 
-pub use chroma::{ChromaDBStorage, EmbeddingModel, DefaultEmbeddingModel};
-pub use qdrant::QdrantStorage; 
+#[cfg(feature = "chroma")]
+pub mod chroma;
+
+pub use memory::InMemoryStorage;
+
+#[cfg(feature = "qdrant")]
+pub use qdrant::QdrantStorage;
+
+#[cfg(feature = "chroma")]
+pub use chroma::ChromaDBStorage; 

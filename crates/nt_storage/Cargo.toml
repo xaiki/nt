@@ -4,17 +4,28 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-tokio = { version = "1.36.0", features = ["full"] }
-serde = { version = "1.0.197", features = ["derive"] }
-serde_json = "1.0.114"
-chrono = { version = "0.4.34", features = ["serde"] }
-thiserror = "1.0.57"
-anyhow = "1.0.80"
-async-trait = "0.1.77"
-url = "2.5.0"
-tracing = "0.1.40"
-clap = { version = "4.5.1", features = ["derive"] }
-chromadb = "0.3.1"
-qdrant-client = "1.7.0"
 nt_core = { path = "../nt_core" }
-futures-util = "0.3.31"
+tokio = { workspace = true }
+async-trait = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+chrono = { workspace = true }
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+url = { workspace = true }
+tracing = { workspace = true }
+clap = { workspace = true }
+futures-util = { workspace = true }
+
+[features]
+default = []
+qdrant = ["dep:qdrant-client"]
+chroma = ["dep:chromadb"]
+
+[dependencies.qdrant-client]
+version = "1.7"
+optional = true
+
+[dependencies.chromadb]
+version = "0.3.1"
+optional = true
