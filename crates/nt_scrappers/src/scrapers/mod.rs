@@ -201,7 +201,12 @@ impl<'a> ScraperManager<'a> {
                                     ArticleStatus::Updated => "👻",
                                     ArticleStatus::Unchanged => "✅",
                                 };
-                                println!("{} {} - {}", emoji, article.title, article.url);
+                                let authors_str = if article.authors.is_empty() {
+                                    String::new()
+                                } else {
+                                    format!(" | by \x1b[1m{}\x1b[0m", article.authors.join(", "))
+                                };
+                                println!("{} {} - {}{}", emoji, article.title, article.url, authors_str);
                                 batch_results.push(result);
                             }
                             Err(e) => eprintln!("Failed to scrape {}: {}", url, e),

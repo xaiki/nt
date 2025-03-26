@@ -51,7 +51,7 @@ pub struct Cli {
 
 #[derive(clap::Subcommand, Debug)]
 enum Commands {
-    Scrapers {
+    Scrape {
         #[command(subcommand)]
         command: ScraperCommands,
     },
@@ -59,10 +59,13 @@ enum Commands {
 
 #[derive(clap::Subcommand, Debug)]
 enum ScraperCommands {
-    Scrape {
+    Source {
         source: String,
     },
     List,
+    Url {
+        url: String,
+    },
 }
 
 async fn create_storage<T: StorageBackend + 'static>() -> Result<Arc<RwLock<dyn ArticleStorage>>> {
@@ -103,11 +106,11 @@ async fn main() -> Result<()> {
     }
 
     match cli.command {
-        Commands::Scrapers { command } => match command {
-            ScraperCommands::Scrape { source } => {
+        Commands::Scrape { command } => match command {
+            ScraperCommands::Source { source } => {
                 info!("Scraping articles from {}", source);
                 let args = ScraperArgs {
-                    command: NtScraperCommands::Scrape { source: source.clone() },
+                    command: NtScraperCommands::Source { source: source.clone() },
                 };
                 let storage_guard = storage.read().await;
                 handle_command(args, &*storage_guard).await?;
@@ -115,6 +118,14 @@ async fn main() -> Result<()> {
             ScraperCommands::List => {
                 let args = ScraperArgs {
                     command: NtScraperCommands::List,
+                };
+                let storage_guard = storage.read().await;
+                handle_command(args, &*storage_guard).await?;
+            }
+            ScraperCommands::Url { url } => {
+                info!("Scraping single URL: {}", url);
+                let args = ScraperArgs {
+                    command: NtScraperCommands::Url { url: url.clone() },
                 };
                 let storage_guard = storage.read().await;
                 handle_command(args, &*storage_guard).await?;

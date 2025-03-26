@@ -2,8 +2,9 @@ use async_trait::async_trait;
 use chrono::Utc;
 use scraper::{Html, Selector};
 use nt_core::{Result};
-use nt_core::types::{Article, ArticleSection};
+use nt_core::types::Article;
 use crate::scrapers::{Scraper};
+use serde_json;
 
 #[derive(Clone)]
 pub struct ClarinScraper;
@@ -35,81 +36,100 @@ impl Scraper for ClarinScraper {
         let html = response.text().await?;
         let document = Html::parse_document(&html);
 
-        let title_selector = Selector::parse("h1").unwrap();
-        let subtitle_selector = Selector::parse(".bajada").unwrap();
-        let content_selector = Selector::parse(".body-nota p").unwrap();
-        let date_selector = Selector::parse("time").unwrap();
-        let author_selector = Selector::parse(".firma").unwrap();
-
         let title = document
-            .select(&title_selector)
+            .select(&Selector::parse("h1").unwrap())
             .next()
-            .map(|el| el.text().collect::<String>())
+            .map(|el| el.text().collect::<String>().trim().to_string())
             .unwrap_or_default();
 
-        let subtitle = document
-            .select(&subtitle_selector)
-            .next()
-            .map(|el| el.text().collect::<String>());
-
-        // Extract authors
-        let mut authors = Vec::new();
-        for author_element in document.select(&author_selector) {
-            let author_text = author_element.text().collect::<String>().trim().to_string();
-            if !author_text.is_empty() {
-                authors.push(author_text);
-            }
-        }
-
-        let mut sections = Vec::new();
-        
-        // Add subtitle as first section if present
-        if let Some(subtitle_text) = subtitle {
-            if !subtitle_text.is_empty() {
-                sections.push(ArticleSection {
-                    content: subtitle_text,
-                    summary: None,
-                    embedding: None,
-                });
-            }
-        }
-
-        // Add article paragraphs
-        for element in document.select(&content_selector) {
-            let content = element.text().collect::<String>();
-            if !content.is_empty() {
-                sections.push(ArticleSection {
-                    content,
-                    summary: None,
-                    embedding: None,
-                });
-            }
-        }
-
-        let content = sections
-            .iter()
-            .map(|s| s.content.clone())
+        let content = document
+            .select(&Selector::parse("div[data-testid='body-text']").unwrap())
+            .map(|el| el.text().collect::<String>().trim().to_string())
             .collect::<Vec<_>>()
-            .join("\n\n");
+            .join("\n");
 
-        let published_at = document
-            .select(&date_selector)
-            .next()
-            .and_then(|el| el.value().attr("datetime"))
-            .map(|date_str| chrono::DateTime::parse_from_rfc3339(date_str).ok())
-            .flatten()
-            .map(|dt| dt.with_timezone(&Utc))
-            .unwrap_or_else(Utc::now);
+        let authors = if url.contains("elle.clarin.com") {
+            // For Elle articles, get author from meta tag
+            document
+                .select(&Selector::parse("meta[name='author']").unwrap())
+                .next()
+                .and_then(|el| el.value().attr("content"))
+                .map(|author| vec![author.to_string()])
+                .unwrap_or_default()
+        } else {
+            // For regular Clarín articles, try multiple author sources
+            let mut authors = Vec::new();
+            
+            // Try getting authors from script tag with article data
+            if let Ok(script_selector) = Selector::parse("script[type='application/ld+json']") {
+                for script in document.select(&script_selector) {
+                    if let Ok(json) = serde_json::from_str::<serde_json::Value>(script.text().collect::<String>().trim()) {
+                        // First try the discover array which contains article metadata
+                        if let Some(discover) = json.get("discover") {
+                            if let Some(discover_array) = discover.as_array() {
+                                for item in discover_array {
+                                    if let Some(article_authors) = item.get("authors") {
+                                        if let Some(authors_array) = article_authors.as_array() {
+                                            for author in authors_array {
+                                                if let Some(name) = author.get("name") {
+                                                    if let Some(name_str) = name.as_str() {
+                                                        authors.push(name_str.to_string());
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        
+                        // If no authors found in discover array, try the old format
+                        if authors.is_empty() {
+                            if let Some(author) = json.get("author") {
+                                // Try array format first
+                                if let Some(authors_array) = author.as_array() {
+                                    for author_obj in authors_array {
+                                        if let Some(name) = author_obj.get("name") {
+                                            if let Some(name_str) = name.as_str() {
+                                                authors.push(name_str.to_string());
+                                            }
+                                        }
+                                    }
+                                } else {
+                                    // Try single author object
+                                    if let Some(name) = author.get("name") {
+                                        if let Some(name_str) = name.as_str() {
+                                            authors.push(name_str.to_string());
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            
+            // If no authors found in JSON, try .firma class
+            if authors.is_empty() {
+                authors = document
+                    .select(&Selector::parse(".firma").unwrap())
+                    .map(|el| el.text().collect::<String>().trim().to_string())
+                    .filter(|text| !text.is_empty())
+                    .collect();
+            }
+            
+            authors
+        };
 
         Ok(Article {
-            url: url.to_string(),
             title,
             content,
-            summary: None,
-            published_at,
-            source: self.source().to_string(),
-            sections,
+            url: url.to_string(),
             authors,
+            published_at: Utc::now(),
+            source: self.source().to_string(),
+            sections: vec![],
+            summary: None,
         })
     }
 

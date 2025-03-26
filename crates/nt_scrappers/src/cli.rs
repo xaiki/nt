@@ -14,17 +14,22 @@ pub struct ScraperArgs {
 #[derive(Subcommand)]
 pub enum ScraperCommands {
     /// Scrape articles from a specific source
-    Scrape {
+    Source {
         /// The source to scrape in format country/source (e.g. argentina/clarin)
         source: String,
     },
     /// List available scrapers
     List,
+    /// Scrape a single URL
+    Url {
+        /// The URL to scrape
+        url: String,
+    },
 }
 
 pub async fn handle_command(args: ScraperArgs, storage: &dyn ArticleStorage) -> Result<()> {
     match args.command {
-        ScraperCommands::Scrape { source } => {
+        ScraperCommands::Source { source } => {
             let (country, name) = parse_source(&source)?;
             let mut manager = ScraperManager::new(storage);
             
@@ -56,7 +61,12 @@ pub async fn handle_command(args: ScraperArgs, storage: &dyn ArticleStorage) -> 
                     ArticleStatus::Updated => "👻",
                     ArticleStatus::Unchanged => "✅",
                 };
-                println!("{} {} - {}", emoji, article.title, article.url);
+                let authors = if article.authors.is_empty() {
+                    "".to_string()
+                } else {
+                    format!(" | by {}", article.authors.join(", "))
+                };
+                println!("{} {} - {}{}", emoji, article.title, article.url, authors);
             }
         }
         ScraperCommands::List => {
@@ -78,6 +88,37 @@ pub async fn handle_command(args: ScraperArgs, storage: &dyn ArticleStorage) -> 
                         alias_str
                     );
                 }
+            }
+        }
+        ScraperCommands::Url { url } => {
+            let mut manager = ScraperManager::new(storage);
+            
+            // Add all available scrapers
+            for (_, scrapers) in get_all_scrapers() {
+                for scraper in scrapers {
+                    let s = scraper.lock().unwrap();
+                    let cloned = s.clone();
+                    drop(s); // Release the lock
+                    manager.add_scraper(cloned);
+                }
+            }
+            
+            // Try to scrape the URL
+            match manager.scrape_url(&url).await {
+                Ok((article, status)) => {
+                    let emoji = match status {
+                        ArticleStatus::New => "💥",
+                        ArticleStatus::Updated => "👻",
+                        ArticleStatus::Unchanged => "✅",
+                    };
+                    let authors = if article.authors.is_empty() {
+                        "".to_string()
+                    } else {
+                        format!(" | by \x1b[1m{}\x1b[0m", article.authors.join(", "))
+                    };
+                    println!("{} {} - {}{}", emoji, article.title, article.url, authors);
+                }
+                Err(e) => eprintln!("Failed to scrape {}: {}", url, e),
             }
         }
     }
