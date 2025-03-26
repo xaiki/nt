@@ -121,11 +121,17 @@ cargo build --release
 # List available scrapers
 nt scrapers list
 
+# Scrape articles from all sources (default behavior)
+nt scrapers scrape
+
+# Scrape articles from a specific country
+nt scrapers scrape source argentina
+
 # Scrape articles from a specific source
-nt scrapers scrape argentina/clarin
+nt scrapers scrape source argentina/clarin
 
 # Scrape a specific article
-nt scrapers scrape argentina/lanacion https://www.lanacion.com.ar/some-article
+nt scrapers scrape url https://www.lanacion.com.ar/some-article
 ```
 
 ### Web API
@@ -142,48 +148,3 @@ Available endpoints:
 - `GET /api/articles/:id/divergence` - Get article divergence analysis
 
 ## Development
-
-### Project Structure
-```
-NT/
-├── crates/
-│   ├── nt_core/          # Core functionality and CLI
-│   ├── nt_scrappers/     # News source scrapers
-│   ├── nt_inference/     # AI/LLM integration
-│   └── nt_web/          # Web interface
-├── debug/               # Debug resources and test data
-└── README.md
-```
-
-### Adding a New Scraper
-1. Create a new module in the appropriate country directory
-2. Implement the `Scraper` trait
-3. Add the scraper to the country's `get_scrapers()` function
-4. Add tests using the provided test data
-
-### Running Tests
-```bash
-# Run all tests
-cargo test
-
-# Run tests for a specific crate
-cargo test -p nt_scrappers
-```
-
-## Contributing
-
-### Guidelines
-1. Follow the existing code organization
-2. Add tests for new functionality
-3. Update documentation when adding features
-4. Use the provided test data in `debug/` for scraper tests
-
-### Code Style
-- Follow Rust standard practices
-- Use meaningful error types and proper error handling
-- Document public APIs
-- Write tests for new functionality
-- Maintain clean architecture principles
-
-## License
-[Add your chosen license here] 
