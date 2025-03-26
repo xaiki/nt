@@ -6,6 +6,8 @@ use nt_scrappers::cli::{ScraperArgs, ScraperCommands as NtScraperCommands, handl
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing::info;
+use std::str::FromStr;
+use std::time::Duration;
 
 #[cfg(feature = "chroma")]
 use nt_storage::ChromaDBStorage;
@@ -15,6 +17,41 @@ use nt_storage::QdrantStorage;
 
 #[cfg(feature = "sqlite")]
 use nt_storage::SQLiteStorage;
+
+#[derive(Debug, Clone)]
+struct HumanDuration(Duration);
+
+impl FromStr for HumanDuration {
+    type Err = String;
+
+    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
+        let mut total_seconds = 0u64;
+        let mut current_number = String::new();
+        
+        for c in s.chars() {
+            if c.is_ascii_digit() {
+                current_number.push(c);
+            } else if let Some(num) = current_number.parse::<u64>().ok() {
+                match c {
+                    's' => total_seconds += num,
+                    'm' => total_seconds += num * 60,
+                    'h' => total_seconds += num * 3600,
+                    'd' => total_seconds += num * 86400,
+                    _ => return Err(format!("Invalid duration unit: {}", c)),
+                }
+                current_number.clear();
+            } else if !c.is_whitespace() {
+                return Err(format!("Invalid character in duration: {}", c));
+            }
+        }
+
+        if !current_number.is_empty() {
+            return Err("Duration string must end with a unit (s, m, h, d)".to_string());
+        }
+
+        Ok(HumanDuration(Duration::from_secs(total_seconds)))
+    }
+}
 
 async fn check_storage(storage: &Arc<RwLock<dyn ArticleStorage>>) -> Result<()> {
     let test_article = Article {
@@ -62,7 +99,10 @@ enum ScraperCommands {
     Source {
         /// The source to scrape in format country/source (e.g. argentina/clarin). If not specified, scrapes all sources.
         #[arg(required = false)]
-        source: String,
+        source: Option<String>,
+        /// Run in periodic mode with the specified interval (e.g. 1h, 30m, 1d, 1h15m30s)
+        #[arg(long, default_value = "1h")]
+        interval: Option<HumanDuration>,
     },
     List,
     Url {
@@ -109,14 +149,27 @@ async fn main() -> Result<()> {
     }
 
     match cli.command {
-        Commands::Scrape { command } => match command.unwrap_or(ScraperCommands::Source { source: String::new() }) {
-            ScraperCommands::Source { source } => {
-                info!("Scraping articles from {}", if source.is_empty() { "all sources" } else { &source });
+        Commands::Scrape { command } => match command.unwrap_or(ScraperCommands::Source { source: None, interval: None }) {
+            ScraperCommands::Source { source, interval } => {
+                info!("Scraping articles from {}", if source.is_none() || source.as_ref().unwrap().is_empty() { "all sources" } else { source.as_ref().unwrap() });
                 let args = ScraperArgs {
-                    command: NtScraperCommands::Source { source: if source.is_empty() { None } else { Some(source) } },
+                    command: NtScraperCommands::Source { source: source.map(|s| s.to_string()) },
                 };
                 let storage_guard = storage.read().await;
-                handle_command(args, &*storage_guard).await?;
+                
+                if let Some(interval) = interval {
+                    info!("Running in periodic mode with {} interval", interval.0.as_secs());
+                    loop {
+                        info!("Starting scrape cycle");
+                        if let Err(e) = handle_command(args.clone(), &*storage_guard).await {
+                            eprintln!("Error during scrape: {}", e);
+                        }
+                        info!("Waiting {}s before next scrape", interval.0.as_secs());
+                        tokio::time::sleep(interval.0).await;
+                    }
+                } else {
+                    handle_command(args, &*storage_guard).await?;
+                }
             }
             ScraperCommands::List => {
                 let args = ScraperArgs {
