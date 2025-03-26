@@ -1,6 +1,6 @@
 use std::sync::{Arc, Mutex};
 use async_trait::async_trait;
-use crate::scrapers::Scraper;
+use crate::scrapers::{Scraper, ScraperType};
 
 pub mod clarin;
 pub mod lanacion;
@@ -23,11 +23,11 @@ impl ArgentinaScraper for LaNacionScraper {}
 impl ArgentinaScraper for LaVozScraper {}
 
 /// Returns a vector of all available Argentine newspaper scrapers
-pub fn get_scrapers() -> Vec<Arc<Mutex<dyn Scraper>>> {
+pub fn get_scrapers() -> Vec<Arc<Mutex<ScraperType>>> {
     vec![
-        Arc::new(Mutex::new(ClarinScraper::new())),
-        Arc::new(Mutex::new(LaNacionScraper::new())),
-        Arc::new(Mutex::new(LaVozScraper::new())),
+        Arc::new(Mutex::new(ScraperType::Clarin(ClarinScraper::new()))),
+        Arc::new(Mutex::new(ScraperType::LaNacion(LaNacionScraper::new()))),
+        Arc::new(Mutex::new(ScraperType::LaVoz(LaVozScraper::new()))),
     ]
 }
 
@@ -46,16 +46,19 @@ mod tests {
     #[test]
     fn test_get_scrapers() {
         let scrapers = get_scrapers();
-        assert!(!scrapers.is_empty());
+        assert_eq!(scrapers.len(), 3);
         
-        // Test that each scraper can handle its own URLs
-        let clarin_url = "https://www.clarin.com/some-article";
-        let lanacion_url = "https://www.lanacion.com.ar/some-article";
-        let lavoz_url = "https://www.lavoz.com.ar/some-article";
-
-        assert!(scrapers.iter().any(|s| s.lock().unwrap().can_handle(clarin_url)));
-        assert!(scrapers.iter().any(|s| s.lock().unwrap().can_handle(lanacion_url)));
-        assert!(scrapers.iter().any(|s| s.lock().unwrap().can_handle(lavoz_url)));
+        let clarin = scrapers[0].lock().unwrap();
+        assert!(clarin.can_handle("https://www.clarin.com/article"));
+        assert!(!clarin.can_handle("https://www.lanacion.com.ar/article"));
+        
+        let lanacion = scrapers[1].lock().unwrap();
+        assert!(lanacion.can_handle("https://www.lanacion.com.ar/article"));
+        assert!(!lanacion.can_handle("https://www.clarin.com/article"));
+        
+        let lavoz = scrapers[2].lock().unwrap();
+        assert!(lavoz.can_handle("https://www.lavoz.com.ar/article"));
+        assert!(!lavoz.can_handle("https://www.clarin.com/article"));
     }
 
     #[tokio::test]

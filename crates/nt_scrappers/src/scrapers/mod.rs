@@ -1,11 +1,12 @@
-use nt_core::{Article, Result, Error};
+use async_trait::async_trait;
+use nt_core::{Article, Result, Error, storage::ArticleStorage};
 use scraper::{Html, Selector};
 use url::Url;
-use async_trait::async_trait;
-use std::collections::HashMap;
-use sha2::{Sha256, Digest};
 
 pub mod argentina;
+use argentina::clarin::ClarinScraper;
+use argentina::lanacion::LaNacionScraper;
+use argentina::lavoz::LaVozScraper;
 
 #[derive(Debug)]
 pub enum ArticleStatus {
@@ -15,7 +16,7 @@ pub enum ArticleStatus {
 }
 
 #[async_trait]
-pub trait Scraper {
+pub trait Scraper: Send + Sync {
     /// Returns the name of the news source
     fn source(&self) -> &str;
     
@@ -23,10 +24,65 @@ pub trait Scraper {
     fn can_handle(&self, url: &str) -> bool;
     
     /// Scrapes an article from the given URL
-    async fn scrape_article(&mut self, url: &str) -> Result<(Article, ArticleStatus)>;
+    async fn scrape_article(&mut self, url: &str) -> Result<Article>;
     
     /// Returns a list of article URLs from the main page
     async fn get_article_urls(&self) -> Result<Vec<String>>;
+
+    /// Returns a list of CLI shorthand names for this scraper
+    fn cli_names(&self) -> Vec<&str> {
+        vec![]
+    }
+}
+
+/// Enum that holds all possible scraper types
+#[derive(Clone)]
+pub enum ScraperType {
+    Clarin(ClarinScraper),
+    LaNacion(LaNacionScraper),
+    LaVoz(LaVozScraper),
+}
+
+impl ScraperType {
+    pub fn source(&self) -> &str {
+        match self {
+            ScraperType::Clarin(s) => s.source(),
+            ScraperType::LaNacion(s) => s.source(),
+            ScraperType::LaVoz(s) => s.source(),
+        }
+    }
+
+    pub fn can_handle(&self, url: &str) -> bool {
+        match self {
+            ScraperType::Clarin(s) => s.can_handle(url),
+            ScraperType::LaNacion(s) => s.can_handle(url),
+            ScraperType::LaVoz(s) => s.can_handle(url),
+        }
+    }
+
+    pub async fn scrape_article(&mut self, url: &str) -> Result<Article> {
+        match self {
+            ScraperType::Clarin(s) => s.scrape_article(url).await,
+            ScraperType::LaNacion(s) => s.scrape_article(url).await,
+            ScraperType::LaVoz(s) => s.scrape_article(url).await,
+        }
+    }
+
+    pub async fn get_article_urls(&self) -> Result<Vec<String>> {
+        match self {
+            ScraperType::Clarin(s) => s.get_article_urls().await,
+            ScraperType::LaNacion(s) => s.get_article_urls().await,
+            ScraperType::LaVoz(s) => s.get_article_urls().await,
+        }
+    }
+
+    pub fn cli_names(&self) -> Vec<&str> {
+        match self {
+            ScraperType::Clarin(s) => s.cli_names(),
+            ScraperType::LaNacion(s) => s.cli_names(),
+            ScraperType::LaVoz(s) => s.cli_names(),
+        }
+    }
 }
 
 /// Common utilities for scrapers
@@ -71,35 +127,75 @@ pub(crate) mod utils {
     }
 }
 
-pub struct BaseScraper {
-    article_cache: HashMap<String, String>,
+pub struct ScraperManager {
+    storage: Box<dyn ArticleStorage>,
+    scrapers: Vec<ScraperType>,
 }
 
-impl BaseScraper {
-    pub fn new() -> Self {
+impl ScraperManager {
+    pub fn new(storage: Box<dyn ArticleStorage>) -> Self {
         Self {
-            article_cache: HashMap::new(),
+            storage,
+            scrapers: Vec::new(),
         }
     }
 
-    pub fn hash_content(content: &str) -> String {
-        let mut hasher = Sha256::new();
-        hasher.update(content.as_bytes());
-        format!("{:x}", hasher.finalize())
+    pub fn add_scraper(&mut self, scraper: ScraperType) {
+        self.scrapers.push(scraper);
     }
 
-    pub fn get_article_status(&self, url: &str, content: &str) -> ArticleStatus {
-        let content_hash = Self::hash_content(content);
-        match self.article_cache.get(url) {
-            Some(old_hash) if old_hash == &content_hash => ArticleStatus::Unchanged,
-            Some(_) => ArticleStatus::Updated,
-            None => ArticleStatus::New,
+    pub async fn scrape_url(&mut self, url: &str) -> Result<(Article, ArticleStatus)> {
+        // Find a scraper that can handle this URL
+        let scraper = self.scrapers
+            .iter_mut()
+            .find(|s| s.can_handle(url))
+            .ok_or_else(|| Error::Scraping(format!("No scraper found for URL: {}", url)))?;
+
+        // Scrape the article
+        let article = scraper.scrape_article(url).await?;
+
+        // Check if article exists in database
+        let existing_articles = self.storage.get_by_source(scraper.source()).await?;
+        let status = if let Some(existing) = existing_articles.iter().find(|a| a.url == url) {
+            if existing.content == article.content {
+                ArticleStatus::Unchanged
+            } else {
+                ArticleStatus::Updated
+            }
+        } else {
+            ArticleStatus::New
+        };
+
+        // Store the article in the database
+        self.storage.store_article(&article).await?;
+
+        Ok((article, status))
+    }
+
+    pub async fn scrape_all(&mut self) -> Result<Vec<(Article, ArticleStatus)>> {
+        let mut results = Vec::new();
+
+        // Get all scrapers
+        let scraper_sources: Vec<String> = self.scrapers.iter().map(|s| s.source().to_string()).collect();
+
+        // For each scraper
+        for source in scraper_sources {
+            // Find the scraper again to get a mutable reference
+            if let Some(scraper) = self.scrapers.iter_mut().find(|s| s.source() == source) {
+                // Get all article URLs
+                let urls = scraper.get_article_urls().await?;
+
+                // Scrape each article
+                for url in urls {
+                    match self.scrape_url(&url).await {
+                        Ok(result) => results.push(result),
+                        Err(e) => eprintln!("Failed to scrape {}: {}", url, e),
+                    }
+                }
+            }
         }
-    }
 
-    pub fn update_cache(&mut self, url: &str, content: &str) {
-        let content_hash = Self::hash_content(content);
-        self.article_cache.insert(url.to_string(), content_hash);
+        Ok(results)
     }
 }
 

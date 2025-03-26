@@ -1,18 +1,16 @@
 use async_trait::async_trait;
 use chrono::Utc;
 use scraper::{Html, Selector};
-use nt_core::{Article, ArticleSection, Result};
-use crate::scrapers::{Scraper, BaseScraper, ArticleStatus};
+use nt_core::{Result};
+use nt_core::types::{Article, ArticleSection};
+use crate::scrapers::{Scraper};
 
-pub struct LaNacionScraper {
-    base: BaseScraper,
-}
+#[derive(Clone)]
+pub struct LaNacionScraper;
 
 impl LaNacionScraper {
     pub fn new() -> Self {
-        Self {
-            base: BaseScraper::new(),
-        }
+        Self
     }
 
     const BASE_URL: &'static str = "https://www.lanacion.com.ar";
@@ -28,13 +26,20 @@ impl Scraper for LaNacionScraper {
         url.contains("lanacion.com.ar")
     }
 
-    async fn scrape_article(&mut self, url: &str) -> Result<(Article, ArticleStatus)> {
+    fn cli_names(&self) -> Vec<&str> {
+        vec!["lanacion", "la-nacion"]
+    }
+
+    async fn scrape_article(&mut self, url: &str) -> Result<Article> {
         let response = reqwest::get(url).await?;
         let html = response.text().await?;
         let document = Html::parse_document(&html);
 
+        // Updated selectors for La Nacion's structure
         let title_selector = Selector::parse("h1").unwrap();
-        let content_selector = Selector::parse("article p").unwrap();
+        let subtitle_selector = Selector::parse(".bajada, .copete").unwrap();
+        let content_selector = Selector::parse(".cuerpo-nota p, article p").unwrap();
+        let date_selector = Selector::parse("time").unwrap();
 
         let title = document
             .select(&title_selector)
@@ -42,7 +47,25 @@ impl Scraper for LaNacionScraper {
             .map(|el| el.text().collect::<String>())
             .unwrap_or_default();
 
+        let subtitle = document
+            .select(&subtitle_selector)
+            .next()
+            .map(|el| el.text().collect::<String>());
+
         let mut sections = Vec::new();
+        
+        // Add subtitle as first section if present
+        if let Some(subtitle_text) = subtitle {
+            if !subtitle_text.is_empty() {
+                sections.push(ArticleSection {
+                    content: subtitle_text,
+                    summary: None,
+                    embedding: None,
+                });
+            }
+        }
+
+        // Add article paragraphs
         for element in document.select(&content_selector) {
             let content = element.text().collect::<String>();
             if !content.is_empty() {
@@ -60,19 +83,24 @@ impl Scraper for LaNacionScraper {
             .collect::<Vec<_>>()
             .join("\n\n");
 
-        let article = Article {
+        let published_at = document
+            .select(&date_selector)
+            .next()
+            .and_then(|el| el.value().attr("datetime"))
+            .map(|date_str| chrono::DateTime::parse_from_rfc3339(date_str).ok())
+            .flatten()
+            .map(|dt| dt.with_timezone(&Utc))
+            .unwrap_or_else(Utc::now);
+
+        Ok(Article {
             url: url.to_string(),
             title,
-            content: content.clone(),
+            content,
             summary: None,
-            published_at: Utc::now(),
+            published_at,
             source: self.source().to_string(),
             sections,
-        };
-
-        let status = self.base.get_article_status(url, &content);
-        self.base.update_cache(url, &content);
-        Ok((article, status))
+        })
     }
 
     async fn get_article_urls(&self) -> Result<Vec<String>> {
@@ -81,36 +109,49 @@ impl Scraper for LaNacionScraper {
         let document = Html::parse_document(&html);
 
         let mut urls = Vec::new();
-        if let Ok(link_selector) = Selector::parse("article a") {
-            let found_urls = document
-                .select(&link_selector)
-                .filter_map(|el| el.value().attr("href"))
-                .map(|href| {
-                    if href.starts_with("http") {
+
+        // Find all article links within ln-card articles
+        if let Ok(link_selector) = Selector::parse("article.ln-card a.ln-link") {
+            for link in document.select(&link_selector) {
+                if let Some(href) = link.value().attr("href") {
+                    let url = if href.starts_with("http") {
                         href.to_string()
                     } else {
                         format!("{}{}", Self::BASE_URL, href)
+                    };
+
+                    // Skip URLs that are clearly not articles
+                    if url.contains("/club/") 
+                       || url.contains("/ayuda/")
+                       || url.contains("/colecciones/")
+                       || url.contains("/edicionimpresa/")
+                       || url.contains("/foodit/")
+                       || url.contains("/lncampo/")
+                       || url.contains("/lnmas/")
+                       || url.contains("/masmusica/")
+                       || url.contains("/myaccount/")
+                       || url.contains("/newsletter/")
+                       || url.contains("/pdf/")
+                       || url.contains("/servicios/")
+                       || url.contains("/canchallena/")
+                       || url.contains("/mi-usuario/")
+                       || url.contains("?_ga=") // Skip tracking URLs
+                       || url.contains("/trucos/")
+                       || url.contains("/masterclass/")
+                       || url.contains("/remates")
+                       || url.contains("/avisos-")
+                       || url.contains("/beneficios")
+                       || url.contains("/descuentos") {
+                        continue;
                     }
-                })
-                .filter(|url| {
-                    url.contains("lanacion.com.ar") && 
-                    !url.contains("/tag/") &&
-                    !url.contains("/opinion/") &&
-                    !url.contains("/espectaculos/") &&
-                    !url.contains("/television/") &&
-                    !url.contains("/moda/") &&
-                    !url.contains("/tecnologia/") &&
-                    !url.contains("/autos/") &&
-                    !url.contains("/turismo/") &&
-                    !url.contains("/cultura/") &&
-                    !url.contains("/sociedad/") &&
-                    !url.contains("/politica/") &&
-                    !url.contains("/economia/") &&
-                    !url.contains("/deportes/") &&
-                    !url.contains("/mundo/")
-                })
-                .collect::<Vec<_>>();
-            urls.extend(found_urls);
+
+                    // Only include URLs that look like article URLs
+                    // Check for at least one slash and no double slashes in the path part
+                    if url.contains("/") && !url.split_once("://").map_or(false, |(_, path)| path.contains("//")) {
+                        urls.push(url);
+                    }
+                }
+            }
         }
 
         // Remove duplicates while preserving order
@@ -138,9 +179,10 @@ mod tests {
         let url = "https://www.lanacion.com.ar/politica/javier-milei-anuncio-superavit-fiscal-primer-trimestre-2024_0_MsAUOCyoYK.html";
         let result = scraper.scrape_article(url).await;
         assert!(result.is_ok());
-        let (article, status) = result.unwrap();
-        assert!(matches!(status, ArticleStatus::New));
+        let article = result.unwrap();
         assert_eq!(article.url, url);
+        assert!(!article.title.is_empty());
+        assert!(!article.content.is_empty());
     }
 
     #[tokio::test]

@@ -1,83 +1,22 @@
 use std::sync::Arc;
 use nt_core::{Article, Result};
 use super::InferenceModel;
-use chromadb::v1::{
-    client::{ChromaClient, ChromaClientOptions},
-    collection::{CollectionEntries, QueryOptions},
-};
 
-pub struct EmbeddingStore {
-    client: Arc<ChromaClient>,
+pub struct EmbeddingGenerator {
     model: Arc<dyn InferenceModel>,
-    collection_name: String,
 }
 
-impl EmbeddingStore {
-    pub fn new(model: Arc<dyn InferenceModel>, collection_name: String) -> Result<Self> {
-        let client = Arc::new(ChromaClient::new(ChromaClientOptions::default()));
-        Ok(Self {
-            client,
-            model,
-            collection_name,
-        })
+impl EmbeddingGenerator {
+    pub fn new(model: Arc<dyn InferenceModel>) -> Self {
+        Self { model }
     }
 
-    pub async fn store_article(&self, article: &Article) -> Result<()> {
-        let collection = self.client.get_or_create_collection(&self.collection_name, None)
-            .map_err(|e| nt_core::Error::External(e))?;
-
-        let embedding = self.model.generate_embeddings(&article.content).await?;
-        let doc_str = serde_json::to_string(article)
-            .map_err(|e| nt_core::Error::Serialization(e))?;
-        
-        let entries = CollectionEntries {
-            ids: vec![&article.url],
-            embeddings: Some(vec![embedding]),
-            documents: Some(vec![&doc_str]),
-            metadatas: None,
-        };
-
-        collection.add(entries, None)
-            .map_err(|e| nt_core::Error::External(e))?;
-
-        Ok(())
+    pub async fn generate_article_embedding(&self, article: &Article) -> Result<Vec<f32>> {
+        self.model.generate_embeddings(&article.content).await
     }
 
-    pub async fn find_similar(&self, article: &Article, limit: usize) -> Result<Vec<Article>> {
-        let collection = self.client.get_or_create_collection(&self.collection_name, None)
-            .map_err(|e| nt_core::Error::External(e))?;
-
-        let embedding = self.model.generate_embeddings(&article.content).await?;
-        
-        let options = QueryOptions {
-            query_embeddings: Some(vec![embedding]),
-            query_texts: None,
-            n_results: Some(limit),
-            where_metadata: None,
-            where_document: None,
-            include: None,
-        };
-
-        let results = collection.query(options, None)
-            .map_err(|e| nt_core::Error::External(e))?;
-
-        let mut articles = Vec::new();
-        
-        if let Some(docs) = results.documents {
-            for doc_vec in docs {
-                if let Some(inner_vec) = doc_vec {
-                    for doc in inner_vec {
-                        if let Some(doc_str) = doc {
-                            if let Ok(article) = serde_json::from_str::<Article>(&doc_str) {
-                                articles.push(article);
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        Ok(articles)
+    pub async fn generate_text_embedding(&self, text: &str) -> Result<Vec<f32>> {
+        self.model.generate_embeddings(text).await
     }
 }
 
@@ -87,9 +26,9 @@ mod tests {
     use super::super::models::DeepSeekModel;
 
     #[tokio::test]
-    async fn test_store_and_find_similar() {
+    async fn test_embedding_generation() {
         let model = Arc::new(DeepSeekModel::new(None).unwrap());
-        let store = EmbeddingStore::new(model, "test_collection".to_string()).unwrap();
+        let generator = EmbeddingGenerator::new(model);
         
         let article = Article {
             url: "http://example.com".to_string(),
@@ -101,9 +40,10 @@ mod tests {
             summary: None,
         };
 
-        store.store_article(&article).await.unwrap();
-        let similar = store.find_similar(&article, 1).await.unwrap();
-        assert_eq!(similar.len(), 1);
-        assert_eq!(similar[0].url, article.url);
+        let embedding = generator.generate_article_embedding(&article).await.unwrap();
+        assert!(!embedding.is_empty());
+
+        let text_embedding = generator.generate_text_embedding("Test text").await.unwrap();
+        assert!(!text_embedding.is_empty());
     }
 } 

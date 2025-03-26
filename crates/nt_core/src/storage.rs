@@ -1,6 +1,5 @@
 use async_trait::async_trait;
-use crate::types::Article;
-use crate::Result;
+use crate::{Article, Result};
 
 #[async_trait]
 pub trait ArticleStorage: Send + Sync {

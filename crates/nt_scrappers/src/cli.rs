@@ -1,10 +1,11 @@
 use std::sync::{Arc, Mutex};
 use std::collections::HashMap;
-use clap::{Args, Subcommand};
-use nt_core::Result;
-use crate::scrapers::{self, Scraper, ArticleStatus};
+use clap::{Parser, Subcommand};
+use nt_core::{Result, storage::ArticleStorage};
+use crate::scrapers::{self, ArticleStatus, ScraperManager, ScraperType};
 
-#[derive(Args)]
+#[derive(Parser)]
+#[command(author, version, about, long_about = None)]
 pub struct ScraperArgs {
     #[command(subcommand)]
     pub command: ScraperCommands,
@@ -21,38 +22,45 @@ pub enum ScraperCommands {
     List,
 }
 
-pub async fn handle_command(args: ScraperArgs) -> Result<()> {
+pub async fn handle_command(args: ScraperArgs, storage: Box<dyn ArticleStorage>) -> Result<()> {
     match args.command {
         ScraperCommands::Scrape { source } => {
             let (country, name) = parse_source(&source)?;
             let scraper = get_scraper(country, name)?;
             
-            let urls = scraper.lock().unwrap().get_article_urls().await?;
-            println!("Found {} articles", urls.len());
+            let mut manager = ScraperManager::new(storage);
+            manager.add_scraper(scraper);
             
-            for url in urls {
-                let mut scraper = scraper.lock().unwrap();
-                match scraper.scrape_article(&url).await {
-                    Ok((article, status)) => {
-                        let emoji = match status {
-                            ArticleStatus::New => "🆕",
-                            ArticleStatus::Updated => "📝",
-                            ArticleStatus::Unchanged => "⏭️",
-                        };
-                        println!("{} {} - {}", emoji, article.title, url);
-                    }
-                    Err(e) => {
-                        eprintln!("Failed to scrape {}: {}", url, e);
-                    }
-                }
+            let results = manager.scrape_all().await?;
+            for (article, status) in results {
+                let emoji = match status {
+                    ArticleStatus::New => "💥",
+                    ArticleStatus::Updated => "📝",
+                    ArticleStatus::Unchanged => "⏭️",
+                };
+                println!("{} {} - {}", emoji, article.title, article.url);
             }
         }
         ScraperCommands::List => {
-            // TODO: Implement listing available scrapers
             println!("Available scrapers:");
-            println!("  argentina/clarin");
-            println!("  argentina/lanacion");
-            println!("  argentina/lavoz");
+            for (country, scrapers) in get_all_scrapers() {
+                println!("{}:", country);
+                for scraper in scrapers {
+                    let scraper = scraper.lock().unwrap();
+                    let aliases = scraper.cli_names();
+                    let alias_str = if !aliases.is_empty() {
+                        format!(" (aliases: {})", aliases.join(", "))
+                    } else {
+                        String::new()
+                    };
+                    println!("  {}/{} - {}{}", 
+                        country,
+                        aliases.first().unwrap_or(&scraper.source().to_lowercase().as_str()),
+                        scraper.source(),
+                        alias_str
+                    );
+                }
+            }
         }
     }
     Ok(())
@@ -68,49 +76,38 @@ fn parse_source(source: &str) -> Result<(&str, &str)> {
     Ok((parts[0], parts[1]))
 }
 
-fn get_scraper(country: &str, name: &str) -> Result<Arc<Mutex<dyn Scraper>>> {
-    match country {
-        "argentina" => {
-            let scrapers = scrapers::argentina::get_scrapers();
-            scrapers
-                .into_iter()
-                .find(|s| s.lock().unwrap().source().to_lowercase().replace('í', "i") == name.to_lowercase().replace('í', "i"))
-                .ok_or_else(|| {
-                    nt_core::Error::Scraping(format!("Scraper not found: {}/{}", country, name))
-                })
-        }
-        _ => Err(nt_core::Error::Scraping(format!(
-            "Country not supported: {}",
-            country
-        ))),
-    }
+fn get_all_scrapers() -> HashMap<String, Vec<Arc<Mutex<ScraperType>>>> {
+    let mut scrapers = HashMap::new();
+    
+    // Add scrapers for each country
+    scrapers.insert("argentina".to_string(), scrapers::argentina::get_scrapers());
+    // Add more countries here as they are implemented
+    
+    scrapers
 }
 
-pub async fn scrape_articles(scrapers: &[Arc<Mutex<dyn Scraper>>]) -> Result<()> {
-    let mut article_cache = HashMap::new();
-
-    for scraper in scrapers {
-        let urls = scraper.lock().unwrap().get_article_urls().await?;
-        for url in urls {
-            if let Some(scraper) = scraper.lock().unwrap().can_handle(&url).then(|| scraper.clone()) {
-                let mut scraper = scraper.lock().unwrap();
-                match scraper.scrape_article(&url).await {
-                    Ok((article, status)) => {
-                        let emoji = match status {
-                            ArticleStatus::New => "🆕",
-                            ArticleStatus::Updated => "📝",
-                            ArticleStatus::Unchanged => "⏭️",
-                        };
-                        println!("{} {} - {}", emoji, article.title, url);
-                        article_cache.insert(url, article);
-                    }
-                    Err(e) => eprintln!("Error scraping {}: {}", url, e),
-                }
+fn get_scraper(country: &str, name: &str) -> Result<ScraperType> {
+    let all_scrapers = get_all_scrapers();
+    
+    if let Some(scrapers) = all_scrapers.get(country) {
+        // Try to find a scraper that matches either by name or CLI names
+        for scraper in scrapers {
+            let s = scraper.lock().unwrap();
+            if s.source().to_lowercase().replace('í', "i") == name.to_lowercase().replace('í', "i") 
+               || s.cli_names().contains(&name) {
+                let cloned = s.clone();
+                drop(s); // Release the lock
+                return Ok(cloned);
             }
         }
+        
+        Err(nt_core::Error::Scraping(format!("Scraper not found: {}/{}", country, name)))
+    } else {
+        Err(nt_core::Error::Scraping(format!(
+            "Country not supported: {}",
+            country
+        )))
     }
-
-    Ok(())
 }
 
 #[cfg(test)]

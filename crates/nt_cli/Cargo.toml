@@ -12,6 +12,7 @@ nt_core = { path = "../nt_core" }
 nt_scrappers = { path = "../nt_scrappers" }
 nt_web = { path = "../nt_web" }
 nt_inference = { path = "../nt_inference" }
+nt_storage = { path = "../nt_storage" }
 tokio = { workspace = true }
 clap = { workspace = true }
 anyhow = { workspace = true } 

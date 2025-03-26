@@ -1,0 +1,19 @@
+[package]
+name = "nt_storage"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+tokio = { version = "1.36.0", features = ["full"] }
+serde = { version = "1.0.197", features = ["derive"] }
+serde_json = "1.0.114"
+chrono = { version = "0.4.34", features = ["serde"] }
+thiserror = "1.0.57"
+anyhow = "1.0.80"
+async-trait = "0.1.77"
+url = "2.5.0"
+tracing = "0.1.40"
+clap = { version = "4.5.1", features = ["derive"] }
+chromadb = "0.3.1"
+nt_core = { path = "../nt_core" }
+futures-util = "0.3.31"
