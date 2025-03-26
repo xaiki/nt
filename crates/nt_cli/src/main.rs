@@ -53,13 +53,15 @@ pub struct Cli {
 enum Commands {
     Scrape {
         #[command(subcommand)]
-        command: ScraperCommands,
+        command: Option<ScraperCommands>,
     },
 }
 
 #[derive(clap::Subcommand, Debug)]
 enum ScraperCommands {
     Source {
+        /// The source to scrape in format country/source (e.g. argentina/clarin). If not specified, scrapes all sources.
+        #[arg(required = false)]
         source: String,
     },
     List,
@@ -107,11 +109,11 @@ async fn main() -> Result<()> {
     }
 
     match cli.command {
-        Commands::Scrape { command } => match command {
+        Commands::Scrape { command } => match command.unwrap_or(ScraperCommands::Source { source: String::new() }) {
             ScraperCommands::Source { source } => {
-                info!("Scraping articles from {}", source);
+                info!("Scraping articles from {}", if source.is_empty() { "all sources" } else { &source });
                 let args = ScraperArgs {
-                    command: NtScraperCommands::Source { source: source.clone() },
+                    command: NtScraperCommands::Source { source: if source.is_empty() { None } else { Some(source) } },
                 };
                 let storage_guard = storage.read().await;
                 handle_command(args, &*storage_guard).await?;

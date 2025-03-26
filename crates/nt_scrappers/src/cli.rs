@@ -13,10 +13,10 @@ pub struct ScraperArgs {
 
 #[derive(Subcommand)]
 pub enum ScraperCommands {
-    /// Scrape articles from a specific source
+    /// Scrape articles from a specific source or all sources if none specified
     Source {
-        /// The source to scrape in format country/source (e.g. argentina/clarin)
-        source: String,
+        /// The source to scrape in format country/source (e.g. argentina/clarin). If not specified, scrapes all sources.
+        source: Option<String>,
     },
     /// List available scrapers
     List,
@@ -30,27 +30,40 @@ pub enum ScraperCommands {
 pub async fn handle_command(args: ScraperArgs, storage: &dyn ArticleStorage) -> Result<()> {
     match args.command {
         ScraperCommands::Source { source } => {
-            let (country, name) = parse_source(&source)?;
             let mut manager = ScraperManager::new(storage);
             
-            if let Some(name) = name {
-                // Scrape a specific source
-                let scraper = get_scraper(country, name)?;
-                manager.add_scraper(scraper);
-            } else {
-                // Scrape all sources for the country
-                if let Some(scrapers) = get_all_scrapers().get(country) {
+            if source.is_none() || source.as_ref().unwrap().is_empty() {
+                // If no source specified, scrape all regions and scrapers
+                for (_, scrapers) in get_all_scrapers() {
                     for scraper in scrapers {
                         let s = scraper.lock().unwrap();
                         let cloned = s.clone();
                         drop(s); // Release the lock
                         manager.add_scraper(cloned);
                     }
+                }
+            } else {
+                let (country, name) = parse_source(source.as_ref().unwrap())?;
+                
+                if let Some(name) = name {
+                    // Scrape a specific source
+                    let scraper = get_scraper(country, name)?;
+                    manager.add_scraper(scraper);
                 } else {
-                    return Err(nt_core::Error::Scraping(format!(
-                        "Country not supported: {}",
-                        country
-                    )));
+                    // Scrape all sources for the country
+                    if let Some(scrapers) = get_all_scrapers().get(country) {
+                        for scraper in scrapers {
+                            let s = scraper.lock().unwrap();
+                            let cloned = s.clone();
+                            drop(s); // Release the lock
+                            manager.add_scraper(cloned);
+                        }
+                    } else {
+                        return Err(nt_core::Error::Scraping(format!(
+                            "Country not supported: {}",
+                            country
+                        )));
+                    }
                 }
             }
             
