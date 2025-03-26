@@ -56,6 +56,14 @@ impl ArticleStorage for InMemoryStorage {
     }
 }
 
+impl Clone for InMemoryStorage {
+    fn clone(&self) -> Self {
+        Self {
+            articles: Arc::clone(&self.articles),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

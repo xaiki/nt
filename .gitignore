@@ -24,4 +24,6 @@ Cargo.lock
 # Debug and documentation files
 debug/
 PROMPT.md
-MODEL.md 
+MODEL.md
+
+articles.db 

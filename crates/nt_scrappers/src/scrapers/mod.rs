@@ -127,13 +127,13 @@ pub(crate) mod utils {
     }
 }
 
-pub struct ScraperManager {
-    storage: Box<dyn ArticleStorage>,
+pub struct ScraperManager<'a> {
+    storage: &'a dyn ArticleStorage,
     scrapers: Vec<ScraperType>,
 }
 
-impl ScraperManager {
-    pub fn new(storage: Box<dyn ArticleStorage>) -> Self {
+impl<'a> ScraperManager<'a> {
+    pub fn new(storage: &'a dyn ArticleStorage) -> Self {
         Self {
             storage,
             scrapers: Vec::new(),

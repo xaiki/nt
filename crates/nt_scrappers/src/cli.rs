@@ -22,7 +22,7 @@ pub enum ScraperCommands {
     List,
 }
 
-pub async fn handle_command(args: ScraperArgs, storage: Box<dyn ArticleStorage>) -> Result<()> {
+pub async fn handle_command(args: ScraperArgs, storage: &dyn ArticleStorage) -> Result<()> {
     match args.command {
         ScraperCommands::Scrape { source } => {
             let (country, name) = parse_source(&source)?;

@@ -23,11 +23,45 @@ A news aggregator that uses AI to detect similar stories across many digital new
   - Article summarization
   - Semantic analysis
   - Text embeddings
-- **Vector Storage**: Using `chromadb` for:
-  - Efficient similarity search
-  - Article embeddings storage
-  - Cross-reference lookups
+- **Vector Storage**: Multiple backend options:
+  - In-memory storage (default)
+  - ChromaDB for vector similarity search
+  - Qdrant for vector similarity search
+  - SQLite for persistent storage
 - **Web Interface**: Using `axum` for the API server
+
+### Storage Backends
+The project supports multiple storage backends that can be enabled via feature flags:
+
+```bash
+# Build with all backends enabled
+cargo build --release --features "chroma qdrant sqlite"
+
+# Build with specific backends
+cargo build --release --features "chroma"  # Only ChromaDB
+cargo build --release --features "qdrant"  # Only Qdrant
+cargo build --release --features "sqlite"  # Only SQLite
+```
+
+When running the CLI, specify the backend using the `--storage` flag:
+```bash
+# Use in-memory storage (default)
+nt scrapers list
+
+# Use ChromaDB
+nt --storage chroma scrapers list
+
+# Use Qdrant
+nt --storage qdrant scrapers list
+
+# Use SQLite
+nt --storage sqlite scrapers list
+```
+
+Requirements for each backend:
+- **ChromaDB**: Requires ChromaDB server running on `http://localhost:8000`
+- **Qdrant**: Requires Qdrant server running on `http://localhost:6333`
+- **SQLite**: Creates a database file at `./articles.db` in the current working directory
 
 ### Current Crates
 - `nt_core`: Core types, utilities, and CLI entry point

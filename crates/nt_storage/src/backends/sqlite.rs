@@ -1,11 +1,11 @@
 use async_trait::async_trait;
 use nt_core::{Article, Result, storage::ArticleStorage};
 use std::sync::Arc;
-use tokio::sync::RwLock;
 use sqlx::{sqlite::SqlitePool, Row};
 use serde_json::Value;
 use crate::StorageBackend;
 use std::path::PathBuf;
+use anyhow::anyhow;
 
 const MIGRATIONS: &[&str] = &[
     r#"
@@ -33,7 +33,9 @@ impl StorageBackend for SQLiteStorage {
     }
 
     async fn new() -> Result<Self> {
-        let db_path = PathBuf::from("articles.db");
+        let db_path = std::env::current_dir()
+            .map_err(|e| nt_core::Error::External(anyhow!("Failed to get current directory: {}", e)))?
+            .join("articles.db");
         Self::new_with_path(&db_path).await
     }
 }
@@ -43,19 +45,31 @@ impl SQLiteStorage {
         // Ensure parent directory exists
         if let Some(parent) = db_path.parent() {
             std::fs::create_dir_all(parent)
-                .map_err(|e| nt_core::Error::External(format!("Failed to create database directory: {}", e).into()))?;
+                .map_err(|e| nt_core::Error::External(anyhow!("Failed to create database directory: {}", e)))?;
         }
 
-        let pool = SqlitePool::connect(&format!("sqlite:{}", db_path.display()))
+        // Create empty database file if it doesn't exist
+        if !db_path.exists() {
+            std::fs::File::create(db_path)
+                .map_err(|e| nt_core::Error::External(anyhow!("Failed to create database file: {}", e)))?;
+        }
+
+        let db_path_str = db_path.to_str()
+            .ok_or_else(|| nt_core::Error::External(anyhow!("Invalid database path")))?;
+        tracing::info!("Attempting to connect to SQLite database at: {}", db_path_str);
+
+        let pool = SqlitePool::connect(&format!("sqlite:{}", db_path_str))
             .await
-            .map_err(|e| nt_core::Error::External(format!("Failed to connect to database: {}", e).into()))?;
+            .map_err(|e| nt_core::Error::External(anyhow!("Failed to connect to database: {}", e)))?;
+
+        tracing::info!("Successfully connected to SQLite database");
 
         // Run migrations
         for (i, migration) in MIGRATIONS.iter().enumerate() {
             sqlx::query(migration)
                 .execute(&pool)
                 .await
-                .map_err(|e| nt_core::Error::External(format!("Failed to run migration {}: {}", i, e).into()))?;
+                .map_err(|e| nt_core::Error::External(anyhow!("Failed to run migration {}: {}", i, e)))?;
         }
 
         Ok(Self {
@@ -91,7 +105,7 @@ impl ArticleStorage for SQLiteStorage {
         .bind(article.summary.as_deref())
         .execute(&*self.pool)
         .await
-        .map_err(|e| nt_core::Error::External(format!("Failed to store article: {}", e).into()))?;
+        .map_err(|e| nt_core::Error::External(anyhow!("Failed to store article: {}", e)))?;
 
         Ok(())
     }
@@ -110,7 +124,7 @@ impl ArticleStorage for SQLiteStorage {
         .bind(limit as i64)
         .fetch_all(&*self.pool)
         .await
-        .map_err(|e| nt_core::Error::External(format!("Failed to find similar articles: {}", e).into()))?;
+        .map_err(|e| nt_core::Error::External(anyhow!("Failed to find similar articles: {}", e)))?;
 
         let mut articles = Vec::new();
         for row in rows {
@@ -123,8 +137,8 @@ impl ArticleStorage for SQLiteStorage {
                 title: row.get("title"),
                 content: row.get("content"),
                 source: row.get("source"),
-                published_at: chrono::DateTime::parse_from_rfc3339(row.get::<String, _>("published_at"))
-                    .map_err(|e| nt_core::Error::External(format!("Failed to parse date: {}", e).into()))?
+                published_at: chrono::DateTime::parse_from_rfc3339(&row.get::<String, _>("published_at"))
+                    .map_err(|e| nt_core::Error::External(anyhow!("Failed to parse date: {}", e)))?
                     .with_timezone(&chrono::Utc),
                 sections: sections.into_iter()
                     .filter_map(|v| serde_json::from_value(v).ok())
@@ -147,7 +161,7 @@ impl ArticleStorage for SQLiteStorage {
         .bind(source)
         .fetch_all(&*self.pool)
         .await
-        .map_err(|e| nt_core::Error::External(format!("Failed to get articles by source: {}", e).into()))?;
+        .map_err(|e| nt_core::Error::External(anyhow!("Failed to get articles by source: {}", e)))?;
 
         let mut articles = Vec::new();
         for row in rows {
@@ -160,8 +174,8 @@ impl ArticleStorage for SQLiteStorage {
                 title: row.get("title"),
                 content: row.get("content"),
                 source: row.get("source"),
-                published_at: chrono::DateTime::parse_from_rfc3339(row.get::<String, _>("published_at"))
-                    .map_err(|e| nt_core::Error::External(format!("Failed to parse date: {}", e).into()))?
+                published_at: chrono::DateTime::parse_from_rfc3339(&row.get::<String, _>("published_at"))
+                    .map_err(|e| nt_core::Error::External(anyhow!("Failed to parse date: {}", e)))?
                     .with_timezone(&chrono::Utc),
                 sections: sections.into_iter()
                     .filter_map(|v| serde_json::from_value(v).ok())
@@ -177,7 +191,6 @@ impl ArticleStorage for SQLiteStorage {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::fs;
     use tempfile::tempdir;
 
     #[tokio::test]

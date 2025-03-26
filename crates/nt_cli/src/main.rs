@@ -1,7 +1,11 @@
-use clap::{Parser, Subcommand};
+use clap::Parser;
 use nt_core::{Result, storage::ArticleStorage, Article};
 use nt_storage::{InMemoryStorage, StorageBackend};
 use chrono::Utc;
+use nt_scrappers::cli::{ScraperArgs, ScraperCommands as NtScraperCommands, handle_command};
+use std::sync::Arc;
+use tokio::sync::RwLock;
+use tracing::info;
 
 #[cfg(feature = "chroma")]
 use nt_storage::ChromaDBStorage;
@@ -12,7 +16,7 @@ use nt_storage::QdrantStorage;
 #[cfg(feature = "sqlite")]
 use nt_storage::SQLiteStorage;
 
-async fn check_storage(storage: &Box<dyn ArticleStorage>) -> Result<()> {
+async fn check_storage(storage: &Arc<RwLock<dyn ArticleStorage>>) -> Result<()> {
     let test_article = Article {
         url: "http://test.com".to_string(),
         title: "Test Article".to_string(),
@@ -24,10 +28,10 @@ async fn check_storage(storage: &Box<dyn ArticleStorage>) -> Result<()> {
     };
 
     // Try to store the article
-    storage.store_article(&test_article).await?;
+    storage.write().await.store_article(&test_article).await?;
     
     // Try to retrieve it
-    let articles = storage.get_by_source("test").await?;
+    let articles = storage.read().await.get_by_source("test").await?;
     if !articles.iter().any(|a| a.url == test_article.url) {
         return Err(nt_core::Error::Storage("Failed to retrieve test article".to_string()));
     }
@@ -35,40 +39,42 @@ async fn check_storage(storage: &Box<dyn ArticleStorage>) -> Result<()> {
     Ok(())
 }
 
-#[derive(Parser)]
+#[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
-struct Cli {
+pub struct Cli {
+    #[arg(long, default_value = "memory")]
+    storage: String,
     #[command(subcommand)]
     command: Commands,
-    
-    /// Storage backend to use (memory, chroma, or qdrant)
-    #[arg(short, long, default_value = "memory")]
-    storage: String,
 }
 
-#[derive(Subcommand)]
+#[derive(clap::Subcommand, Debug)]
 enum Commands {
-    /// Scraper-related commands
-    Scrapers(nt_scrappers::ScraperArgs),
-    // Add other crate commands here as they become available
+    Scrapers {
+        #[command(subcommand)]
+        command: ScraperCommands,
+    },
 }
 
-async fn create_storage<T: StorageBackend + 'static>() -> Result<(Box<dyn ArticleStorage>, &'static str)> {
-    match T::new().await {
-        Ok(storage) => Ok((Box::new(storage) as Box<dyn ArticleStorage>, T::get_error_message())),
-        Err(e) => {
-            eprintln!("Failed to connect to {}: {}", std::any::type_name::<T>(), e);
-            eprintln!("Please ensure: {}", T::get_error_message());
-            Err(e)
-        }
-    }
+#[derive(clap::Subcommand, Debug)]
+enum ScraperCommands {
+    Scrape {
+        source: String,
+    },
+    List,
+}
+
+async fn create_storage<T: StorageBackend + 'static>() -> Result<Arc<RwLock<dyn ArticleStorage>>> {
+    let storage = T::new().await?;
+    Ok(Arc::new(RwLock::new(storage)))
 }
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    tracing_subscriber::fmt::init();
     let cli = Cli::parse();
-    
-    let (storage, error_message) = match cli.storage.as_str() {
+
+    let storage = match cli.storage.as_str() {
         "memory" => create_storage::<InMemoryStorage>().await?,
         #[cfg(feature = "chroma")]
         "chroma" => create_storage::<ChromaDBStorage>().await?,
@@ -84,6 +90,7 @@ async fn main() -> Result<()> {
             msg.push_str(", qdrant");
             #[cfg(feature = "sqlite")]
             msg.push_str(", sqlite");
+            eprintln!("{}", msg);
             return Err(nt_core::Error::Storage(msg));
         }
     };
@@ -91,14 +98,27 @@ async fn main() -> Result<()> {
     // Check storage health before proceeding
     if let Err(e) = check_storage(&storage).await {
         eprintln!("Storage health check failed: {}", e);
-        eprintln!("Please ensure: {}", error_message);
         return Err(e);
     }
 
     match cli.command {
-        Commands::Scrapers(args) => {
-            nt_scrappers::handle_command(args, storage).await?;
-        }
+        Commands::Scrapers { command } => match command {
+            ScraperCommands::Scrape { source } => {
+                info!("Scraping articles from {}", source);
+                let args = ScraperArgs {
+                    command: NtScraperCommands::Scrape { source: source.clone() },
+                };
+                let storage_guard = storage.read().await;
+                handle_command(args, &*storage_guard).await?;
+            }
+            ScraperCommands::List => {
+                let args = ScraperArgs {
+                    command: NtScraperCommands::List,
+                };
+                let storage_guard = storage.read().await;
+                handle_command(args, &*storage_guard).await?;
+            }
+        },
     }
 
     Ok(())
