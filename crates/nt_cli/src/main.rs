@@ -9,6 +9,9 @@ use nt_storage::ChromaDBStorage;
 #[cfg(feature = "qdrant")]
 use nt_storage::QdrantStorage;
 
+#[cfg(feature = "sqlite")]
+use nt_storage::SQLiteStorage;
+
 async fn check_storage(storage: &Box<dyn ArticleStorage>) -> Result<()> {
     let test_article = Article {
         url: "http://test.com".to_string(),
@@ -71,12 +74,16 @@ async fn main() -> Result<()> {
         "chroma" => create_storage::<ChromaDBStorage>().await?,
         #[cfg(feature = "qdrant")]
         "qdrant" => create_storage::<QdrantStorage>().await?,
+        #[cfg(feature = "sqlite")]
+        "sqlite" => create_storage::<SQLiteStorage>().await?,
         _ => {
             let mut msg = "Unknown storage backend. Available backends: memory".to_string();
             #[cfg(feature = "chroma")]
             msg.push_str(", chroma");
             #[cfg(feature = "qdrant")]
             msg.push_str(", qdrant");
+            #[cfg(feature = "sqlite")]
+            msg.push_str(", sqlite");
             return Err(nt_core::Error::Storage(msg));
         }
     };

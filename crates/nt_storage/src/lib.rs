@@ -16,3 +16,5 @@ pub use backends::InMemoryStorage;
 pub use backends::QdrantStorage;
 #[cfg(feature = "chroma")]
 pub use backends::ChromaDBStorage;
+#[cfg(feature = "sqlite")]
+pub use backends::SQLiteStorage;
