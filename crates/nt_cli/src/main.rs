@@ -87,6 +87,7 @@ async fn main() -> Result<()> {
         #[cfg(feature = "sqlite")]
         "sqlite" => create_storage::<SQLiteStorage>().await?,
         _ => {
+            #[allow(unused_mut)]
             let mut msg = "Unknown storage backend. Available backends: memory".to_string();
             #[cfg(feature = "chroma")]
             msg.push_str(", chroma");
