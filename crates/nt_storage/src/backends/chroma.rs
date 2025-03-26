@@ -81,7 +81,7 @@ impl EmbeddingStore {
             n_results: Some(limit),
             where_document: None,
             where_metadata: None,
-            include: Some(vec!["metadatas"]),
+            include: Some(vec!["metadatas".to_string()]),
         };
 
         let results = collection.query(query_options, None)
@@ -121,7 +121,7 @@ impl EmbeddingStore {
             n_results: Some(100), // Adjust as needed
             where_document: None,
             where_metadata: Some(where_metadata),
-            include: Some(vec!["metadatas"]),
+            include: Some(vec!["metadatas".to_string()]),
         };
 
         let results = collection.query(query_options, None)
