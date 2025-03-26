@@ -15,4 +15,5 @@ nt_inference = { path = "../nt_inference" }
 nt_storage = { path = "../nt_storage" }
 tokio = { workspace = true }
 clap = { workspace = true }
-anyhow = { workspace = true } 
+anyhow = { workspace = true }
+chrono = { workspace = true } 

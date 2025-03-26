@@ -35,17 +35,13 @@ pub struct Config {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use std::sync::Arc;
-    use tokio::sync::Mutex;
     use crate::models::DeepSeekModel;
-    use crate::embeddings::EmbeddingStore;
     use crate::divergence::DivergenceAnalyzer;
 
     #[tokio::test]
     async fn test_inference_pipeline() {
         let model = Arc::new(DeepSeekModel::new(None).unwrap());
-        let store = EmbeddingStore::new(model.clone(), "test_collection").await.unwrap();
-        let analyzer = DivergenceAnalyzer::new(model, 0.8);
+        let _analyzer = DivergenceAnalyzer::new(model);
     }
 }
