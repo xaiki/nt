@@ -27,6 +27,7 @@ pub async fn create_article(
         source: String::new(),
         sections: vec![],
         summary: None,
+        authors: vec![],
     };
     Json(default_article)
 }
@@ -43,6 +44,7 @@ pub async fn get_article(
         source: String::new(),
         sections: vec![],
         summary: None,
+        authors: vec![],
     };
     Json(default_article)
 }

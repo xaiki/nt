@@ -9,6 +9,11 @@ use anyhow::anyhow;
 
 const MIGRATIONS: &[&str] = &[
     r#"
+    CREATE TABLE IF NOT EXISTS migrations (
+        id INTEGER PRIMARY KEY,
+        applied_at TEXT NOT NULL
+    );
+
     CREATE TABLE IF NOT EXISTS articles (
         url TEXT PRIMARY KEY,
         title TEXT NOT NULL,
@@ -18,6 +23,9 @@ const MIGRATIONS: &[&str] = &[
         sections TEXT,
         summary TEXT
     )
+    "#,
+    r#"
+    ALTER TABLE articles ADD COLUMN authors TEXT NOT NULL DEFAULT '[]'
     "#,
     // Add future migrations here
 ];
@@ -66,10 +74,51 @@ impl SQLiteStorage {
 
         // Run migrations
         for (i, migration) in MIGRATIONS.iter().enumerate() {
-            sqlx::query(migration)
-                .execute(&pool)
+            // Check if migration has been applied
+            let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='migrations'")
+                .fetch_one(&pool)
                 .await
-                .map_err(|e| nt_core::Error::External(anyhow!("Failed to run migration {}: {}", i, e)))?;
+                .map_err(|e| nt_core::Error::External(anyhow!("Failed to check migrations table: {}", e)))?;
+
+            if count == 0 && i == 0 {
+                // First migration, create migrations table
+                sqlx::query(migration)
+                    .execute(&pool)
+                    .await
+                    .map_err(|e| nt_core::Error::External(anyhow!("Failed to create migrations table: {}", e)))?;
+                
+                // Record first migration
+                sqlx::query("INSERT INTO migrations (id, applied_at) VALUES (?, ?)")
+                    .bind(i as i64)
+                    .bind(chrono::Utc::now().to_rfc3339())
+                    .execute(&pool)
+                    .await
+                    .map_err(|e| nt_core::Error::External(anyhow!("Failed to record migration: {}", e)))?;
+                continue;
+            }
+
+            // Check if this migration has been applied
+            let applied: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM migrations WHERE id = ?")
+                .bind(i as i64)
+                .fetch_one(&pool)
+                .await
+                .map_err(|e| nt_core::Error::External(anyhow!("Failed to check migration status: {}", e)))?;
+
+            if applied == 0 {
+                // Run the migration
+                sqlx::query(migration)
+                    .execute(&pool)
+                    .await
+                    .map_err(|e| nt_core::Error::External(anyhow!("Failed to run migration {}: {}", i, e)))?;
+
+                // Record the migration
+                sqlx::query("INSERT INTO migrations (id, applied_at) VALUES (?, ?)")
+                    .bind(i as i64)
+                    .bind(chrono::Utc::now().to_rfc3339())
+                    .execute(&pool)
+                    .await
+                    .map_err(|e| nt_core::Error::External(anyhow!("Failed to record migration: {}", e)))?;
+            }
         }
 
         Ok(Self {
@@ -88,12 +137,14 @@ impl ArticleStorage for SQLiteStorage {
     async fn store_article(&self, article: &Article) -> Result<()> {
         let sections = serde_json::to_string(&article.sections)
             .map_err(|e| nt_core::Error::Serialization(e))?;
+        let authors = serde_json::to_string(&article.authors)
+            .map_err(|e| nt_core::Error::Serialization(e))?;
 
         sqlx::query(
             r#"
             INSERT OR REPLACE INTO articles 
-            (url, title, content, source, published_at, sections, summary)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+            (url, title, content, source, published_at, sections, summary, authors)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             "#,
         )
         .bind(&article.url)
@@ -103,6 +154,7 @@ impl ArticleStorage for SQLiteStorage {
         .bind(article.published_at.to_rfc3339())
         .bind(sections)
         .bind(article.summary.as_deref())
+        .bind(authors)
         .execute(&*self.pool)
         .await
         .map_err(|e| nt_core::Error::External(anyhow!("Failed to store article: {}", e)))?;
@@ -131,6 +183,9 @@ impl ArticleStorage for SQLiteStorage {
             let sections: String = row.get("sections");
             let sections: Vec<Value> = serde_json::from_str(&sections)
                 .map_err(|e| nt_core::Error::Serialization(e))?;
+            let authors: String = row.get("authors");
+            let authors: Vec<String> = serde_json::from_str(&authors)
+                .map_err(|e| nt_core::Error::Serialization(e))?;
 
             articles.push(Article {
                 url: row.get("url"),
@@ -144,6 +199,7 @@ impl ArticleStorage for SQLiteStorage {
                     .filter_map(|v| serde_json::from_value(v).ok())
                     .collect(),
                 summary: row.get::<Option<String>, _>("summary"),
+                authors,
             });
         }
 
@@ -168,6 +224,9 @@ impl ArticleStorage for SQLiteStorage {
             let sections: String = row.get("sections");
             let sections: Vec<Value> = serde_json::from_str(&sections)
                 .map_err(|e| nt_core::Error::Serialization(e))?;
+            let authors: String = row.get("authors");
+            let authors: Vec<String> = serde_json::from_str(&authors)
+                .map_err(|e| nt_core::Error::Serialization(e))?;
 
             articles.push(Article {
                 url: row.get("url"),
@@ -181,6 +240,7 @@ impl ArticleStorage for SQLiteStorage {
                     .filter_map(|v| serde_json::from_value(v).ok())
                     .collect(),
                 summary: row.get::<Option<String>, _>("summary"),
+                authors,
             });
         }
 
@@ -195,25 +255,20 @@ mod tests {
 
     #[tokio::test]
     async fn test_sqlite_storage() {
-        // Create a temporary directory for the test database
-        let temp_dir = tempdir().unwrap();
-        let db_path = temp_dir.path().join("test.db");
-
-        let storage = SQLiteStorage::new_with_path(&db_path).await.unwrap();
         let article = Article {
-            url: "http://example.com".to_string(),
+            url: "http://test.com".to_string(),
             title: "Test Article".to_string(),
-            content: "Test content".to_string(),
+            content: "This is a test article about politics.".to_string(),
             published_at: chrono::Utc::now(),
             source: "test".to_string(),
             sections: vec![],
             summary: None,
+            authors: vec!["Test Author".to_string()],
         };
 
+        let storage = SQLiteStorage::new().await.unwrap();
         storage.store_article(&article).await.unwrap();
         let similar = storage.find_similar(&article, 1).await.unwrap();
-        assert!(similar.is_empty());
-
-        // Test database will be automatically cleaned up when temp_dir is dropped
+        assert!(!similar.is_empty());
     }
 } 

@@ -38,6 +38,7 @@ mod tests {
             source: "test".to_string(),
             sections: vec![],
             summary: None,
+            authors: vec!["Test Author".to_string()],
         };
 
         let embedding = generator.generate_article_embedding(&article).await.unwrap();

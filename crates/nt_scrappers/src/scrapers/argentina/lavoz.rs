@@ -39,6 +39,7 @@ impl Scraper for LaVozScraper {
         let subtitle_selector = Selector::parse(".bajada").unwrap();
         let content_selector = Selector::parse(".body-nota p").unwrap();
         let date_selector = Selector::parse("time").unwrap();
+        let author_selector = Selector::parse(".firma").unwrap();
 
         let title = document
             .select(&title_selector)
@@ -50,6 +51,15 @@ impl Scraper for LaVozScraper {
             .select(&subtitle_selector)
             .next()
             .map(|el| el.text().collect::<String>());
+
+        // Extract authors
+        let mut authors = Vec::new();
+        for author_element in document.select(&author_selector) {
+            let author_text = author_element.text().collect::<String>().trim().to_string();
+            if !author_text.is_empty() {
+                authors.push(author_text);
+            }
+        }
 
         let mut sections = Vec::new();
         
@@ -99,6 +109,7 @@ impl Scraper for LaVozScraper {
             published_at,
             source: self.source().to_string(),
             sections,
+            authors,
         })
     }
 

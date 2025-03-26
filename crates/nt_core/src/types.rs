@@ -10,6 +10,7 @@ pub struct Article {
     pub published_at: DateTime<Utc>,
     pub source: String,
     pub sections: Vec<ArticleSection>,
+    pub authors: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -199,6 +199,7 @@ mod tests {
             source: "test".to_string(),
             sections: vec![],
             summary: None,
+            authors: vec!["Test Author".to_string()],
         };
 
         storage.store_article(&article).await.unwrap();

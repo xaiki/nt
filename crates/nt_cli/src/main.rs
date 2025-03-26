@@ -25,6 +25,7 @@ async fn check_storage(storage: &Arc<RwLock<dyn ArticleStorage>>) -> Result<()> 
         source: "test".to_string(),
         sections: vec![],
         summary: None,
+        authors: vec!["Test Author".to_string()],
     };
 
     // Try to store the article

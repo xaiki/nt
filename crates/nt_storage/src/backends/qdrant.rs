@@ -215,21 +215,21 @@ impl ArticleStorage for QdrantStorage {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use chrono::Utc;
 
     #[tokio::test]
     async fn test_qdrant_storage() {
-        let storage = QdrantStorage::new().await.unwrap();
         let article = Article {
-            url: "http://example.com".to_string(),
+            url: "http://test.com".to_string(),
             title: "Test Article".to_string(),
-            content: "Test content".to_string(),
+            content: "This is a test article about politics.".to_string(),
             published_at: Utc::now(),
             source: "test".to_string(),
             sections: vec![],
             summary: None,
+            authors: vec!["Test Author".to_string()],
         };
 
+        let storage = QdrantStorage::new().await.unwrap();
         storage.store_article(&article).await.unwrap();
         let similar = storage.find_similar(&article, 1).await.unwrap();
         assert!(!similar.is_empty());

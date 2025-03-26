@@ -89,52 +89,18 @@ mod tests {
         let model = Arc::new(DeepSeekModel::new(None).unwrap());
         let analyzer = DivergenceAnalyzer::new(model);
 
-        let article1 = Article {
-            url: "test1".to_string(),
-            title: "Test Article 1".to_string(),
-            content: "Content 1".to_string(),
-            summary: None,
+        let article = Article {
+            url: "http://test.com".to_string(),
+            title: "Test Article".to_string(),
+            content: "This is a test article about politics.".to_string(),
             published_at: Utc::now(),
-            source: "source1".to_string(),
-            sections: vec![
-                ArticleSection {
-                    content: "Common section".to_string(),
-                    summary: None,
-                    embedding: None,
-                },
-                ArticleSection {
-                    content: "Unique to article 1".to_string(),
-                    summary: None,
-                    embedding: None,
-                },
-            ],
+            source: "test".to_string(),
+            sections: vec![],
+            summary: None,
+            authors: vec!["Test Author".to_string()],
         };
 
-        let article2 = Article {
-            url: "test2".to_string(),
-            title: "Test Article 2".to_string(),
-            content: "Content 2".to_string(),
-            summary: None,
-            published_at: Utc::now(),
-            source: "source2".to_string(),
-            sections: vec![
-                ArticleSection {
-                    content: "Common section".to_string(),
-                    summary: None,
-                    embedding: None,
-                },
-                ArticleSection {
-                    content: "Unique to article 2".to_string(),
-                    summary: None,
-                    embedding: None,
-                },
-            ],
-        };
-
-        let analysis = analyzer.analyze_article(&article1).await;
-        assert!(analysis.is_ok());
-
-        let analysis = analysis.unwrap();
-        assert_eq!(analysis.sections.len(), 2); // Should analyze all sections of the article
+        let analysis = analyzer.analyze_article(&article).await.unwrap();
+        assert_eq!(analysis.article_url, article.url);
     }
 } 

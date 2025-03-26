@@ -4,6 +4,7 @@ use scraper::{Html, Selector};
 use nt_core::{Result};
 use nt_core::types::{Article, ArticleSection};
 use crate::scrapers::{Scraper};
+use serde_json;
 
 #[derive(Clone)]
 pub struct LaNacionScraper;
@@ -51,6 +52,7 @@ impl Scraper for LaNacionScraper {
         let subtitle_selector = Selector::parse(".bajada, .copete").unwrap();
         let content_selector = Selector::parse(".cuerpo-nota p, article p").unwrap();
         let date_selector = Selector::parse("time").unwrap();
+        let author_selector = Selector::parse(".com-autor, .autor, .com-txt-autor").unwrap();
 
         let title = document
             .select(&title_selector)
@@ -62,6 +64,59 @@ impl Scraper for LaNacionScraper {
             .select(&subtitle_selector)
             .next()
             .map(|el| el.text().collect::<String>());
+
+        // Extract authors
+        let mut authors = Vec::new();
+
+        // First try to get authors from JSON-LD metadata
+        if let Ok(script_selector) = Selector::parse("script[type='application/ld+json']") {
+            for script in document.select(&script_selector) {
+                if let Ok(json) = serde_json::from_str::<serde_json::Value>(script.text().collect::<String>().trim()) {
+                    // Try to get author from the JSON-LD data
+                    if let Some(author) = json.get("author") {
+                        match author {
+                            serde_json::Value::Array(arr) => {
+                                for author_obj in arr {
+                                    if let Some(name) = author_obj.get("name").and_then(|n| n.as_str()) {
+                                        authors.push(name.trim().to_string());
+                                    }
+                                }
+                            }
+                            serde_json::Value::Object(obj) => {
+                                if let Some(name) = obj.get("name").and_then(|n| n.as_str()) {
+                                    authors.push(name.trim().to_string());
+                                }
+                            }
+                            serde_json::Value::String(s) => {
+                                authors.push(s.trim().to_string());
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+            }
+        }
+
+        // If no authors found in JSON-LD, try HTML selectors
+        if authors.is_empty() {
+            for author_element in document.select(&author_selector) {
+                let author_text = author_element.text().collect::<String>().trim().to_string();
+                if !author_text.is_empty() {
+                    authors.push(author_text);
+                }
+            }
+        }
+
+        // Try additional selectors if still no authors found
+        if authors.is_empty() {
+            if let Ok(selector) = Selector::parse("[data-author]") {
+                for element in document.select(&selector) {
+                    if let Some(author) = element.value().attr("data-author") {
+                        authors.push(author.trim().to_string());
+                    }
+                }
+            }
+        }
 
         let mut sections = Vec::new();
         
@@ -111,6 +166,7 @@ impl Scraper for LaNacionScraper {
             published_at,
             source: self.source().to_string(),
             sections,
+            authors,
         })
     }
 

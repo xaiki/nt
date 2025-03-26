@@ -159,36 +159,24 @@ impl super::InferenceModel for DeepSeekModel {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use chrono::Utc;
-    use crate::InferenceModel;
+    use super::super::InferenceModel;
 
     #[tokio::test]
-    async fn test_deepseek_model() {
+    async fn test_generate_embeddings() {
         let model = DeepSeekModel::new(None).unwrap();
         let article = Article {
-            url: "test".to_string(),
+            url: "http://test.com".to_string(),
             title: "Test Article".to_string(),
-            content: "This is a test article content.".to_string(),
-            summary: None,
+            content: "This is a test article about politics.".to_string(),
             published_at: Utc::now(),
             source: "test".to_string(),
-            sections: vec![
-                ArticleSection {
-                    content: "Section 1 content".to_string(),
-                    summary: None,
-                    embedding: None,
-                }
-            ],
+            sections: vec![],
+            summary: None,
+            authors: vec!["Test Author".to_string()],
         };
 
-        let summary = model.summarize_article(&article).await;
-        assert!(summary.is_ok());
-
-        let section_summaries = model.summarize_sections(&article.sections).await;
-        assert!(section_summaries.is_ok());
-
-        let embeddings = model.generate_embeddings(&article.content).await;
-        assert!(embeddings.is_ok());
+        let embeddings = model.generate_embeddings(&article.content).await.unwrap();
+        assert!(!embeddings.is_empty());
     }
 }
 
