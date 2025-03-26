@@ -15,12 +15,12 @@ anyhow = { workspace = true }
 url = { workspace = true }
 tracing = { workspace = true }
 clap = { workspace = true }
-futures-util = { workspace = true }
 
 [features]
 default = []
 qdrant = ["dep:qdrant-client"]
 chroma = ["dep:chromadb"]
+sqlite = ["dep:sqlx"]
 
 [dependencies.qdrant-client]
 version = "1.7"
@@ -29,3 +29,11 @@ optional = true
 [dependencies.chromadb]
 version = "0.3.1"
 optional = true
+
+[dependencies.sqlx]
+version = "0.7"
+features = ["runtime-tokio", "sqlite", "chrono", "json"]
+optional = true
+
+[dev-dependencies]
+tempfile = "3.8"
