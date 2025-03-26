@@ -4,14 +4,14 @@ use clap::{Parser, Subcommand};
 use nt_core::{Result, storage::ArticleStorage};
 use crate::scrapers::{self, ArticleStatus, ScraperManager, ScraperType};
 
-#[derive(Parser)]
+#[derive(Parser, Clone)]
 #[command(author, version, about, long_about = None)]
 pub struct ScraperArgs {
     #[command(subcommand)]
     pub command: ScraperCommands,
 }
 
-#[derive(Subcommand)]
+#[derive(Subcommand, Clone)]
 pub enum ScraperCommands {
     /// Scrape articles from a specific source or all sources if none specified
     Source {

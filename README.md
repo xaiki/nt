@@ -132,6 +132,13 @@ nt scrapers scrape source argentina/clarin
 
 # Scrape a specific article
 nt scrapers scrape url https://www.lanacion.com.ar/some-article
+
+# Run periodic scraping with custom interval
+nt scrapers scrape source --interval 1h    # Scrape every hour
+nt scrapers scrape source --interval 30m   # Scrape every 30 minutes
+nt scrapers scrape source --interval 1d    # Scrape every day
+nt scrapers scrape source --interval 1h15m # Scrape every 1 hour and 15 minutes
+nt scrapers scrape source --interval 1h15m30s # Scrape every 1 hour, 15 minutes and 30 seconds
 ```
 
 ### Web API
