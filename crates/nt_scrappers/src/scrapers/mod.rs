@@ -4,6 +4,7 @@ use scraper::{Html, Selector};
 use url::Url;
 
 pub mod argentina;
+pub mod jsonld;
 use argentina::clarin::ClarinScraper;
 use argentina::lanacion::LaNacionScraper;
 use argentina::lavoz::LaVozScraper;

@@ -3,8 +3,7 @@ use chrono::Utc;
 use scraper::{Html, Selector};
 use nt_core::{Result};
 use nt_core::types::{Article, ArticleSection};
-use crate::scrapers::{Scraper};
-use serde_json;
+use crate::scrapers::{Scraper, jsonld};
 
 #[derive(Clone)]
 pub struct LaNacionScraper;
@@ -66,36 +65,7 @@ impl Scraper for LaNacionScraper {
             .map(|el| el.text().collect::<String>());
 
         // Extract authors
-        let mut authors = Vec::new();
-
-        // First try to get authors from JSON-LD metadata
-        if let Ok(script_selector) = Selector::parse("script[type='application/ld+json']") {
-            for script in document.select(&script_selector) {
-                if let Ok(json) = serde_json::from_str::<serde_json::Value>(script.text().collect::<String>().trim()) {
-                    // Try to get author from the JSON-LD data
-                    if let Some(author) = json.get("author") {
-                        match author {
-                            serde_json::Value::Array(arr) => {
-                                for author_obj in arr {
-                                    if let Some(name) = author_obj.get("name").and_then(|n| n.as_str()) {
-                                        authors.push(name.trim().to_string());
-                                    }
-                                }
-                            }
-                            serde_json::Value::Object(obj) => {
-                                if let Some(name) = obj.get("name").and_then(|n| n.as_str()) {
-                                    authors.push(name.trim().to_string());
-                                }
-                            }
-                            serde_json::Value::String(s) => {
-                                authors.push(s.trim().to_string());
-                            }
-                            _ => {}
-                        }
-                    }
-                }
-            }
-        }
+        let mut authors = jsonld::extract_authors(&document);
 
         // If no authors found in JSON-LD, try HTML selectors
         if authors.is_empty() {

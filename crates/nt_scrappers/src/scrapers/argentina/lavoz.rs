@@ -3,7 +3,7 @@ use chrono::Utc;
 use scraper::{Html, Selector};
 use nt_core::{Result};
 use nt_core::types::{Article, ArticleSection};
-use crate::scrapers::{Scraper};
+use crate::scrapers::{Scraper, jsonld};
 
 #[derive(Clone)]
 pub struct LaVozScraper;
@@ -14,6 +14,33 @@ impl LaVozScraper {
     }
 
     const BASE_URL: &'static str = "https://www.lavoz.com.ar";
+
+    // Helper function to filter URLs
+    fn filter_url(url: &str) -> bool {
+        // Skip URLs that are clearly not articles
+        if url.contains("/autor/")  // Skip author profile pages
+          || url.contains("/mi-usuario/")
+          || url.contains("/newsletter/")
+          || url.contains("/404")  // Skip 404 pages
+          || url.contains("/error") // Skip error pages
+          || url.contains("?_ga=") // Skip tracking URLs
+          || url.contains("voydeviaje") // Skip promotional travel content
+          || url.contains("/club/") // Skip club section
+          || url.contains("/beneficios/") // Skip benefits section
+          || url.contains("/descuentos/") // Skip discounts section
+          || url.contains("/avisos-") // Skip classified ads
+          || url.split("/").count() < 3 // Skip URLs that are too short to be articles
+          || url == Self::BASE_URL // Skip base URL
+          || url == format!("{}/", Self::BASE_URL) { // Skip base URL with trailing slash
+            return false;
+        }
+
+        // Get the last segment of the URL
+        let last_segment = url.split('/').filter(|s| !s.is_empty()).last().unwrap_or("");
+        
+        // If the last segment has more than 2 hyphens, it's likely an article
+        last_segment.chars().filter(|&c| c == '-').count() > 2
+    }
 }
 
 #[async_trait]
@@ -39,7 +66,6 @@ impl Scraper for LaVozScraper {
         let subtitle_selector = Selector::parse(".bajada").unwrap();
         let content_selector = Selector::parse(".body-nota p").unwrap();
         let date_selector = Selector::parse("time").unwrap();
-        let author_selector = Selector::parse(".firma").unwrap();
 
         let title = document
             .select(&title_selector)
@@ -52,12 +78,37 @@ impl Scraper for LaVozScraper {
             .next()
             .map(|el| el.text().collect::<String>());
 
-        // Extract authors
-        let mut authors = Vec::new();
-        for author_element in document.select(&author_selector) {
-            let author_text = author_element.text().collect::<String>().trim().to_string();
-            if !author_text.is_empty() {
-                authors.push(author_text);
+        let mut authors = jsonld::extract_authors(&document);
+
+        // If no authors found in JSON-LD, try HTML selectors
+        if authors.is_empty() {
+            // Try to get author from the text node after the date
+            if let Some(date_element) = document.select(&date_selector).next() {
+                if let Some(next_sibling) = date_element.next_sibling() {
+                    if let Some(text) = next_sibling.value().as_text() {
+                        let author_text = text.trim();
+                        if !author_text.is_empty() && !author_text.contains("Compartir") {
+                            authors.push(author_text.to_string());
+                        }
+                    }
+                }
+            }
+
+            // If still no authors found, try searching through siblings
+            if authors.is_empty() {
+                if let Some(date_element) = document.select(&date_selector).next() {
+                    if let Some(parent) = date_element.parent() {
+                        for sibling in parent.next_siblings() {
+                            if let Some(text) = sibling.value().as_text() {
+                                let text = text.trim();
+                                if !text.is_empty() && !text.contains("Compartir") {
+                                    authors.push(text.to_string());
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                }
             }
         }
 
@@ -114,51 +165,55 @@ impl Scraper for LaVozScraper {
     }
 
     async fn get_article_urls(&self) -> Result<Vec<String>> {
-        let response = reqwest::get(Self::BASE_URL).await?;
-        let html = response.text().await?;
-        let document = Html::parse_document(&html);
-
         let mut urls = Vec::new();
 
-        // Find all article links
-        if let Ok(link_selector) = Selector::parse("article a") {
-            for link in document.select(&link_selector) {
-                if let Some(href) = link.value().attr("href") {
-                    let url = if href.starts_with("http") {
-                        href.to_string()
-                    } else {
-                        format!("{}{}", Self::BASE_URL, href)
-                    };
-
-                    // Skip URLs that are clearly not articles
-                    if url.contains("/club/") 
-                       || url.contains("/ayuda/")
-                       || url.contains("/colecciones/")
-                       || url.contains("/edicionimpresa/")
-                       || url.contains("/foodit/")
-                       || url.contains("/lncampo/")
-                       || url.contains("/lnmas/")
-                       || url.contains("/masmusica/")
-                       || url.contains("/myaccount/")
-                       || url.contains("/newsletter/")
-                       || url.contains("/pdf/")
-                       || url.contains("/servicios/")
-                       || url.contains("/canchallena/")
-                       || url.contains("/mi-usuario/")
-                       || url.contains("?_ga=") // Skip tracking URLs
-                       || url.contains("/trucos/")
-                       || url.contains("/masterclass/")
-                       || url.contains("/remates")
-                       || url.contains("/avisos-")
-                       || url.contains("/beneficios")
-                       || url.contains("/descuentos") {
-                        continue;
+        // Process latest news section
+        {
+            let response = reqwest::get(format!("{}/lo-ultimo/", Self::BASE_URL)).await?;
+            let html = response.text().await?;
+            let document = Html::parse_document(&html);
+            
+            if let Ok(article_selector) = Selector::parse("article.story-card") {
+                for article in document.select(&article_selector) {
+                    if let Some(h3) = article.select(&Selector::parse("h3").unwrap()).next() {
+                        if let Some(link) = h3.select(&Selector::parse("a").unwrap()).next() {
+                            if let Some(href) = link.value().attr("href") {
+                                let url = if href.starts_with("http") {
+                                    href.to_string()
+                                } else {
+                                    format!("{}{}", Self::BASE_URL, href)
+                                };
+                                if Self::filter_url(&url) {
+                                    urls.push(url);
+                                }
+                            }
+                        }
                     }
+                }
+            }
+        }
 
-                    // Only include URLs that look like article URLs
-                    // Check for at least one slash and no double slashes in the path part
-                    if url.contains("/") && !url.split_once("://").map_or(false, |(_, path)| path.contains("//")) {
-                        urls.push(url);
+        // If we didn't find enough articles, also check the main page
+        if urls.len() < 10 {
+            let response = reqwest::get(Self::BASE_URL).await?;
+            let html = response.text().await?;
+            let document = Html::parse_document(&html);
+            
+            if let Ok(article_selector) = Selector::parse("article.story-card") {
+                for article in document.select(&article_selector) {
+                    if let Some(h3) = article.select(&Selector::parse("h3").unwrap()).next() {
+                        if let Some(link) = h3.select(&Selector::parse("a").unwrap()).next() {
+                            if let Some(href) = link.value().attr("href") {
+                                let url = if href.starts_with("http") {
+                                    href.to_string()
+                                } else {
+                                    format!("{}{}", Self::BASE_URL, href)
+                                };
+                                if Self::filter_url(&url) {
+                                    urls.push(url);
+                                }
+                            }
+                        }
                     }
                 }
             }
