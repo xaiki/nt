@@ -1,4 +1,5 @@
-FROM rust:1.75-slim-bullseye as builder
+# Use the official Rust image as a base
+FROM docker.io/rust:1.76-slim-bullseye as builder
 
 # Install build dependencies
 RUN apt-get update && apt-get install -y \
@@ -28,7 +29,7 @@ ARG FEATURES
 RUN cargo build --release --bin nt --features ${FEATURES}
 
 # Create a new stage with a minimal image
-FROM debian:bullseye-slim
+FROM docker.io/debian:bullseye-slim
 
 RUN apt-get update && apt-get install -y \
     ca-certificates \
