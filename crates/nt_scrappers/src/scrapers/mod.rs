@@ -8,7 +8,7 @@ use argentina::clarin::ClarinScraper;
 use argentina::lanacion::LaNacionScraper;
 use argentina::lavoz::LaVozScraper;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum ArticleStatus {
     New,
     Updated,
@@ -184,13 +184,31 @@ impl<'a> ScraperManager<'a> {
             if let Some(scraper) = self.scrapers.iter_mut().find(|s| s.source() == source) {
                 // Get all article URLs
                 let urls = scraper.get_article_urls().await?;
+                println!("Found {} articles from {}", urls.len(), source);
 
-                // Scrape each article
-                for url in urls {
-                    match self.scrape_url(&url).await {
-                        Ok(result) => results.push(result),
-                        Err(e) => eprintln!("Failed to scrape {}: {}", url, e),
+                // Process articles in batches of 5
+                let batch_size = 5;
+                for chunk in urls.chunks(batch_size) {
+                    let mut batch_results = Vec::new();
+                    
+                    // Process each URL in the batch
+                    for url in chunk {
+                        match self.scrape_url(url).await {
+                            Ok(result) => {
+                                let (article, status) = result.clone();
+                                let emoji = match status {
+                                    ArticleStatus::New => "💥",
+                                    ArticleStatus::Updated => "👻",
+                                    ArticleStatus::Unchanged => "✅",
+                                };
+                                println!("{} {} - {}", emoji, article.title, article.url);
+                                batch_results.push(result);
+                            }
+                            Err(e) => eprintln!("Failed to scrape {}: {}", url, e),
+                        }
                     }
+                    
+                    results.extend(batch_results);
                 }
             }
         }

@@ -26,17 +26,35 @@ pub async fn handle_command(args: ScraperArgs, storage: &dyn ArticleStorage) -> 
     match args.command {
         ScraperCommands::Scrape { source } => {
             let (country, name) = parse_source(&source)?;
-            let scraper = get_scraper(country, name)?;
-            
             let mut manager = ScraperManager::new(storage);
-            manager.add_scraper(scraper);
+            
+            if let Some(name) = name {
+                // Scrape a specific source
+                let scraper = get_scraper(country, name)?;
+                manager.add_scraper(scraper);
+            } else {
+                // Scrape all sources for the country
+                if let Some(scrapers) = get_all_scrapers().get(country) {
+                    for scraper in scrapers {
+                        let s = scraper.lock().unwrap();
+                        let cloned = s.clone();
+                        drop(s); // Release the lock
+                        manager.add_scraper(cloned);
+                    }
+                } else {
+                    return Err(nt_core::Error::Scraping(format!(
+                        "Country not supported: {}",
+                        country
+                    )));
+                }
+            }
             
             let results = manager.scrape_all().await?;
             for (article, status) in results {
                 let emoji = match status {
                     ArticleStatus::New => "💥",
-                    ArticleStatus::Updated => "📝",
-                    ArticleStatus::Unchanged => "⏭️",
+                    ArticleStatus::Updated => "👻",
+                    ArticleStatus::Unchanged => "✅",
                 };
                 println!("{} {} - {}", emoji, article.title, article.url);
             }
@@ -66,14 +84,14 @@ pub async fn handle_command(args: ScraperArgs, storage: &dyn ArticleStorage) -> 
     Ok(())
 }
 
-fn parse_source(source: &str) -> Result<(&str, &str)> {
+fn parse_source(source: &str) -> Result<(&str, Option<&str>)> {
     let parts: Vec<&str> = source.split('/').collect();
-    if parts.len() != 2 {
+    if parts.len() > 2 {
         return Err(nt_core::Error::Scraping(
-            "Invalid source format. Expected: country/source".to_string(),
+            "Invalid source format. Expected: country or country/source".to_string(),
         ));
     }
-    Ok((parts[0], parts[1]))
+    Ok((parts[0], parts.get(1).copied()))
 }
 
 fn get_all_scrapers() -> HashMap<String, Vec<Arc<Mutex<ScraperType>>>> {

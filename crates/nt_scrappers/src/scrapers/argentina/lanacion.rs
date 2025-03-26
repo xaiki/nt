@@ -32,8 +32,19 @@ impl Scraper for LaNacionScraper {
 
     async fn scrape_article(&mut self, url: &str) -> Result<Article> {
         let response = reqwest::get(url).await?;
+        
+        // Check if we were redirected to the subscription page
+        if response.url().to_string().contains("suscripciones.lanacion.com.ar") {
+            return Err(nt_core::Error::Scraping("Article is subscription-only (redirected to suscripciones)".to_string()));
+        }
+
         let html = response.text().await?;
         let document = Html::parse_document(&html);
+
+        // Check for subscription-only content message
+        if html.contains("Este contenido es sólo para suscriptores") {
+            return Err(nt_core::Error::Scraping("Article is subscription-only".to_string()));
+        }
 
         // Updated selectors for La Nacion's structure
         let title_selector = Selector::parse("h1").unwrap();
