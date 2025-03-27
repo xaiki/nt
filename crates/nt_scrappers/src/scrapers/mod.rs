@@ -2,6 +2,7 @@ use async_trait::async_trait;
 use nt_core::{Article, Result, Error, storage::ArticleStorage};
 use scraper::{Html, Selector};
 use url::Url;
+use std::fmt::Debug;
 
 pub mod argentina;
 pub mod jsonld;
@@ -16,10 +17,23 @@ pub enum ArticleStatus {
     Unchanged,
 }
 
+#[derive(Debug, Clone)]
+pub struct RegionMetadata {
+    pub name: &'static str,
+    pub emoji: &'static str,
+}
+
+#[derive(Debug, Clone)]
+pub struct SourceMetadata {
+    pub name: &'static str,
+    pub emoji: &'static str,
+    pub region: RegionMetadata,
+}
+
 #[async_trait]
-pub trait Scraper: Send + Sync {
-    /// Returns the name of the news source
-    fn source(&self) -> &str;
+pub trait Scraper: Send + Sync + Debug {
+    /// Returns metadata about the news source
+    fn source_metadata(&self) -> SourceMetadata;
     
     /// Returns true if this scraper can handle the given URL
     fn can_handle(&self, url: &str) -> bool;
@@ -31,9 +45,7 @@ pub trait Scraper: Send + Sync {
     async fn get_article_urls(&self) -> Result<Vec<String>>;
 
     /// Returns a list of CLI shorthand names for this scraper
-    fn cli_names(&self) -> Vec<&str> {
-        vec![]
-    }
+    fn cli_names(&self) -> Vec<&str>;
 }
 
 /// Enum that holds all possible scraper types
@@ -45,11 +57,11 @@ pub enum ScraperType {
 }
 
 impl ScraperType {
-    pub fn source(&self) -> &str {
+    pub fn source_metadata(&self) -> SourceMetadata {
         match self {
-            ScraperType::Clarin(s) => s.source(),
-            ScraperType::LaNacion(s) => s.source(),
-            ScraperType::LaVoz(s) => s.source(),
+            ScraperType::Clarin(s) => s.source_metadata(),
+            ScraperType::LaNacion(s) => s.source_metadata(),
+            ScraperType::LaVoz(s) => s.source_metadata(),
         }
     }
 
@@ -145,6 +157,30 @@ impl<'a> ScraperManager<'a> {
         self.scrapers.push(scraper);
     }
 
+    pub fn get_scrapers(&self) -> &[ScraperType] {
+        &self.scrapers
+    }
+
+    pub fn get_scraper_for_url(&mut self, url: &str) -> Result<&mut ScraperType> {
+        self.scrapers
+            .iter_mut()
+            .find(|s| s.can_handle(url))
+            .ok_or_else(|| Error::Scraping(format!("No scraper found for URL: {}", url)))
+    }
+
+    pub fn get_scrapers_for_source(&self, source: &str) -> Result<Vec<&ScraperType>> {
+        let scrapers: Vec<&ScraperType> = self.scrapers
+            .iter()
+            .filter(|s| s.source_metadata().name.to_lowercase() == source.to_lowercase())
+            .collect();
+        
+        if scrapers.is_empty() {
+            Err(Error::Scraping(format!("No scraper found for source: {}", source)))
+        } else {
+            Ok(scrapers)
+        }
+    }
+
     pub async fn scrape_url(&mut self, url: &str) -> Result<(Article, ArticleStatus)> {
         // Find a scraper that can handle this URL
         let scraper = self.scrapers
@@ -156,7 +192,7 @@ impl<'a> ScraperManager<'a> {
         let article = scraper.scrape_article(url).await?;
 
         // Check if article exists in database
-        let existing_articles = self.storage.get_by_source(scraper.source()).await?;
+        let existing_articles = self.storage.get_by_source(scraper.source_metadata().name).await?;
         let status = if let Some(existing) = existing_articles.iter().find(|a| a.url == url) {
             if existing.content == article.content {
                 ArticleStatus::Unchanged
@@ -175,17 +211,21 @@ impl<'a> ScraperManager<'a> {
 
     pub async fn scrape_all(&mut self) -> Result<Vec<(Article, ArticleStatus)>> {
         let mut results = Vec::new();
+        let mut logger = crate::logging::init_logging();
 
         // Get all scrapers
-        let scraper_sources: Vec<String> = self.scrapers.iter().map(|s| s.source().to_string()).collect();
+        let scraper_sources: Vec<String> = self.scrapers.iter().map(|s| s.source_metadata().name.to_string()).collect();
 
         // For each scraper
         for source in scraper_sources {
             // Find the scraper again to get a mutable reference
-            if let Some(scraper) = self.scrapers.iter_mut().find(|s| s.source() == source) {
+            if let Some(scraper) = self.scrapers.iter_mut().find(|s| s.source_metadata().name == source) {
                 // Get all article URLs
                 let urls = scraper.get_article_urls().await?;
-                println!("Found {} articles from {}", urls.len(), source);
+                let metadata = scraper.source_metadata();
+                let prefix = format!("{} {} |", metadata.region.emoji, metadata.emoji);
+                logger = logger.with_new_prefixes(prefix);
+                logger.info(&format!("Found {} articles", urls.len()));
 
                 // Process articles in batches of 5
                 let batch_size = 5;
@@ -197,28 +237,33 @@ impl<'a> ScraperManager<'a> {
                         match self.scrape_url(url).await {
                             Ok(result) => {
                                 let (article, status) = result.clone();
-                                let emoji = match status {
+                                let status_emoji = match status {
                                     ArticleStatus::New => "💥",
                                     ArticleStatus::Updated => "👻",
                                     ArticleStatus::Unchanged => "✅",
                                 };
                                 let authors_str = if article.authors.is_empty() {
-                                    String::new()
+                                    logger.debug("🤷🏾‍♂️ No authors found");
+                                    String::from("🤷🏾‍♂️ ")
                                 } else {
                                     format!(" | by \x1b[1m{}\x1b[0m", article.authors.join(", "))
                                 };
-                                println!("{} {} - {}{}", emoji, article.title, article.url, authors_str);
+                                let message = format!("{} {} - {}{}", 
+                                    status_emoji, 
+                                    article.title, 
+                                    article.url, 
+                                    authors_str
+                                );
+                                logger.info(&message);
                                 batch_results.push(result);
                             }
-                            Err(e) => eprintln!("Failed to scrape {}: {}", url, e),
+                            Err(e) => logger.error(&format!("Failed to scrape: {}", e)),
                         }
                     }
-                    
                     results.extend(batch_results);
                 }
             }
         }
-
         Ok(results)
     }
 }

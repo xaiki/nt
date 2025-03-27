@@ -3,9 +3,10 @@ use chrono::Utc;
 use scraper::{Html, Selector};
 use nt_core::{Result};
 use nt_core::types::{Article, ArticleSection};
-use crate::scrapers::{Scraper, jsonld};
+use crate::scrapers::{Scraper, jsonld, SourceMetadata};
+use super::REGION;
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct LaVozScraper;
 
 impl LaVozScraper {
@@ -45,8 +46,12 @@ impl LaVozScraper {
 
 #[async_trait]
 impl Scraper for LaVozScraper {
-    fn source(&self) -> &str {
-        "La Voz"
+    fn source_metadata(&self) -> SourceMetadata {
+        SourceMetadata {
+            name: "La Voz",
+            emoji: "🧢",
+            region: REGION,
+        }
     }
 
     fn can_handle(&self, url: &str) -> bool {
@@ -89,6 +94,18 @@ impl Scraper for LaVozScraper {
                         let author_text = text.trim();
                         if !author_text.is_empty() && !author_text.contains("Compartir") {
                             authors.push(author_text.to_string());
+                        }
+                    }
+                }
+            }
+
+            // If still no authors found, try searching for "Redacción LAVOZ"
+            if authors.is_empty() {
+                if let Ok(author_selector) = Selector::parse(".firma") {
+                    for author in document.select(&author_selector) {
+                        let author_text = author.text().collect::<String>().trim().to_string();
+                        if !author_text.is_empty() && !author_text.contains("Compartir") {
+                            authors.push(author_text);
                         }
                     }
                 }
@@ -158,7 +175,7 @@ impl Scraper for LaVozScraper {
             content,
             summary: None,
             published_at,
-            source: self.source().to_string(),
+            source: self.source_metadata().name.to_string(),
             sections,
             authors,
         })
