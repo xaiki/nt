@@ -1,0 +1,53 @@
+version: '3.8'
+
+services:
+  app_qdrant:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+      args:
+        FEATURES: "qdrant,ollama"
+    environment:
+      - SCRAPE_INTERVAL=3600
+      - STORAGE=qdrant
+      - MODEL_URL=http://ollama:11434
+      - BACKEND_URL=http://qdrant:6334
+    depends_on:
+      - qdrant
+      - ollama
+    volumes:
+      - ../data:/app/data
+    networks:
+      - nt-network
+
+  qdrant:
+    image: qdrant/qdrant:latest
+    ports:
+      - "6333:6333"
+      - "6334:6334"
+    volumes:
+      - qdrant_data:/qdrant/storage
+    environment:
+      - QDRANT_VECTOR_SIZE=768
+    networks:
+      - nt-network
+
+  ollama:
+    build:
+      context: .
+      dockerfile: Dockerfile.ollama
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+    networks:
+      - nt-network
+
+volumes:
+  qdrant_data:
+  ollama_data:
+  chroma_data:
+
+networks:
+  nt-network:
+    driver: bridge 

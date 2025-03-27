@@ -18,7 +18,6 @@ COPY crates/nt_scrappers/Cargo.toml ./crates/nt_scrappers/
 COPY crates/nt_storage/Cargo.toml ./crates/nt_storage/
 COPY crates/nt_web/Cargo.toml ./crates/nt_web/
 
-
 # Copy source code
 COPY crates/nt_core/src ./crates/nt_core/src
 COPY crates/nt_cli/src ./crates/nt_cli/src
@@ -26,7 +25,6 @@ COPY crates/nt_inference/src ./crates/nt_inference/src
 COPY crates/nt_scrappers/src ./crates/nt_scrappers/src
 COPY crates/nt_storage/src ./crates/nt_storage/src
 COPY crates/nt_web/src ./crates/nt_web/src
-
 
 # Build the application
 ARG FEATURES
@@ -49,6 +47,22 @@ COPY --from=builder /app/target/release/nt .
 # Set environment variables with defaults
 ENV SCRAPE_INTERVAL=3600
 ENV STORAGE=sqlite
+ENV MODEL_URL=""
+ENV BACKEND_URL=""
 
-# Set the binary as the entrypoint with periodic scraping as default
-ENTRYPOINT ["/bin/sh", "-c", "./nt --storage ${STORAGE} scrape source --interval ${SCRAPE_INTERVAL}"] 
+# Create a shell script to handle the command
+RUN echo '#!/bin/sh\n\
+if [ -n "$MODEL_URL" ]; then\n\
+    MODEL_ARG="--model-url $MODEL_URL"\n\
+fi\n\
+if [ -n "$BACKEND_URL" ]; then\n\
+    BACKEND_ARG="--backend-url $BACKEND_URL"\n\
+fi\n\
+if [ -n "$STORAGE" ]; then\n\
+    STORAGE_ARG="--storage $STORAGE"\n\
+fi\n\
+./nt ${STORAGE_ARG} ${MODEL_ARG} ${BACKEND_ARG} scrape source --interval ${SCRAPE_INTERVAL}' > /app/entrypoint.sh && \
+    chmod +x /app/entrypoint.sh
+
+# Set the shell script as the entrypoint
+ENTRYPOINT ["/app/entrypoint.sh"] 

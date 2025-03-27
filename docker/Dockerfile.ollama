@@ -1,0 +1,11 @@
+FROM ollama/ollama:latest
+
+# Create startup script
+RUN echo '#!/bin/sh' > /start.sh && \
+    echo 'ollama serve &' >> /start.sh && \
+    echo 'sleep 10' >> /start.sh && \
+    echo 'ollama pull gemma:3b' >> /start.sh && \
+    echo 'tail -f /dev/null' >> /start.sh && \
+    chmod +x /start.sh
+
+ENTRYPOINT ["/start.sh"] 

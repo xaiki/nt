@@ -6,15 +6,17 @@ services:
       context: .
       dockerfile: Dockerfile
       args:
-        - FEATURES=chroma
+        - FEATURES=chroma,ollama
     depends_on:
       chroma:
         condition: service_healthy
+      ollama:
+        condition: service_started
     environment:
       - RUST_LOG=info
       - STORAGE=chroma
-      - CHROMA_HOST=chroma
-      - CHROMA_PORT=8000
+      - MODEL_URL=http://ollama:11434
+      - BACKEND_URL=http://chroma:8000
     volumes:
       - ./data:/app/data
     networks:
@@ -40,8 +42,24 @@ services:
       retries: 3
       start_period: 10s
 
+  ollama:
+    image: ollama/ollama:latest
+    ports:
+      - "11434:11434"
+    expose:
+      - 11434
+    volumes:
+      - ollama_data:/root/.ollama
+    environment:
+      - OLLAMA_ORIGINS=*
+      - OLLAMA_HOST=0.0.0.0
+    command: ["sh", "-c", "ollama serve & sleep 10 && ollama pull 8b-wraith/deepseek-v3-0324 && tail -f /dev/null"]
+    networks:
+      - nt-network
+
 volumes:
   chroma_data:
+  ollama_data:
 
 networks:
   nt-network:
