@@ -2,68 +2,94 @@ use std::sync::Arc;
 use std::fmt;
 use nt_core::{Result, Article, ArticleSection};
 use super::{InferenceModel, Config};
+use crate::ModelConfig;
+use crate::InferenceConfig;
 use nt_storage::{BackendConfig, EmbeddingModel};
 #[cfg(feature = "qdrant")]
-use nt_storage::backends::qdrant::{QdrantConfig, QdrantStore};
-#[cfg(feature = "sqlite")]
-use nt_storage::backends::sqlite::{SQLiteConfig, SQLiteStore};
+use nt_storage::backends::qdrant::QdrantConfig;
 
 #[cfg(feature = "qdrant")]
 use langchain_rust::{
     embedding::{openai::{OpenAiEmbedder, OpenAIConfig}, Embedder},
     vectorstore::qdrant::{Qdrant, StoreBuilder, Store},
-    vectorstore::VectorStore,
-};
-
-#[cfg(feature = "sqlite")]
-use langchain_rust::{
-    embedding::sqlite::SQLiteEmbeddings,
-    vectorstore::sqlite::SQLiteStore,
 };
 
 #[cfg(feature = "ollama")]
 use langchain_rust::{
-    embedding::ollama::OllamaEmbeddings,
-    llm::ollama::client::Ollama,
+    llm::ollama::client::{Ollama, OllamaClient},
+    llm::client::GenerationOptions,
+    language_models::llm::LLM,
 };
+
+#[derive(Debug)]
+pub struct LangChainModelConfig {
+    ollama_host: String,
+}
+
+impl Default for LangChainModelConfig {
+    fn default() -> Self {
+        Self {
+            ollama_host: "http://localhost:11434".to_string(),
+        }
+    }
+}
+
+impl ModelConfig for LangChainModelConfig {
+    fn from_inference_config(config: &InferenceConfig) -> Self {
+        Self {
+            ollama_host: config.model_url.clone().unwrap_or_else(|| "http://localhost:11434".to_string()),
+        }
+    }
+}
+
+impl LangChainModelConfig {
+    pub fn get_ollama_host(&self) -> &str {
+        &self.ollama_host
+    }
+}
 
 pub struct LangChainModel {
     embedder: Arc<OpenAiEmbedder<OpenAIConfig>>,
     #[cfg(feature = "qdrant")]
     qdrant_store: Option<Arc<Store>>,
-    #[cfg(feature = "sqlite")]
-    sqlite_store: Option<Arc<SQLiteStore>>,
     #[cfg(feature = "ollama")]
     ollama_client: Option<Arc<Ollama>>,
+    model_config: LangChainModelConfig,
 }
 
 impl LangChainModel {
-    pub fn new(_api_key: Option<String>) -> Result<Self> {
-        let config = OpenAIConfig::default();
-        let embedder = Arc::new(OpenAiEmbedder::new(config));
+    pub fn new(config: Option<Config>) -> Result<Self> {
+        let openai_config = OpenAIConfig::default();
+        let embedder = Arc::new(OpenAiEmbedder::new(openai_config));
+        
+        let model_config = if let Some(config) = &config {
+            LangChainModelConfig::from_inference_config(&config.inference_config)
+        } else {
+            LangChainModelConfig::default()
+        };
 
         #[cfg(feature = "qdrant")]
         let qdrant_store = None;
 
-        #[cfg(feature = "sqlite")]
-        let sqlite_store = None;
-
         #[cfg(feature = "ollama")]
-        let ollama_client = Some(Arc::new(Ollama::default().with_model("llama2")));
+        let ollama_client = Some(Arc::new(Ollama::new(
+            Arc::new(OllamaClient::new(model_config.get_ollama_host(), 11434)),
+            "llama2".to_string(),
+            Some(GenerationOptions::default()),
+        )));
 
         Ok(Self {
             embedder,
             #[cfg(feature = "qdrant")]
             qdrant_store,
-            #[cfg(feature = "sqlite")]
-            sqlite_store,
             #[cfg(feature = "ollama")]
             ollama_client,
+            model_config,
         })
     }
 
-    pub async fn with_backend_config<T: BackendConfig>(mut self, config: &T) -> Result<Self> {
-        match config.get_embedding_model() {
+    pub async fn with_backend_config(mut self, config: &BackendConfig) -> Result<Self> {
+        match config.embedding_model {
             EmbeddingModel::OpenAI => {
                 // Already using OpenAI embeddings
                 Ok(self)
@@ -77,15 +103,16 @@ impl LangChainModel {
             #[cfg(feature = "qdrant")]
             EmbeddingModel::Qdrant => {
                 let qdrant_config = QdrantConfig::new();
-                let client = Qdrant::from_url(&qdrant_config.get_url())
+                let client = Qdrant::from_url(&qdrant_config.config.url)
                     .build()
                     .map_err(|e| nt_core::Error::External(anyhow::anyhow!("Failed to build Qdrant client: {}", e)))?;
 
-                let embedder = OpenAiEmbedder::new(OpenAIConfig::default());
+                let openai_config = OpenAIConfig::default();
+                let embedder = OpenAiEmbedder::new(openai_config);
                 let store = StoreBuilder::new()
                     .embedder(embedder)
                     .client(client)
-                    .collection_name(&qdrant_config.get_collection())
+                    .collection_name(&qdrant_config.config.collection)
                     .build()
                     .await
                     .map_err(|e| nt_core::Error::External(anyhow::anyhow!("Failed to build Qdrant store: {}", e)))?;
@@ -93,23 +120,15 @@ impl LangChainModel {
                 self.qdrant_store = Some(Arc::new(store));
                 Ok(self)
             }
-            #[cfg(feature = "sqlite")]
-            EmbeddingModel::SQLite => {
-                let sqlite_config = SQLiteConfig::new();
-                let embeddings = Arc::new(SQLiteEmbeddings::new(
-                    sqlite_config.get_url(),
-                    sqlite_config.get_collection(),
-                ));
-                self.embedder = embeddings;
-                Ok(self)
-            }
             #[cfg(not(feature = "qdrant"))]
             EmbeddingModel::Qdrant => {
                 Err(nt_core::Error::External(anyhow::anyhow!("Qdrant feature not enabled")))
             }
-            #[cfg(not(feature = "sqlite"))]
             EmbeddingModel::SQLite => {
-                Err(nt_core::Error::External(anyhow::anyhow!("SQLite feature not enabled")))
+                // For SQLite, we'll use OpenAI embeddings since langchain_rust doesn't support SQLite embeddings
+                let openai_config = OpenAIConfig::default();
+                self.embedder = Arc::new(OpenAiEmbedder::new(openai_config));
+                Ok(self)
             }
         }
     }
@@ -169,8 +188,6 @@ impl fmt::Debug for LangChainModel {
         debug.field("embedder", &"OpenAI");
         #[cfg(feature = "qdrant")]
         debug.field("qdrant_store", &self.qdrant_store.is_some());
-        #[cfg(feature = "sqlite")]
-        debug.field("sqlite_store", &self.sqlite_store.is_some());
         #[cfg(feature = "ollama")]
         debug.field("ollama_client", &self.ollama_client.is_some());
         debug.finish()
