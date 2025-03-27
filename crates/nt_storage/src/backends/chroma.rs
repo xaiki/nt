@@ -1,52 +1,68 @@
 use async_trait::async_trait;
-use nt_core::{Article, Result, storage::ArticleStorage};
+use nt_core::{Article, Result, ArticleStorage};
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use chromadb::v1::{
     client::ChromaClient,
     collection::{CollectionEntries, QueryOptions},
 };
-use crate::StorageBackend;
+use crate::{StorageBackend, BackendConfig, EmbeddingModel};
+use std::fmt;
+use std::env;
 
-#[async_trait::async_trait]
-pub trait EmbeddingModel: Send + Sync {
-    async fn generate_embeddings(&self, text: &str) -> Result<Vec<f32>>;
+#[derive(Debug, Clone)]
+pub struct ChromaConfig {
+    pub url: String,
+    pub collection: String,
+    pub embedding_model: EmbeddingModel,
 }
 
-pub struct DefaultEmbeddingModel;
+impl ChromaConfig {
+    pub fn new() -> Self {
+        let host = env::var("CHROMA_HOST").unwrap_or_else(|_| "chroma".to_string());
+        let url = format!("http://{}:8000", host);
+        Self {
+            url,
+            collection: "articles".to_string(),
+            embedding_model: EmbeddingModel::default(),
+        }
+    }
+}
 
-#[async_trait::async_trait]
-impl EmbeddingModel for DefaultEmbeddingModel {
-    async fn generate_embeddings(&self, _text: &str) -> Result<Vec<f32>> {
-        // For now, return a dummy embedding
-        Ok(vec![0.0; 384])
+impl BackendConfig for ChromaConfig {
+    fn get_url(&self) -> String {
+        self.url.clone()
+    }
+
+    fn get_collection(&self) -> String {
+        self.collection.clone()
+    }
+
+    fn get_embedding_model(&self) -> EmbeddingModel {
+        self.embedding_model.clone()
     }
 }
 
 pub struct EmbeddingStore {
     client: Arc<ChromaClient>,
     collection_name: String,
-    model: Arc<dyn EmbeddingModel>,
 }
 
 impl EmbeddingStore {
-    pub fn new(collection_name: String, model: Arc<dyn EmbeddingModel>) -> Result<Self> {
+    pub fn new(collection_name: String) -> Result<Self> {
         let client = Arc::new(ChromaClient::new(Default::default()));
         Ok(Self {
             client,
             collection_name,
-            model,
         })
     }
 
-    pub async fn store_article(&self, article: &Article) -> Result<()> {
+    pub async fn store_article(&self, article: &Article, embedding: &[f32]) -> Result<()> {
         let collection = self.client.get_or_create_collection(&self.collection_name, None)
             .map_err(|e| nt_core::Error::External(e))?;
 
         let doc_str = serde_json::to_string(article)
             .map_err(|e| nt_core::Error::Serialization(e))?;
-
-        let embedding = self.model.generate_embeddings(&article.content).await?;
 
         let metadata = serde_json::Map::from_iter(vec![
             ("url".to_string(), serde_json::Value::String(article.url.clone())),
@@ -58,7 +74,7 @@ impl EmbeddingStore {
 
         let entries = CollectionEntries {
             ids: vec![&article.url],
-            embeddings: Some(vec![embedding]),
+            embeddings: Some(vec![embedding.to_vec()]),
             metadatas: Some(vec![metadata]),
             documents: None,
         };
@@ -69,14 +85,12 @@ impl EmbeddingStore {
         Ok(())
     }
 
-    pub async fn find_similar(&self, article: &Article, limit: usize) -> Result<Vec<Article>> {
+    pub async fn find_similar(&self, embedding: &[f32], limit: usize) -> Result<Vec<Article>> {
         let collection = self.client.get_or_create_collection(&self.collection_name, None)
             .map_err(|e| nt_core::Error::External(e))?;
 
-        let embedding = self.model.generate_embeddings(&article.content).await?;
-
         let query_options = QueryOptions {
-            query_embeddings: Some(vec![embedding]),
+            query_embeddings: Some(vec![embedding.to_vec()]),
             query_texts: None,
             n_results: Some(limit),
             where_document: None,
@@ -116,7 +130,7 @@ impl EmbeddingStore {
         ]));
 
         let query_options = QueryOptions {
-            query_embeddings: Some(vec![vec![0.0; 384]]), // Dummy embedding
+            query_embeddings: Some(vec![vec![0.0; 384]]), // Dummy embedding for filtering
             query_texts: None,
             n_results: Some(100), // Adjust as needed
             where_document: None,
@@ -148,34 +162,71 @@ impl EmbeddingStore {
     }
 }
 
-pub struct ChromaDBStorage {
-    store: Arc<RwLock<EmbeddingStore>>,
+pub struct ChromaStore {
+    url: String,
+    collection: String,
 }
 
-impl StorageBackend for ChromaDBStorage {
-    fn get_error_message() -> &'static str {
-        "ChromaDB should be running on http://localhost:8000"
+impl ChromaStore {
+    pub fn new(url: String, collection: String) -> Self {
+        Self {
+            url,
+            collection,
+        }
     }
 
-    async fn new() -> Result<Self> {
-        let store = Arc::new(RwLock::new(EmbeddingStore::new(
-            "articles".to_string(),
-            Arc::new(DefaultEmbeddingModel),
-        )?));
+    pub async fn store_article(&self, article: &Article, embedding: &[f32]) -> Result<()> {
+        // TODO: Implement Chroma storage
+        Ok(())
+    }
+
+    pub async fn find_similar(&self, embedding: &[f32], limit: usize) -> Result<Vec<Article>> {
+        // TODO: Implement Chroma similarity search
+        Ok(Vec::new())
+    }
+
+    pub async fn get_by_source(&self, source: &str) -> Result<Vec<Article>> {
+        // TODO: Implement Chroma source filtering
+        Ok(Vec::new())
+    }
+}
+
+pub struct ChromaStorage {
+    store: Arc<RwLock<ChromaStore>>,
+}
+
+impl ChromaStorage {
+    pub async fn new() -> Result<Self> {
+        let config = ChromaConfig::new();
+        let store = Arc::new(RwLock::new(ChromaStore::new(
+            config.get_url(),
+            config.get_collection(),
+        )));
         Ok(Self { store })
     }
 }
 
 #[async_trait]
-impl ArticleStorage for ChromaDBStorage {
-    async fn store_article(&self, article: &Article) -> Result<()> {
-        let store = self.store.read().await;
-        store.store_article(article).await
+impl StorageBackend for ChromaStorage {
+    fn get_error_message() -> &'static str {
+        "ChromaDB should be running on http://localhost:8000"
     }
 
-    async fn find_similar(&self, article: &Article, limit: usize) -> Result<Vec<Article>> {
+    async fn new() -> Result<Self> where Self: Sized {
+        Self::new().await
+    }
+}
+
+#[async_trait]
+impl ArticleStorage for ChromaStorage {
+    async fn store_article(&self, article: &Article, embedding: &[f32]) -> Result<()> {
         let store = self.store.read().await;
-        store.find_similar(article, limit).await
+        store.store_article(article, embedding).await
+    }
+
+    async fn find_similar(&self, embedding: &[f32], limit: usize) -> Result<Vec<Article>> {
+        let store = self.store.read().await;
+        store.find_similar(embedding, limit).await
     }
 
     async fn get_by_source(&self, source: &str) -> Result<Vec<Article>> {
@@ -187,23 +238,25 @@ impl ArticleStorage for ChromaDBStorage {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use chrono::Utc;
 
     #[tokio::test]
     async fn test_chroma_storage() {
-        let storage = ChromaDBStorage::new().await.unwrap();
         let article = Article {
-            url: "http://example.com".to_string(),
+            url: "http://test.com".to_string(),
             title: "Test Article".to_string(),
-            content: "Test content".to_string(),
-            published_at: chrono::Utc::now(),
+            content: "This is a test article about politics.".to_string(),
+            published_at: Utc::now(),
             source: "test".to_string(),
             sections: vec![],
             summary: None,
             authors: vec!["Test Author".to_string()],
         };
 
-        storage.store_article(&article).await.unwrap();
-        let similar = storage.find_similar(&article, 1).await.unwrap();
+        let storage = ChromaStorage::new().await.unwrap();
+        let embedding = vec![0.0; 384];
+        storage.store_article(&article, &embedding).await.unwrap();
+        let similar = storage.find_similar(&embedding, 1).await.unwrap();
         assert!(!similar.is_empty());
     }
 } 

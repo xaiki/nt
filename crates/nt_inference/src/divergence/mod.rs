@@ -81,7 +81,7 @@ pub struct Divergence {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::models::DeepSeekModel;
+    use crate::models::deepseek::DeepSeekModel;
     use chrono::Utc;
 
     #[tokio::test]

@@ -1,9 +1,7 @@
 use async_trait::async_trait;
 use chrono::Utc;
 use scraper::{Html, Selector};
-use nt_core::{Result};
-use nt_core::types::Article;
-use crate::scrapers::{Scraper, SourceMetadata};
+use nt_core::{Result, Article, Scraper, SourceMetadata};
 use serde_json;
 use super::REGION;
 

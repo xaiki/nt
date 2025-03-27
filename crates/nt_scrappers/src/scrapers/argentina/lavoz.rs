@@ -1,9 +1,8 @@
 use async_trait::async_trait;
 use chrono::Utc;
 use scraper::{Html, Selector};
-use nt_core::{Result};
-use nt_core::types::{Article, ArticleSection};
-use crate::scrapers::{Scraper, jsonld, SourceMetadata};
+use nt_core::{Result, Article, Scraper, SourceMetadata, ArticleSection};
+use crate::scrapers::jsonld;
 use super::REGION;
 
 #[derive(Debug, Clone)]

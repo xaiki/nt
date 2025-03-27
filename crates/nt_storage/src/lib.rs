@@ -1,11 +1,39 @@
-use nt_core::{Result, storage::ArticleStorage};
-use std::future::Future;
+use async_trait::async_trait;
+use nt_core::Result;
+use std::fmt;
+use std::fmt::Debug;
 
 pub mod backends;
 
-pub trait StorageBackend: ArticleStorage {
+pub use backends::*;
+
+#[async_trait]
+pub trait StorageBackend: Send + Sync {
     fn get_error_message() -> &'static str;
-    fn new() -> impl Future<Output = Result<Self>> + Send where Self: Sized;
+    async fn new() -> Result<Self> where Self: Sized;
 }
 
-pub use backends::*;
+#[derive(Debug, Clone)]
+pub enum EmbeddingModel {
+    OpenAI,
+    DeepSeek,
+    Qdrant,
+    SQLite,
+}
+
+impl Default for EmbeddingModel {
+    fn default() -> Self {
+        Self::DeepSeek
+    }
+}
+
+pub trait BackendConfig: fmt::Debug {
+    fn get_url(&self) -> String;
+    fn get_collection(&self) -> String;
+    fn get_embedding_model(&self) -> EmbeddingModel;
+}
+
+pub mod prelude {
+    pub use super::BackendConfig;
+    pub use super::backends::*;
+}

@@ -1,42 +1,49 @@
-use async_trait::async_trait;
-use nt_core::{Article, ArticleSection, Result};
+use nt_core::{Result, InferenceModel};
+use nt_storage::BackendConfig;
 
 pub mod models;
 pub mod embeddings;
 pub mod divergence;
 
-#[async_trait]
-pub trait InferenceModel: Send + Sync {
-    /// Returns the name of the model
-    fn name(&self) -> &str;
-    
-    /// Generates a summary for the given article
-    async fn summarize_article(&self, article: &Article) -> Result<String>;
-    
-    /// Generates summaries for each section of the article
-    async fn summarize_sections(&self, sections: &[ArticleSection]) -> Result<Vec<String>>;
-    
-    /// Generates embeddings for the given text
-    async fn generate_embeddings(&self, text: &str) -> Result<Vec<f32>>;
+#[derive(Debug)]
+pub struct Config {
+    pub api_key: Option<String>,
+    pub model_name: Option<String>,
+    pub backend_config: Box<dyn BackendConfig>,
+}
+
+impl Clone for Config {
+    fn clone(&self) -> Self {
+        Self {
+            api_key: self.api_key.clone(),
+            model_name: self.model_name.clone(),
+            backend_config: Box::new(nt_storage::backends::memory::MemoryConfig::new()),
+        }
+    }
+}
+
+impl Default for Config {
+    fn default() -> Self {
+        Self {
+            api_key: None,
+            model_name: None,
+            backend_config: Box::new(nt_storage::backends::memory::MemoryConfig::new()),
+        }
+    }
 }
 
 pub mod prelude {
-    pub use super::InferenceModel;
+    pub use super::Config;
+    pub use super::models::create_model;
     pub use nt_core::{Article, ArticleSection, Result, Error};
 }
 
-/// Configuration for the inference models
-#[derive(Debug, Clone, serde::Deserialize)]
-pub struct Config {
-    pub model_name: String,
-    pub model_path: Option<String>,
-    pub api_key: Option<String>,
-} 
+pub use models::create_model;
 
 #[cfg(test)]
 mod tests {
     use std::sync::Arc;
-    use crate::models::DeepSeekModel;
+    use crate::models::deepseek::DeepSeekModel;
     use crate::divergence::DivergenceAnalyzer;
 
     #[tokio::test]

@@ -1,14 +1,13 @@
 pub mod scrapers;
 pub mod cli;
-#[macro_use]
-mod logging;
+pub mod logging;
+pub mod manager;
 
-pub use scrapers::ScraperManager;
-
+pub use scrapers::ScraperType;
+pub use nt_core::{Scraper, ArticleStatus, SourceMetadata, RegionMetadata};
 pub use cli::{ScraperArgs, ScraperCommands, handle_command};
-pub use scrapers::Scraper;
+pub use manager::ScraperManager;
 
 pub mod prelude {
-    pub use super::scrapers::Scraper;
-    pub use nt_core::{Article, Result, Error};
+    pub use nt_core::{Article, Result, Error, Scraper};
 } 

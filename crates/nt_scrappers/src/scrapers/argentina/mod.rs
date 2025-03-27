@@ -1,8 +1,7 @@
 use std::sync::{Arc, Mutex};
 use async_trait::async_trait;
 use crate::scrapers::{Scraper, ScraperType};
-use super::RegionMetadata;
-
+use nt_core::RegionMetadata;
 pub mod clarin;
 pub mod lanacion;
 pub mod lavoz;

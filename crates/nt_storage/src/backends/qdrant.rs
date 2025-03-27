@@ -1,5 +1,5 @@
 use async_trait::async_trait;
-use nt_core::{Article, Result, storage::ArticleStorage};
+use nt_core::{Article, Result, ArticleStorage};
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use qdrant_client::{
@@ -12,32 +12,48 @@ use qdrant_client::{
     },
 };
 use std::collections::HashMap;
-use crate::StorageBackend;
+use crate::{StorageBackend, BackendConfig, EmbeddingModel};
 use std::env;
 use uuid::Uuid;
 
-#[async_trait::async_trait]
-pub trait EmbeddingModel: Send + Sync {
-    async fn generate_embeddings(&self, text: &str) -> Result<Vec<f32>>;
+#[derive(Debug, Clone)]
+pub struct QdrantConfig {
+    pub url: String,
+    pub collection: String,
 }
 
-pub struct DefaultEmbeddingModel;
+impl QdrantConfig {
+    pub fn new() -> Self {
+        let host = env::var("QDRANT_HOST").unwrap_or_else(|_| "qdrant".to_string());
+        let url = format!("http://{}:6334", host);
+        Self {
+            url,
+            collection: "articles".to_string(),
+        }
+    }
+}
 
-#[async_trait::async_trait]
-impl EmbeddingModel for DefaultEmbeddingModel {
-    async fn generate_embeddings(&self, _text: &str) -> Result<Vec<f32>> {
-        Ok(vec![0.0; 384])
+impl BackendConfig for QdrantConfig {
+    fn get_url(&self) -> String {
+        self.url.clone()
+    }
+
+    fn get_collection(&self) -> String {
+        self.collection.clone()
+    }
+
+    fn get_embedding_model(&self) -> EmbeddingModel {
+        EmbeddingModel::Qdrant
     }
 }
 
 pub struct QdrantStore {
     client: Arc<Qdrant>,
     collection_name: String,
-    model: Arc<dyn EmbeddingModel>,
 }
 
 impl QdrantStore {
-    pub async fn new(collection_name: String, model: Arc<dyn EmbeddingModel>) -> Result<Self> {
+    pub async fn new(collection_name: String) -> Result<Self> {
         let host = env::var("QDRANT_HOST").unwrap_or_else(|_| "qdrant".to_string());
         let client = Qdrant::from_url(&format!("http://{}:6334", host))
             .build()
@@ -69,15 +85,12 @@ impl QdrantStore {
         Ok(Self {
             client,
             collection_name,
-            model,
         })
     }
 
-    pub async fn store_article(&self, article: &Article) -> Result<()> {
+    pub async fn store_article(&self, article: &Article, embedding: &[f32]) -> Result<()> {
         let doc_str = serde_json::to_string(article)
             .map_err(|e| nt_core::Error::Serialization(e))?;
-
-        let embedding = self.model.generate_embeddings(&article.content).await?;
 
         let mut payload = HashMap::new();
         payload.insert("url".to_string(), article.url.clone().into());
@@ -88,7 +101,7 @@ impl QdrantStore {
 
         let point = PointStruct {
             id: Some(Uuid::new_v4().to_string().into()),
-            vectors: Some(Vectors::from(embedding)),
+            vectors: Some(Vectors::from(embedding.to_vec())),
             payload: payload,
         };
 
@@ -104,12 +117,10 @@ impl QdrantStore {
         Ok(())
     }
 
-    pub async fn find_similar(&self, article: &Article, limit: usize) -> Result<Vec<Article>> {
-        let embedding = self.model.generate_embeddings(&article.content).await?;
-
+    pub async fn find_similar(&self, embedding: &[f32], limit: usize) -> Result<Vec<Article>> {
         let search_request = SearchPoints {
             collection_name: self.collection_name.clone(),
-            vector: embedding,
+            vector: embedding.to_vec(),
             limit: limit as u64,
             with_payload: Some(WithPayloadSelector::from(true)),
             ..Default::default()
@@ -175,38 +186,33 @@ pub struct QdrantStorage {
 
 impl QdrantStorage {
     pub async fn new() -> Result<Self> {
-        let store = Arc::new(RwLock::new(QdrantStore::new(
-            "articles".to_string(),
-            Arc::new(DefaultEmbeddingModel),
-        ).await?));
+        let store = Arc::new(RwLock::new(QdrantStore::new("articles".to_string()).await?));
         Ok(Self { store })
     }
 }
 
+#[async_trait]
 impl StorageBackend for QdrantStorage {
     fn get_error_message() -> &'static str {
         "Qdrant should be running on http://localhost:6333"
     }
 
-    async fn new() -> Result<Self> {
-        let store = Arc::new(RwLock::new(QdrantStore::new(
-            "articles".to_string(),
-            Arc::new(DefaultEmbeddingModel),
-        ).await?));
+    async fn new() -> Result<Self> where Self: Sized {
+        let store = Arc::new(RwLock::new(QdrantStore::new("articles".to_string()).await?));
         Ok(Self { store })
     }
 }
 
 #[async_trait]
 impl ArticleStorage for QdrantStorage {
-    async fn store_article(&self, article: &Article) -> Result<()> {
+    async fn store_article(&self, article: &Article, embedding: &[f32]) -> Result<()> {
         let store = self.store.read().await;
-        store.store_article(article).await
+        store.store_article(article, embedding).await
     }
 
-    async fn find_similar(&self, article: &Article, limit: usize) -> Result<Vec<Article>> {
+    async fn find_similar(&self, embedding: &[f32], limit: usize) -> Result<Vec<Article>> {
         let store = self.store.read().await;
-        store.find_similar(article, limit).await
+        store.find_similar(embedding, limit).await
     }
 
     async fn get_by_source(&self, source: &str) -> Result<Vec<Article>> {
@@ -234,8 +240,9 @@ mod tests {
         };
 
         let storage = QdrantStorage::new().await.unwrap();
-        storage.store_article(&article).await.unwrap();
-        let similar = storage.find_similar(&article, 1).await.unwrap();
+        let embedding = vec![0.0; 384];
+        storage.store_article(&article, &embedding).await.unwrap();
+        let similar = storage.find_similar(&embedding, 1).await.unwrap();
         assert!(!similar.is_empty());
     }
 } 

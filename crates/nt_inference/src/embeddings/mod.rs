@@ -23,7 +23,7 @@ impl EmbeddingGenerator {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use super::super::models::DeepSeekModel;
+    use crate::models::deepseek::DeepSeekModel;
 
     #[tokio::test]
     async fn test_embedding_generation() {

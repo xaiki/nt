@@ -1,13 +1,13 @@
 use clap::Parser;
-use nt_core::{Result, storage::ArticleStorage, Article};
-use nt_storage::{InMemoryStorage, StorageBackend};
+use nt_core::{Result, ArticleStorage, Article};
+use nt_storage::{StorageBackend, backends::memory::MemoryStorage as InMemoryStorage};
 use chrono::Utc;
 use nt_scrappers::cli::{ScraperArgs, ScraperCommands as NtScraperCommands, handle_command};
 use std::sync::Arc;
-use tokio::sync::RwLock;
 use tracing::info;
 use std::str::FromStr;
 use std::time::Duration;
+use nt_scrappers::ScraperManager;
 
 #[cfg(feature = "chroma")]
 use nt_storage::ChromaDBStorage;
@@ -65,7 +65,7 @@ impl FromStr for HumanDuration {
     }
 }
 
-async fn check_storage(storage: &Arc<RwLock<dyn ArticleStorage>>) -> Result<()> {
+async fn check_storage(storage: &Arc<dyn ArticleStorage>) -> Result<()> {
     let test_article = Article {
         url: "http://test.com".to_string(),
         title: "Test Article".to_string(),
@@ -77,11 +77,11 @@ async fn check_storage(storage: &Arc<RwLock<dyn ArticleStorage>>) -> Result<()> 
         authors: vec!["Test Author".to_string()],
     };
 
-    // Try to store the article
-    storage.write().await.store_article(&test_article).await?;
+    // Try to store the article with a test embedding
+    storage.store_article(&test_article, &vec![0.0; 384]).await?;
     
     // Try to retrieve it
-    let articles = storage.read().await.get_by_source("test").await?;
+    let articles = storage.get_by_source("test").await?;
     if !articles.iter().any(|a| a.url == test_article.url) {
         return Err(nt_core::Error::Storage("Failed to retrieve test article".to_string()));
     }
@@ -89,7 +89,7 @@ async fn check_storage(storage: &Arc<RwLock<dyn ArticleStorage>>) -> Result<()> 
     Ok(())
 }
 
-async fn check_storage_with_retry(storage: &Arc<RwLock<dyn ArticleStorage>>, max_retries: u32, timeout: Duration) -> Result<()> {
+async fn check_storage_with_retry(storage: &Arc<dyn ArticleStorage>, max_retries: u32, timeout: Duration) -> Result<()> {
     let mut retries = 0;
     let mut last_error = None;
 
@@ -143,14 +143,14 @@ enum ScraperCommands {
     },
 }
 
-async fn create_storage<T: StorageBackend + ArticleStorage + 'static>() -> Result<Arc<RwLock<dyn ArticleStorage>>> {
+async fn create_storage<T: StorageBackend + ArticleStorage + 'static>() -> Result<Arc<dyn ArticleStorage>> {
     let mut retries = 3;
     let mut last_error = None;
 
     while retries > 0 {
         match T::new().await {
             Ok(storage) => {
-                let storage = Arc::new(RwLock::new(storage)) as Arc<RwLock<dyn ArticleStorage>>;
+                let storage = Arc::new(storage) as Arc<dyn ArticleStorage>;
                 // Check storage health with retries
                 if let Err(e) = check_storage_with_retry(&storage, 3, Duration::from_secs(10)).await {
                     last_error = Some(e);
@@ -204,10 +204,13 @@ async fn main() -> Result<()> {
         }
     };
 
-    // Check storage health with retries before proceeding
-    if let Err(e) = check_storage_with_retry(&storage, 3, Duration::from_secs(10)).await {
-        eprintln!("Storage health check failed after all retries: {}", e);
-        return Err(e);
+    // Initialize inference model based on configuration
+    let inference = nt_inference::models::create_model(None)?;
+    let mut manager = ScraperManager::new(storage.clone(), inference.clone()).await?;
+    
+    // Add all available scrapers
+    for scraper_type in nt_scrappers::scrapers::argentina::get_scrapers() {
+        manager.add_scraper(scraper_type.lock().unwrap().clone());
     }
 
     match cli.command {
@@ -217,36 +220,33 @@ async fn main() -> Result<()> {
                 let args = ScraperArgs {
                     command: NtScraperCommands::Source { source: source.map(|s| s.to_string()) },
                 };
-                let storage_guard = storage.read().await;
                 
                 if let Some(interval) = interval {
                     info!("Running in periodic mode with {} interval", interval.0.as_secs());
                     loop {
                         info!("Starting scrape cycle");
-                        if let Err(e) = handle_command(args.clone(), &*storage_guard).await {
+                        if let Err(e) = handle_command(args.clone(), &mut manager).await {
                             eprintln!("Error during scrape: {}", e);
                         }
                         info!("Waiting {}s before next scrape", interval.0.as_secs());
                         tokio::time::sleep(interval.0).await;
                     }
                 } else {
-                    handle_command(args, &*storage_guard).await?;
+                    handle_command(args, &mut manager).await?;
                 }
             }
             ScraperCommands::List => {
                 let args = ScraperArgs {
                     command: NtScraperCommands::List,
                 };
-                let storage_guard = storage.read().await;
-                handle_command(args, &*storage_guard).await?;
+                handle_command(args, &mut manager).await?;
             }
             ScraperCommands::Url { url } => {
                 info!("Scraping single URL: {}", url);
                 let args = ScraperArgs {
                     command: NtScraperCommands::Url { url: url.clone() },
                 };
-                let storage_guard = storage.read().await;
-                handle_command(args, &*storage_guard).await?;
+                handle_command(args, &mut manager).await?;
             }
         },
     }

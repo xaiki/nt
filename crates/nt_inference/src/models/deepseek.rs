@@ -1,6 +1,5 @@
-use std::sync::Arc;
 use std::fmt;
-use nt_core::Result;
+use nt_core::{Result, Article, ArticleSection};
 use super::InferenceModel;
 
 pub struct DeepSeekModel {
@@ -23,7 +22,21 @@ impl DeepSeekModel {
 
 #[async_trait::async_trait]
 impl InferenceModel for DeepSeekModel {
-    async fn generate_embeddings(&self, text: &str) -> Result<Vec<f32>> {
+    fn name(&self) -> &str {
+        "DeepSeek"
+    }
+
+    async fn summarize_article(&self, article: &Article) -> Result<String> {
+        // TODO: Implement actual summarization
+        Ok(format!("Summary of: {}", article.title))
+    }
+
+    async fn summarize_sections(&self, sections: &[ArticleSection]) -> Result<Vec<String>> {
+        // TODO: Implement actual section summarization
+        Ok(sections.iter().map(|s| format!("Summary of section: {}", s.content)).collect())
+    }
+
+    async fn generate_embeddings(&self, _text: &str) -> Result<Vec<f32>> {
         // TODO: Implement actual embedding generation
         Ok(vec![0.0; 768])
     }
