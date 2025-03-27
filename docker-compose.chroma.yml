@@ -1,11 +1,10 @@
 version: '3.8'
 
 services:
-  app:
+  app_chroma:
     build:
       context: .
       dockerfile: Dockerfile
-      name: nt-chroma
       args:
         - FEATURES=chroma
     depends_on:

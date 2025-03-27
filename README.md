@@ -155,3 +155,29 @@ Available endpoints:
 - `GET /api/articles/:id/divergence` - Get article divergence analysis
 
 ## Development
+
+### Docker Compose
+
+You can run the application with either Qdrant or Chroma as the storage backend using Docker Compose:
+
+#### With Qdrant
+```bash
+# Start the application with Qdrant backend
+docker compose -f docker-compose.qdrant.yml up app_qdrant qdrant
+
+# Or run in detached mode
+docker compose -f docker-compose.qdrant.yml up -d app_qdrant qdrant
+```
+
+#### With Chroma
+```bash
+# Start the application with Chroma backend
+docker compose -f docker-compose.chroma.yml up app_chroma chroma
+
+# Or run in detached mode
+docker compose -f docker-compose.chroma.yml up -d app_chroma chroma
+```
+
+The services will be available at:
+- Qdrant: http://localhost:6333
+- Chroma: http://localhost:8000

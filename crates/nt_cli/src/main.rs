@@ -89,6 +89,27 @@ async fn check_storage(storage: &Arc<RwLock<dyn ArticleStorage>>) -> Result<()> 
     Ok(())
 }
 
+async fn check_storage_with_retry(storage: &Arc<RwLock<dyn ArticleStorage>>, max_retries: u32, timeout: Duration) -> Result<()> {
+    let mut retries = 0;
+    let mut last_error = None;
+
+    while retries < max_retries {
+        match tokio::time::timeout(timeout, check_storage(storage)).await {
+            Ok(result) => return result,
+            Err(timeout_error) => {
+                last_error = Some(nt_core::Error::Storage(format!("Storage health check timed out: {}", timeout_error)));
+                retries += 1;
+                if retries < max_retries {
+                    info!("Storage health check failed, retrying {}/{}...", retries, max_retries);
+                    tokio::time::sleep(Duration::from_secs(2)).await;
+                }
+            }
+        }
+    }
+
+    Err(last_error.unwrap_or_else(|| nt_core::Error::Storage("Storage health check failed after all retries".to_string())))
+}
+
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
 pub struct Cli {
@@ -154,9 +175,9 @@ async fn main() -> Result<()> {
         }
     };
 
-    // Check storage health before proceeding
-    if let Err(e) = check_storage(&storage).await {
-        eprintln!("Storage health check failed: {}", e);
+    // Check storage health with retries before proceeding
+    if let Err(e) = check_storage_with_retry(&storage, 3, Duration::from_secs(10)).await {
+        eprintln!("Storage health check failed after all retries: {}", e);
         return Err(e);
     }
 

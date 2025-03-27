@@ -1,5 +1,5 @@
 # Use the official Rust image as a base
-FROM docker.io/rust:1.85-slim as builder
+FROM docker.io/rust:1.85-slim-bookworm as builder
 
 # Install build dependencies
 RUN apt-get update && apt-get install -y \
@@ -33,10 +33,12 @@ ARG FEATURES
 RUN cargo build --release --bin nt --features ${FEATURES}
 
 # Create a new stage with a minimal image
-FROM docker.io/debian:bullseye-slim
+FROM docker.io/debian:bookworm-slim
 
+# Install runtime dependencies
 RUN apt-get update && apt-get install -y \
     ca-certificates \
+    libssl3 \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
@@ -46,7 +48,7 @@ COPY --from=builder /app/target/release/nt .
 
 # Set environment variables with defaults
 ENV SCRAPE_INTERVAL=3600
-ENV STORAGE=memory
+ENV STORAGE=sqlite
 
 # Set the binary as the entrypoint with periodic scraping as default
-ENTRYPOINT ["./nt", "--storage", "${STORAGE}", "scrape", "source", "--interval", "${SCRAPE_INTERVAL}"] 
+ENTRYPOINT ["/bin/sh", "-c", "./nt --storage ${STORAGE} scrape source --interval ${SCRAPE_INTERVAL}"] 
