@@ -1,5 +1,5 @@
 # Use the official Rust image as a base
-FROM docker.io/rust:1.76-slim-bullseye as builder
+FROM docker.io/rust:1.85-slim as builder
 
 # Install build dependencies
 RUN apt-get update && apt-get install -y \
@@ -16,6 +16,8 @@ COPY crates/nt_cli/Cargo.toml ./crates/nt_cli/
 COPY crates/nt_inference/Cargo.toml ./crates/nt_inference/
 COPY crates/nt_scrappers/Cargo.toml ./crates/nt_scrappers/
 COPY crates/nt_storage/Cargo.toml ./crates/nt_storage/
+COPY crates/nt_web/Cargo.toml ./crates/nt_web/
+
 
 # Copy source code
 COPY crates/nt_core/src ./crates/nt_core/src
@@ -23,6 +25,8 @@ COPY crates/nt_cli/src ./crates/nt_cli/src
 COPY crates/nt_inference/src ./crates/nt_inference/src
 COPY crates/nt_scrappers/src ./crates/nt_scrappers/src
 COPY crates/nt_storage/src ./crates/nt_storage/src
+COPY crates/nt_web/src ./crates/nt_web/src
+
 
 # Build the application
 ARG FEATURES
