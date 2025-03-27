@@ -2,6 +2,14 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use async_trait::async_trait;
 use thiserror::Error;
+use std::any::Any;
+
+pub trait UrlConfig {
+    fn get_url(&self) -> String;
+    fn with_url(&mut self, url: &str);
+    fn get_host(&self) -> String;
+    fn get_port(&self) -> u16;
+}
 
 #[derive(Error, Debug)]
 pub enum Error {
@@ -108,7 +116,7 @@ pub trait InferenceModel: Send + Sync {
 }
 
 #[async_trait]
-pub trait ArticleStorage: Send + Sync {
+pub trait ArticleStorage: Send + Sync + Any {
     /// Store an article with its embedding
     async fn store_article(&self, article: &Article, embedding: &[f32]) -> Result<()>;
 
