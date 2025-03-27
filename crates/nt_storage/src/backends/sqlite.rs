@@ -2,7 +2,8 @@ use async_trait::async_trait;
 use nt_core::{Article, Result, ArticleStorage};
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use crate::{StorageBackend, BackendConfig, EmbeddingModel};
+use crate::{StorageBackend, BackendConfig, EmbeddingModel, UrlConfig};
+use std::ops::Deref;
 
 const MIGRATIONS: &[&str] = &[
     r#"
@@ -36,8 +37,7 @@ const MIGRATIONS: &[&str] = &[
 
 #[derive(Debug, Clone)]
 pub struct SQLiteConfig {
-    pub path: String,
-    pub table: String,
+    pub config: BackendConfig,
 }
 
 impl SQLiteConfig {
@@ -47,36 +47,36 @@ impl SQLiteConfig {
             .map(|p| p.to_str().unwrap_or("articles.db").to_string())
             .unwrap_or_else(|_| "articles.db".to_string());
         Self {
-            path,
-            table: "articles".to_string(),
+            config: BackendConfig::new(
+                path,
+                "articles".to_string(),
+                EmbeddingModel::default(),
+                1536,
+            ),
         }
     }
 }
 
-impl BackendConfig for SQLiteConfig {
-    fn get_url(&self) -> String {
-        self.path.clone()
-    }
+impl Deref for SQLiteConfig {
+    type Target = BackendConfig;
 
-    fn get_collection(&self) -> String {
-        self.table.clone()
-    }
-
-    fn get_embedding_model(&self) -> EmbeddingModel {
-        EmbeddingModel::default()
+    fn deref(&self) -> &Self::Target {
+        &self.config
     }
 }
 
 pub struct SQLiteStore {
     path: String,
     table: String,
+    vector_size: u64,
 }
 
 impl SQLiteStore {
-    pub fn new(path: String, table: String) -> Result<Self> {
+    pub fn new(path: String, table: String, vector_size: u64) -> Result<Self> {
         Ok(Self {
             path,
             table,
+            vector_size,
         })
     }
 
@@ -98,16 +98,18 @@ impl SQLiteStore {
 
 pub struct SQLiteStorage {
     store: Arc<RwLock<SQLiteStore>>,
+    config: SQLiteConfig,
 }
 
 impl SQLiteStorage {
     pub async fn new() -> Result<Self> {
         let config = SQLiteConfig::new();
         let store = Arc::new(RwLock::new(SQLiteStore::new(
-            config.get_url(),
-            config.get_collection(),
+            config.url.clone(),
+            config.collection.clone(),
+            config.vector_size
         )?));
-        Ok(Self { store })
+        Ok(Self { store, config })
     }
 }
 
@@ -119,6 +121,10 @@ impl StorageBackend for SQLiteStorage {
 
     async fn new() -> Result<Self> where Self: Sized {
         Self::new().await
+    }
+
+    fn get_config(&mut self) -> Option<&mut BackendConfig> {
+        Some(&mut self.config.config)
     }
 }
 
@@ -159,7 +165,8 @@ mod tests {
         };
 
         let storage = SQLiteStorage::new().await.unwrap();
-        let embedding = vec![0.0; 384];
+        let vector_size = storage.config.vector_size;
+        let embedding = vec![0.0; vector_size as usize];
         storage.store_article(&article, &embedding).await.unwrap();
         let similar = storage.find_similar(&embedding, 1).await.unwrap();
         assert!(!similar.is_empty());

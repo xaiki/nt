@@ -7,53 +7,51 @@ use chromadb::v1::{
     collection::{CollectionEntries, QueryOptions},
 };
 use crate::{StorageBackend, BackendConfig, EmbeddingModel};
-use std::fmt;
 use std::env;
+use std::ops::Deref;
 
 #[derive(Debug, Clone)]
 pub struct ChromaConfig {
-    pub url: String,
-    pub collection: String,
-    pub embedding_model: EmbeddingModel,
+    pub config: BackendConfig,
 }
 
 impl ChromaConfig {
     pub fn new() -> Self {
         let host = env::var("CHROMA_HOST").unwrap_or_else(|_| "chroma".to_string());
-        let url = format!("http://{}:8000", host);
+        let port = env::var("CHROMA_PORT").unwrap_or_else(|_| "8000".to_string());
+        let url = format!("http://{}:{}", host, port);
         Self {
-            url,
-            collection: "articles".to_string(),
-            embedding_model: EmbeddingModel::default(),
+            config: BackendConfig::new(
+                url,
+                "articles".to_string(),
+                EmbeddingModel::default(),
+                768,
+            ),
         }
     }
 }
 
-impl BackendConfig for ChromaConfig {
-    fn get_url(&self) -> String {
-        self.url.clone()
-    }
+impl Deref for ChromaConfig {
+    type Target = BackendConfig;
 
-    fn get_collection(&self) -> String {
-        self.collection.clone()
-    }
-
-    fn get_embedding_model(&self) -> EmbeddingModel {
-        self.embedding_model.clone()
+    fn deref(&self) -> &Self::Target {
+        &self.config
     }
 }
 
 pub struct EmbeddingStore {
     client: Arc<ChromaClient>,
     collection_name: String,
+    vector_size: u64,
 }
 
 impl EmbeddingStore {
-    pub fn new(collection_name: String) -> Result<Self> {
+    pub fn new(collection_name: String, vector_size: u64) -> Result<Self> {
         let client = Arc::new(ChromaClient::new(Default::default()));
         Ok(Self {
             client,
             collection_name,
+            vector_size,
         })
     }
 
@@ -130,7 +128,7 @@ impl EmbeddingStore {
         ]));
 
         let query_options = QueryOptions {
-            query_embeddings: Some(vec![vec![0.0; 384]]), // Dummy embedding for filtering
+            query_embeddings: Some(vec![vec![0.0; self.vector_size as usize]]), // Dummy embedding for filtering
             query_texts: None,
             n_results: Some(100), // Adjust as needed
             where_document: None,
@@ -163,46 +161,134 @@ impl EmbeddingStore {
 }
 
 pub struct ChromaStore {
-    url: String,
-    collection: String,
+    client: Arc<ChromaClient>,
+    config: ChromaConfig,
 }
 
 impl ChromaStore {
-    pub fn new(url: String, collection: String) -> Self {
-        Self {
-            url,
-            collection,
-        }
+    pub fn new(config: ChromaConfig) -> Result<Self> {
+        let client = Arc::new(ChromaClient::new(Default::default()));
+        Ok(Self {
+            client,
+            config,
+        })
     }
 
     pub async fn store_article(&self, article: &Article, embedding: &[f32]) -> Result<()> {
-        // TODO: Implement Chroma storage
+        let collection = self.client.get_or_create_collection(&self.config.collection, None)
+            .map_err(|e| nt_core::Error::External(e))?;
+
+        let doc_str = serde_json::to_string(article)
+            .map_err(|e| nt_core::Error::Serialization(e))?;
+
+        let metadata = serde_json::Map::from_iter(vec![
+            ("url".to_string(), serde_json::Value::String(article.url.clone())),
+            ("title".to_string(), serde_json::Value::String(article.title.clone())),
+            ("source".to_string(), serde_json::Value::String(article.source.clone())),
+            ("published_at".to_string(), serde_json::Value::String(article.published_at.to_rfc3339())),
+            ("doc".to_string(), serde_json::Value::String(doc_str)),
+        ]);
+
+        let entries = CollectionEntries {
+            ids: vec![&article.url],
+            embeddings: Some(vec![embedding.to_vec()]),
+            metadatas: Some(vec![metadata]),
+            documents: None,
+        };
+
+        collection.add(entries, None)
+            .map_err(|e| nt_core::Error::External(e))?;
+
         Ok(())
     }
 
     pub async fn find_similar(&self, embedding: &[f32], limit: usize) -> Result<Vec<Article>> {
-        // TODO: Implement Chroma similarity search
-        Ok(Vec::new())
+        let collection = self.client.get_or_create_collection(&self.config.collection, None)
+            .map_err(|e| nt_core::Error::External(e))?;
+
+        let query_options = QueryOptions {
+            query_embeddings: Some(vec![embedding.to_vec()]),
+            query_texts: None,
+            n_results: Some(limit),
+            where_document: None,
+            where_metadata: None,
+            include: None,
+        };
+
+        let results = collection.query(query_options, None)
+            .map_err(|e| nt_core::Error::External(e))?;
+
+        let mut articles = Vec::new();
+        if let Some(metadatas) = results.metadatas {
+            for metadata_vec in metadatas {
+                if let Some(metadata_vec) = metadata_vec {
+                    for metadata in metadata_vec {
+                        if let Some(metadata) = metadata {
+                            if let Some(doc_str) = metadata.get("doc").and_then(|v| v.as_str()) {
+                                if let Ok(article) = serde_json::from_str::<Article>(doc_str) {
+                                    articles.push(article);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok(articles)
     }
 
     pub async fn get_by_source(&self, source: &str) -> Result<Vec<Article>> {
-        // TODO: Implement Chroma source filtering
-        Ok(Vec::new())
+        let collection = self.client.get_or_create_collection(&self.config.collection, None)
+            .map_err(|e| nt_core::Error::External(e))?;
+
+        let where_metadata = serde_json::Value::Object(serde_json::Map::from_iter(vec![
+            ("source".to_string(), serde_json::Value::String(source.to_string())),
+        ]));
+
+        let query_options = QueryOptions {
+            query_embeddings: Some(vec![vec![0.0; self.config.vector_size as usize]]), // Dummy embedding for filtering
+            query_texts: None,
+            n_results: Some(100), // Adjust as needed
+            where_document: None,
+            where_metadata: Some(where_metadata),
+            include: None,
+        };
+
+        let results = collection.query(query_options, None)
+            .map_err(|e| nt_core::Error::External(e))?;
+
+        let mut articles = Vec::new();
+        if let Some(metadatas) = results.metadatas {
+            for metadata_vec in metadatas {
+                if let Some(metadata_vec) = metadata_vec {
+                    for metadata in metadata_vec {
+                        if let Some(metadata) = metadata {
+                            if let Some(doc_str) = metadata.get("doc").and_then(|v| v.as_str()) {
+                                if let Ok(article) = serde_json::from_str::<Article>(doc_str) {
+                                    articles.push(article);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok(articles)
     }
 }
 
 pub struct ChromaStorage {
     store: Arc<RwLock<ChromaStore>>,
+    config: ChromaConfig,
 }
 
 impl ChromaStorage {
     pub async fn new() -> Result<Self> {
         let config = ChromaConfig::new();
-        let store = Arc::new(RwLock::new(ChromaStore::new(
-            config.get_url(),
-            config.get_collection(),
-        )));
-        Ok(Self { store })
+        let store = Arc::new(RwLock::new(ChromaStore::new(config.clone())?));
+        Ok(Self { store, config })
     }
 }
 
@@ -214,6 +300,10 @@ impl StorageBackend for ChromaStorage {
 
     async fn new() -> Result<Self> where Self: Sized {
         Self::new().await
+    }
+
+    fn get_config(&mut self) -> Option<&mut BackendConfig> {
+        Some(&mut self.config.config)
     }
 }
 
@@ -254,7 +344,8 @@ mod tests {
         };
 
         let storage = ChromaStorage::new().await.unwrap();
-        let embedding = vec![0.0; 384];
+        let vector_size = storage.config.vector_size;
+        let embedding = vec![0.0; vector_size as usize];
         storage.store_article(&article, &embedding).await.unwrap();
         let similar = storage.find_similar(&embedding, 1).await.unwrap();
         assert!(!similar.is_empty());

@@ -3,46 +3,46 @@ use nt_core::{Article, Result, ArticleStorage};
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use crate::{StorageBackend, BackendConfig, EmbeddingModel};
+use std::ops::Deref;
 
 #[derive(Debug, Clone)]
 pub struct MemoryConfig {
-    pub collection: String,
-    pub embedding_model: EmbeddingModel,
+    pub config: BackendConfig,
 }
 
 impl MemoryConfig {
     pub fn new() -> Self {
         Self {
-            collection: "articles".to_string(),
-            embedding_model: EmbeddingModel::default(),
+            config: BackendConfig::new(
+                "memory://".to_string(),
+                "articles".to_string(),
+                EmbeddingModel::default(),
+                768,
+            ),
         }
     }
 }
 
-impl BackendConfig for MemoryConfig {
-    fn get_url(&self) -> String {
-        "memory://".to_string()
-    }
+impl Deref for MemoryConfig {
+    type Target = BackendConfig;
 
-    fn get_collection(&self) -> String {
-        self.collection.clone()
-    }
-
-    fn get_embedding_model(&self) -> EmbeddingModel {
-        self.embedding_model.clone()
+    fn deref(&self) -> &Self::Target {
+        &self.config
     }
 }
 
 pub struct MemoryStore {
     collection: String,
     articles: Vec<(Article, Vec<f32>)>,
+    vector_size: u64,
 }
 
 impl MemoryStore {
-    pub fn new(collection: String) -> Self {
+    pub fn new(collection: String, vector_size: u64) -> Self {
         Self {
             collection,
             articles: Vec::new(),
+            vector_size,
         }
     }
 
@@ -75,15 +75,17 @@ impl MemoryStore {
 
 pub struct MemoryStorage {
     store: Arc<RwLock<MemoryStore>>,
+    config: MemoryConfig,
 }
 
 impl MemoryStorage {
     pub async fn new() -> Result<Self> {
         let config = MemoryConfig::new();
         let store = Arc::new(RwLock::new(MemoryStore::new(
-            config.get_collection(),
+            config.collection.clone(),
+            config.vector_size
         )));
-        Ok(Self { store })
+        Ok(Self { store, config })
     }
 }
 
@@ -95,6 +97,10 @@ impl StorageBackend for MemoryStorage {
 
     async fn new() -> Result<Self> where Self: Sized {
         Self::new().await
+    }
+
+    fn get_config(&mut self) -> Option<&mut BackendConfig> {
+        Some(&mut self.config.config)
     }
 }
 
@@ -135,7 +141,8 @@ mod tests {
         };
 
         let storage = MemoryStorage::new().await.unwrap();
-        let embedding = vec![0.0; 384];
+        let vector_size = storage.config.vector_size;
+        let embedding = vec![0.0; vector_size as usize];
         storage.store_article(&article, &embedding).await.unwrap();
         let similar = storage.find_similar(&embedding, 1).await.unwrap();
         assert!(!similar.is_empty());

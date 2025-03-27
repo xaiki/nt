@@ -3,88 +3,118 @@ use nt_core::{Article, Result, ArticleStorage};
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use qdrant_client::{
-    Qdrant,
+    prelude::*,
     qdrant::{
-        CreateCollection, Distance, PointStruct, SearchPoints,
-        VectorParams, VectorsConfig, vectors_config::Config, WithPayloadSelector,
-        FieldCondition, Filter, Match, Vectors,
-        r#match::MatchValue, UpsertPoints,
+        vectors_config::Config, CreateCollectionBuilder, Distance, Filter, PointStruct, ScalarQuantizationBuilder, SearchPointsBuilder, UpsertPointsBuilder, VectorParamsBuilder, Condition,
+        CreateCollection, DeleteCollection, GetCollectionInfoRequest,
+        VectorParams, VectorsConfig,
     },
+    Payload, Qdrant,
 };
-use std::collections::HashMap;
 use crate::{StorageBackend, BackendConfig, EmbeddingModel};
 use std::env;
 use uuid::Uuid;
+use std::error::Error;
+use chrono::{DateTime, Utc};
+use std::ops::Deref;
 
 #[derive(Debug, Clone)]
 pub struct QdrantConfig {
-    pub url: String,
-    pub collection: String,
+    pub config: BackendConfig,
 }
 
 impl QdrantConfig {
     pub fn new() -> Self {
         let host = env::var("QDRANT_HOST").unwrap_or_else(|_| "qdrant".to_string());
-        let url = format!("http://{}:6334", host);
+        let port = env::var("QDRANT_PORT").unwrap_or_else(|_| "6334".to_string());
+        let url = format!("http://{}:{}", host, port);
         Self {
-            url,
-            collection: "articles".to_string(),
+            config: BackendConfig::new(
+                url,
+                "articles".to_string(),
+                EmbeddingModel::Qdrant,
+                768,
+            ),
         }
     }
 }
 
-impl BackendConfig for QdrantConfig {
-    fn get_url(&self) -> String {
-        self.url.clone()
-    }
+impl Deref for QdrantConfig {
+    type Target = BackendConfig;
 
-    fn get_collection(&self) -> String {
-        self.collection.clone()
-    }
-
-    fn get_embedding_model(&self) -> EmbeddingModel {
-        EmbeddingModel::Qdrant
+    fn deref(&self) -> &Self::Target {
+        &self.config
     }
 }
 
 pub struct QdrantStore {
     client: Arc<Qdrant>,
-    collection_name: String,
+    config: QdrantConfig,
 }
 
 impl QdrantStore {
-    pub async fn new(collection_name: String) -> Result<Self> {
-        let host = env::var("QDRANT_HOST").unwrap_or_else(|_| "qdrant".to_string());
-        let client = Qdrant::from_url(&format!("http://{}:6334", host))
+    pub async fn new(config: QdrantConfig) -> Result<Self> {
+        let client = Qdrant::from_url(&config.url)
             .build()
             .map_err(|e| nt_core::Error::External(e.into()))?;
-        let client = Arc::new(client);
-        
+        let collection = config.collection.clone();
+
+        // Check if collection exists and get its info
         let collections = client.list_collections()
             .await
             .map_err(|e| nt_core::Error::External(e.into()))?;
+        
+        let mut collection_exists = collections.collections.iter()
+            .any(|c| c.name == collection);
 
-        if !collections.collections.iter().any(|c| c.name == collection_name) {
-            let vector_config = VectorsConfig {
-                config: Some(Config::Params(VectorParams {
-                    size: 384,
-                    distance: Distance::Cosine.into(),
-                    ..Default::default()
-                })),
-            };
-
-            client.create_collection(CreateCollection {
-                collection_name: collection_name.clone(),
-                vectors_config: Some(vector_config),
+        if collection_exists {
+            // Get collection info to check vector size
+            let collection_info = client.collection_info(GetCollectionInfoRequest {
+                collection_name: collection.to_string(),
                 ..Default::default()
             })
             .await
             .map_err(|e| nt_core::Error::External(e.into()))?;
+
+            let vector_size = config.vector_size;
+            
+            if let Some(info) = collection_info.result {
+                if let Some(config) = info.config {
+                    if let Some(params) = config.params {
+                        if let Some(vectors_config) = params.vectors_config {
+                            if let Some(Config::Params(vector_params)) = vectors_config.config {
+                                if vector_params.size as u64 != vector_size {
+                                    // Delete collection if vector size doesn't match
+                                    client.delete_collection(DeleteCollection {
+                                        collection_name: collection.to_string(),
+                                        ..Default::default()
+                                    })
+                                    .await
+                                    .map_err(|e| nt_core::Error::External(e.into()))?;
+                                    collection_exists = false;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        if !collection_exists {
+            // Create collection with correct vector size
+            client
+                .create_collection(
+                    CreateCollectionBuilder::new(collection)
+                        .vectors_config(VectorParamsBuilder::new(config.vector_size, Distance::Cosine))
+                        .quantization_config(ScalarQuantizationBuilder::default()),
+                )
+                .await
+                .map_err(|e| nt_core::Error::External(e.into()))?;
         }
 
         Ok(Self {
-            client,
-            collection_name,
+            client: Arc::new(client),
+            config,
         })
     }
 
@@ -92,48 +122,43 @@ impl QdrantStore {
         let doc_str = serde_json::to_string(article)
             .map_err(|e| nt_core::Error::Serialization(e))?;
 
-        let mut payload = HashMap::new();
-        payload.insert("url".to_string(), article.url.clone().into());
-        payload.insert("title".to_string(), article.title.clone().into());
-        payload.insert("source".to_string(), article.source.clone().into());
-        payload.insert("published_at".to_string(), article.published_at.to_rfc3339().into());
-        payload.insert("doc".to_string(), doc_str.into());
+        let mut payload = Payload::new();
+        payload.insert("url", article.url.clone());
+        payload.insert("title", article.title.clone());
+        payload.insert("source", article.source.clone());
+        payload.insert("published_at", article.published_at.to_rfc3339());
+        payload.insert("doc", doc_str);
 
-        let point = PointStruct {
-            id: Some(Uuid::new_v4().to_string().into()),
-            vectors: Some(Vectors::from(embedding.to_vec())),
-            payload: payload,
-        };
+        let point = PointStruct::new(
+            Uuid::new_v4().to_string(),
+            embedding.to_vec(),
+            payload
+        );
 
-        let points = vec![point];
-        self.client.upsert_points(UpsertPoints {
-            collection_name: self.collection_name.clone(),
-            points,
-            ..Default::default()
-        })
-            .await
-            .map_err(|e| nt_core::Error::External(e.into()))?;
+        self.client.upsert_points(
+            UpsertPointsBuilder::new(self.config.collection.clone(), vec![point])
+        )
+        .await
+        .map_err(|e| nt_core::Error::External(e.into()))?;
 
         Ok(())
     }
 
     pub async fn find_similar(&self, embedding: &[f32], limit: usize) -> Result<Vec<Article>> {
-        let search_request = SearchPoints {
-            collection_name: self.collection_name.clone(),
-            vector: embedding.to_vec(),
-            limit: limit as u64,
-            with_payload: Some(WithPayloadSelector::from(true)),
-            ..Default::default()
-        };
-
-        let results = self.client.search_points(search_request)
-            .await
-            .map_err(|e| nt_core::Error::External(e.into()))?;
+        let results = self.client.search_points(
+            SearchPointsBuilder::new(
+                self.config.collection.clone(),
+                embedding.to_vec(),
+                limit as u64
+            )
+            .with_payload(true)
+        )
+        .await
+        .map_err(|e| nt_core::Error::External(e.into()))?;
 
         let mut articles = Vec::new();
         for point in results.result {
-            let payload = point.payload;
-            if let Some(doc_str) = payload.get("doc").and_then(|v| v.as_str()) {
+            if let Some(doc_str) = point.payload.get("doc").and_then(|v| v.as_str()) {
                 if let Ok(article) = serde_json::from_str::<Article>(doc_str) {
                     articles.push(article);
                 }
@@ -144,32 +169,21 @@ impl QdrantStore {
     }
 
     pub async fn get_by_source(&self, source: &str) -> Result<Vec<Article>> {
-        let search_request = SearchPoints {
-            collection_name: self.collection_name.clone(),
-            vector: vec![0.0; 384],
-            limit: 100,
-            with_payload: Some(WithPayloadSelector::from(true)),
-            filter: Some(Filter {
-                must: vec![FieldCondition {
-                    key: "source".to_string(),
-                    r#match: Some(Match {
-                        match_value: Some(MatchValue::Text(source.to_string())),
-                    }),
-                    ..Default::default()
-                }.into()],
-                ..Default::default()
-            }),
-            ..Default::default()
-        };
-
-        let results = self.client.search_points(search_request)
-            .await
-            .map_err(|e| nt_core::Error::External(e.into()))?;
+        let results = self.client.search_points(
+            SearchPointsBuilder::new(
+                self.config.collection.clone(),
+                vec![0.0; self.config.vector_size as usize],
+                100
+            )
+            .with_payload(true)
+            .filter(Filter::all([Condition::matches("source", source.to_string())]))
+        )
+        .await
+        .map_err(|e| nt_core::Error::External(e.into()))?;
 
         let mut articles = Vec::new();
         for point in results.result {
-            let payload = point.payload;
-            if let Some(doc_str) = payload.get("doc").and_then(|v| v.as_str()) {
+            if let Some(doc_str) = point.payload.get("doc").and_then(|v| v.as_str()) {
                 if let Ok(article) = serde_json::from_str::<Article>(doc_str) {
                     articles.push(article);
                 }
@@ -178,16 +192,49 @@ impl QdrantStore {
 
         Ok(articles)
     }
+
+    async fn create_collection(&self) -> Result<()> {
+        let collection_name = self.config.collection.clone();
+        let collection_info = self.client.collection_info(GetCollectionInfoRequest {
+            collection_name: collection_name.clone(),
+            ..Default::default()
+        }).await;
+        
+        if collection_info.is_err() {
+            self.client
+                .create_collection(
+                    CreateCollectionBuilder::new(collection_name)
+                        .vectors_config(VectorParamsBuilder::new(self.config.vector_size, Distance::Cosine))
+                        .quantization_config(ScalarQuantizationBuilder::default()),
+                )
+                .await
+                .map_err(|e| nt_core::Error::External(e.into()))?;
+        }
+        Ok(())
+    }
+
+    async fn delete_collection(&self) -> Result<()> {
+        let collection_name = self.config.collection.clone();
+        self.client.delete_collection(DeleteCollection {
+            collection_name: collection_name.clone(),
+            ..Default::default()
+        })
+        .await
+        .map_err(|e| nt_core::Error::External(e.into()))?;
+        Ok(())
+    }
 }
 
 pub struct QdrantStorage {
     store: Arc<RwLock<QdrantStore>>,
+    config: QdrantConfig,
 }
 
 impl QdrantStorage {
     pub async fn new() -> Result<Self> {
-        let store = Arc::new(RwLock::new(QdrantStore::new("articles".to_string()).await?));
-        Ok(Self { store })
+        let config = QdrantConfig::new();
+        let store = Arc::new(RwLock::new(QdrantStore::new(config.clone()).await?));
+        Ok(Self { store, config })
     }
 }
 
@@ -198,8 +245,13 @@ impl StorageBackend for QdrantStorage {
     }
 
     async fn new() -> Result<Self> where Self: Sized {
-        let store = Arc::new(RwLock::new(QdrantStore::new("articles".to_string()).await?));
-        Ok(Self { store })
+        let config = QdrantConfig::new();
+        let store = Arc::new(RwLock::new(QdrantStore::new(config.clone()).await?));
+        Ok(Self { store, config })
+    }
+
+    fn get_config(&mut self) -> Option<&mut BackendConfig> {
+        Some(&mut self.config.config)
     }
 }
 
@@ -240,7 +292,8 @@ mod tests {
         };
 
         let storage = QdrantStorage::new().await.unwrap();
-        let embedding = vec![0.0; 384];
+        let vector_size = storage.config.vector_size;
+        let embedding = vec![0.0; vector_size as usize];
         storage.store_article(&article, &embedding).await.unwrap();
         let similar = storage.find_similar(&embedding, 1).await.unwrap();
         assert!(!similar.is_empty());
