@@ -20,14 +20,15 @@ pub async fn create_article(
     Json(_article): Json<Article>,
 ) -> impl IntoResponse {
     let default_article = Article {
-        url: String::new(),
-        title: String::new(),
-        content: String::new(),
+        url: "".to_string(),
+        title: "".to_string(),
+        content: "".to_string(),
         published_at: Utc::now(),
-        source: String::new(),
+        source: "".to_string(),
         sections: vec![],
         summary: None,
         authors: vec![],
+        related_articles: Vec::new(),
     };
     Json(default_article)
 }
@@ -37,14 +38,15 @@ pub async fn get_article(
     Path(_id): Path<String>,
 ) -> impl IntoResponse {
     let default_article = Article {
-        url: String::new(),
-        title: String::new(),
-        content: String::new(),
+        url: "".to_string(),
+        title: "".to_string(),
+        content: "".to_string(),
         published_at: Utc::now(),
-        source: String::new(),
+        source: "".to_string(),
         sections: vec![],
         summary: None,
         authors: vec![],
+        related_articles: Vec::new(),
     };
     Json(default_article)
 }
