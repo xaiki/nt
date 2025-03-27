@@ -1,6 +1,6 @@
 use clap::Parser;
 use nt_core::{Result, ArticleStorage, Article};
-use nt_storage::{StorageBackend, backends::memory::MemoryStorage as InMemoryStorage};
+use nt_storage::{StorageBackend, backends::memory::MemoryStorage as InMemoryStorage, UrlConfig};
 use chrono::Utc;
 use nt_scrappers::cli::{ScraperArgs, ScraperCommands as NtScraperCommands, handle_command};
 use std::sync::Arc;
@@ -8,6 +8,7 @@ use tracing::info;
 use std::str::FromStr;
 use std::time::Duration;
 use nt_scrappers::ScraperManager;
+use std::any::Any;
 
 #[cfg(feature = "chroma")]
 use nt_storage::ChromaDBStorage;
@@ -17,6 +18,8 @@ use nt_storage::QdrantStorage;
 
 #[cfg(feature = "sqlite")]
 use nt_storage::SQLiteStorage;
+
+const DEFAULT_VECTOR_SIZE: u64 = 768;
 
 #[derive(Debug, Clone)]
 struct HumanDuration(Duration);
@@ -77,8 +80,7 @@ async fn check_storage(storage: &Arc<dyn ArticleStorage>) -> Result<()> {
         authors: vec!["Test Author".to_string()],
     };
 
-    // Try to store the article with a test embedding
-    storage.store_article(&test_article, &vec![0.0; 384]).await?;
+    storage.store_article(&test_article, &vec![0.0; DEFAULT_VECTOR_SIZE as usize]).await?;
     
     // Try to retrieve it
     let articles = storage.get_by_source("test").await?;
@@ -86,6 +88,7 @@ async fn check_storage(storage: &Arc<dyn ArticleStorage>) -> Result<()> {
         return Err(nt_core::Error::Storage("Failed to retrieve test article".to_string()));
     }
 
+    info!("🏦 Storage backend initialized successfully");
     Ok(())
 }
 
@@ -115,6 +118,10 @@ async fn check_storage_with_retry(storage: &Arc<dyn ArticleStorage>, max_retries
 pub struct Cli {
     #[arg(long, default_value = "memory")]
     storage: String,
+    #[arg(long)]
+    model_url: Option<String>,
+    #[arg(long)]
+    backend_url: Option<String>,
     #[command(subcommand)]
     command: Commands,
 }
@@ -143,13 +150,18 @@ enum ScraperCommands {
     },
 }
 
-async fn create_storage<T: StorageBackend + ArticleStorage + 'static>() -> Result<Arc<dyn ArticleStorage>> {
+async fn create_storage<T: StorageBackend + ArticleStorage + 'static>(backend_url: Option<&str>) -> Result<Arc<dyn ArticleStorage>> {
     let mut retries = 3;
     let mut last_error = None;
 
     while retries > 0 {
         match T::new().await {
-            Ok(storage) => {
+            Ok(mut storage) => {
+                if let Some(url) = backend_url {
+                    if let Some(config) = storage.get_config() {
+                        config.with_url(url);
+                    }
+                }
                 let storage = Arc::new(storage) as Arc<dyn ArticleStorage>;
                 // Check storage health with retries
                 if let Err(e) = check_storage_with_retry(&storage, 3, Duration::from_secs(10)).await {
@@ -183,13 +195,13 @@ async fn main() -> Result<()> {
     let cli = Cli::parse();
 
     let storage = match cli.storage.as_str() {
-        "memory" => create_storage::<InMemoryStorage>().await?,
+        "memory" => create_storage::<InMemoryStorage>(cli.backend_url.as_deref()).await?,
         #[cfg(feature = "chroma")]
-        "chroma" => create_storage::<ChromaDBStorage>().await?,
+        "chroma" => create_storage::<ChromaDBStorage>(cli.backend_url.as_deref()).await?,
         #[cfg(feature = "qdrant")]
-        "qdrant" => create_storage::<QdrantStorage>().await?,
+        "qdrant" => create_storage::<QdrantStorage>(cli.backend_url.as_deref()).await?,
         #[cfg(feature = "sqlite")]
-        "sqlite" => create_storage::<SQLiteStorage>().await?,
+        "sqlite" => create_storage::<SQLiteStorage>(cli.backend_url.as_deref()).await?,
         _ => {
             #[allow(unused_mut)]
             let mut msg = "Unknown storage backend. Available backends: memory".to_string();
@@ -205,18 +217,30 @@ async fn main() -> Result<()> {
     };
 
     // Initialize inference model based on configuration
-    let inference = nt_inference::models::create_model(None)?;
+    let inference_config = nt_inference::InferenceConfig {
+        model_url: cli.model_url,
+        backend_url: cli.backend_url,
+    };
+    let config = nt_inference::Config {
+        api_key: None,
+        model_name: None,
+        backend_config: nt_storage::backends::memory::MemoryConfig::new().config,
+        inference_config,
+    };
+    let inference = nt_inference::models::create_model(Some(config))?;
+    info!("🧠 Inference model initialized successfully");
     let mut manager = ScraperManager::new(storage.clone(), inference.clone()).await?;
     
     // Add all available scrapers
     for scraper_type in nt_scrappers::scrapers::argentina::get_scrapers() {
         manager.add_scraper(scraper_type.lock().unwrap().clone());
     }
+    info!("🦗 Scrapers initialized successfully");
 
     match cli.command {
         Commands::Scrape { command } => match command.unwrap_or(ScraperCommands::Source { source: None, interval: None }) {
             ScraperCommands::Source { source, interval } => {
-                info!("Scraping articles from {}", if source.is_none() || source.as_ref().unwrap().is_empty() { "all sources" } else { source.as_ref().unwrap() });
+                info!("🦗 Scraping articles from {}", if source.is_none() || source.as_ref().unwrap().is_empty() { "all sources" } else { source.as_ref().unwrap() });
                 let args = ScraperArgs {
                     command: NtScraperCommands::Source { source: source.map(|s| s.to_string()) },
                 };
@@ -250,6 +274,25 @@ async fn main() -> Result<()> {
             }
         },
     }
+
+    // Create a test article
+    let test_article = Article {
+        url: "http://test.com".to_string(),
+        title: "Test Article".to_string(),
+        content: "This is a test article.".to_string(),
+        published_at: chrono::Utc::now(),
+        source: "test".to_string(),
+        sections: vec![],
+        summary: None,
+        authors: vec!["Test Author".to_string()],
+    };
+
+    // Try to store the article with a test embedding
+    storage.store_article(&test_article, &vec![0.0; DEFAULT_VECTOR_SIZE as usize]).await?;
+    
+    // Try to retrieve it
+    let similar = storage.find_similar(&vec![0.0; DEFAULT_VECTOR_SIZE as usize], 1).await?;
+    println!("Found {} similar articles", similar.len());
 
     Ok(())
 } 
