@@ -3,9 +3,10 @@ use chrono::Utc;
 use scraper::{Html, Selector};
 use nt_core::{Result};
 use nt_core::types::{Article, ArticleSection};
-use crate::scrapers::{Scraper, jsonld};
+use crate::scrapers::{Scraper, jsonld, SourceMetadata};
+use super::REGION;
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct LaNacionScraper;
 
 impl LaNacionScraper {
@@ -18,8 +19,12 @@ impl LaNacionScraper {
 
 #[async_trait]
 impl Scraper for LaNacionScraper {
-    fn source(&self) -> &str {
-        "La Nación"
+    fn source_metadata(&self) -> SourceMetadata {
+        SourceMetadata {
+            name: "La Nación",
+            emoji: "🧵",
+            region: REGION,
+        }
     }
 
     fn can_handle(&self, url: &str) -> bool {
@@ -129,14 +134,14 @@ impl Scraper for LaNacionScraper {
             .unwrap_or_else(Utc::now);
 
         Ok(Article {
-            url: url.to_string(),
             title,
             content,
-            summary: None,
-            published_at,
-            source: self.source().to_string(),
-            sections,
+            url: url.to_string(),
             authors,
+            published_at,
+            source: self.source_metadata().name.to_string(),
+            sections: vec![],
+            summary: None,
         })
     }
 

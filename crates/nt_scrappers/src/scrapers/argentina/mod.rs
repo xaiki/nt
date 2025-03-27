@@ -1,6 +1,7 @@
 use std::sync::{Arc, Mutex};
 use async_trait::async_trait;
 use crate::scrapers::{Scraper, ScraperType};
+use super::RegionMetadata;
 
 pub mod clarin;
 pub mod lanacion;
@@ -9,6 +10,11 @@ pub mod lavoz;
 pub use clarin::ClarinScraper;
 pub use lanacion::LaNacionScraper;
 pub use lavoz::LaVozScraper;
+
+pub const REGION: RegionMetadata = RegionMetadata {
+    name: "Argentina",
+    emoji: "🇦🇷",
+};
 
 #[async_trait]
 pub trait ArgentinaScraper: Scraper {}

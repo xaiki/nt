@@ -3,6 +3,8 @@ use std::collections::HashMap;
 use clap::{Parser, Subcommand};
 use nt_core::{Result, storage::ArticleStorage};
 use crate::scrapers::{self, ArticleStatus, ScraperManager, ScraperType};
+use crate::logging;
+use tracing;
 
 #[derive(Parser, Clone)]
 #[command(author, version, about, long_about = None)]
@@ -96,8 +98,8 @@ pub async fn handle_command(args: ScraperArgs, storage: &dyn ArticleStorage) -> 
                     };
                     println!("  {}/{} - {}{}", 
                         country,
-                        aliases.first().unwrap_or(&scraper.source().to_lowercase().as_str()),
-                        scraper.source(),
+                        aliases.first().unwrap_or(&scraper.source_metadata().name.to_lowercase().as_str()),
+                        scraper.source_metadata().name,
                         alias_str
                     );
                 }
@@ -165,7 +167,7 @@ fn get_scraper(country: &str, name: &str) -> Result<ScraperType> {
         // Try to find a scraper that matches either by name or CLI names
         for scraper in scrapers {
             let s = scraper.lock().unwrap();
-            if s.source().to_lowercase().replace('í', "i") == name.to_lowercase().replace('í', "i") 
+            if s.source_metadata().name.to_lowercase().replace('í', "i") == name.to_lowercase().replace('í', "i") 
                || s.cli_names().contains(&name) {
                 let cloned = s.clone();
                 drop(s); // Release the lock
@@ -180,6 +182,56 @@ fn get_scraper(country: &str, name: &str) -> Result<ScraperType> {
             country
         )))
     }
+}
+
+pub async fn list_scrapers(storage: &dyn ArticleStorage) -> Result<()> {
+    let manager = ScraperManager::new(storage);
+    let mut logger = logging::init_logging();
+    tracing::info!("Available scrapers:");
+    for scraper in manager.get_scrapers() {
+        let metadata = scraper.source_metadata();
+        let prefix = format!("{} {} {}", metadata.region.emoji, metadata.emoji, metadata.name);
+        logger = logger.with_prefix(prefix);
+        logger.info(&metadata.region.name);
+    }
+    Ok(())
+}
+
+pub async fn scrape_url(url: &str, storage: &dyn ArticleStorage) -> Result<()> {
+    let mut manager = ScraperManager::new(storage);
+    let scraper = manager.get_scraper_for_url(url)?;
+    let metadata = scraper.source_metadata();
+    let prefix = format!("{} {} {}", metadata.region.emoji, metadata.emoji, metadata.name);
+    let logger = logging::init_logging().with_prefix(prefix);
+    logger.info(&format!("Scraping article from {}", url));
+    let article = manager.scrape_url(url).await?.0;
+    logger.info(&format!("Successfully scraped article: {}", article.title));
+    Ok(())
+}
+
+pub async fn scrape_source(source: Option<&str>, storage: &dyn ArticleStorage) -> Result<()> {
+    let manager = ScraperManager::new(storage);
+    let scrapers = if let Some(source) = source {
+        manager.get_scrapers_for_source(source)?
+    } else {
+        manager.get_scrapers().iter().collect()
+    };
+
+    let mut logger = logging::init_logging();
+
+    for scraper in scrapers {
+        let metadata = scraper.source_metadata();
+        let prefix = format!("{} {} {}", metadata.region.emoji, metadata.emoji, metadata.name);
+        logger = logger.with_prefix(prefix);
+        logger.info("Starting scrape");
+        
+        let mut manager = ScraperManager::new(storage);
+        manager.add_scraper(scraper.clone());
+        if let Err(e) = manager.scrape_all().await {
+            logger.error(&format!("Failed to scrape: {}", e));
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]

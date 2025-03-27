@@ -3,10 +3,11 @@ use chrono::Utc;
 use scraper::{Html, Selector};
 use nt_core::{Result};
 use nt_core::types::Article;
-use crate::scrapers::{Scraper};
+use crate::scrapers::{Scraper, SourceMetadata};
 use serde_json;
+use super::REGION;
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct ClarinScraper;
 
 impl ClarinScraper {
@@ -19,8 +20,12 @@ impl ClarinScraper {
 
 #[async_trait]
 impl Scraper for ClarinScraper {
-    fn source(&self) -> &str {
-        "Clarín"
+    fn source_metadata(&self) -> SourceMetadata {
+        SourceMetadata {
+            name: "Clarín",
+            emoji: "🔇",
+            region: REGION,
+        }
     }
 
     fn can_handle(&self, url: &str) -> bool {
@@ -127,7 +132,7 @@ impl Scraper for ClarinScraper {
             url: url.to_string(),
             authors,
             published_at: Utc::now(),
-            source: self.source().to_string(),
+            source: self.source_metadata().name.to_string(),
             sections: vec![],
             summary: None,
         })
