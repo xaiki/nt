@@ -3,11 +3,16 @@ use std::sync::{Arc, Mutex};
 use std::collections::HashMap;
 use nt_core::{Article, Result, Error, ArticleStorage, InferenceModel, ArticleStatus, Scraper};
 use crate::scrapers::ScraperType;
+use tracing::info;
+use tokio::sync::{Mutex as TokioMutex, Semaphore};
+use futures::future::join_all;
+use std::sync::Mutex as StdMutex;
 
 pub struct ScraperManager {
     storage: Arc<dyn ArticleStorage>,
     inference: Arc<dyn InferenceModel>,
-    scrapers: Vec<Arc<Mutex<ScraperType>>>,
+    scrapers: Arc<StdMutex<Vec<Arc<Mutex<ScraperType>>>>>,
+    semaphore: Arc<Semaphore>,
 }
 
 impl ScraperManager {
@@ -15,28 +20,27 @@ impl ScraperManager {
         Ok(Self {
             storage,
             inference,
-            scrapers: Vec::new(),
+            scrapers: Arc::new(StdMutex::new(Vec::new())),
+            semaphore: Arc::new(Semaphore::new(5)), // Limit concurrent API calls
         })
     }
 
-    pub fn add_scraper(&mut self, scraper: ScraperType) {
-        self.scrapers.push(Arc::new(Mutex::new(scraper)));
+    pub fn add_scraper(&self, scraper: ScraperType) {
+        self.scrapers.lock().unwrap().push(Arc::new(Mutex::new(scraper)));
     }
 
-    pub fn get_scrapers(&self) -> &[Arc<Mutex<ScraperType>>] {
-        &self.scrapers
+    pub fn get_scrapers(&self) -> Vec<Arc<Mutex<ScraperType>>> {
+        self.scrapers.lock().unwrap().clone()
     }
 
     pub fn get_scraper_for_url(&self, url: &str) -> Result<ScraperType> {
-        for scraper in &self.scrapers {
+        for scraper in self.get_scrapers() {
             let s = scraper.lock().unwrap();
             if s.can_handle(url) {
-                let cloned = s.clone();
-                drop(s);
-                return Ok(cloned);
+                return Ok(s.clone());
             }
         }
-        Err(Error::Scraping(format!("No scraper found for URL: {}", url)))
+        Err(nt_core::Error::Scraping(format!("No scraper found for URL: {}", url)))
     }
 
     pub fn get_scrapers_for_source(&self, source: &str) -> Result<Vec<ScraperType>> {
@@ -63,94 +67,127 @@ impl ScraperManager {
         Ok(result)
     }
 
-    pub async fn scrape_url(&mut self, url: &str) -> Result<(Article, ArticleStatus)> {
-        let mut scraper = self.get_scraper_for_url(url)?;
-        let article = scraper.scrape_article(url).await?;
-        let existing_articles = self.storage.get_by_source(scraper.source_metadata().name).await?;
+    async fn process_article(&self, mut article: Article) -> Result<Article> {
+        info!("📰 Processing article: {}", article.title);
         
-        let status = if let Some(existing) = existing_articles.iter().find(|a| a.url == url) {
-            if existing.content == article.content {
-                ArticleStatus::Unchanged
-            } else {
-                ArticleStatus::Updated
+        // Generate article summary
+        info!("🤖 Generating summary for article: {}", article.title);
+        let _permit = self.semaphore.acquire().await.map_err(|e| nt_core::Error::External(e.into()))?;
+        article.summary = Some(self.inference.summarize_article(&article).await?);
+        info!("✨ Summary generated successfully: {:?}", article.summary);
+
+        // Generate section summaries and embeddings in parallel
+        let num_sections = article.sections.len();
+        info!("📑 Processing {} sections", num_sections);
+        
+        let section_futures: Vec<_> = article.sections.iter_mut().enumerate().map(|(i, section)| {
+            let inference = self.inference.clone();
+            let semaphore = self.semaphore.clone();
+            async move {
+                info!("📝 Processing section {}/{}", i + 1, num_sections);
+                
+                // Generate section summary
+                info!("🤖 Generating summary for section {}", i + 1);
+                let _permit = semaphore.acquire().await.map_err(|e| nt_core::Error::External(e.into()))?;
+                section.summary = Some(inference.summarize_sections(&[section.clone()]).await?[0].clone());
+                info!("✨ Section summary generated: {:?}", section.summary);
+                
+                // Generate section embedding
+                info!("🔢 Generating embedding for section {}", i + 1);
+                let _permit = semaphore.acquire().await.map_err(|e| nt_core::Error::External(e.into()))?;
+                section.embedding = Some(inference.generate_embeddings(&section.content).await?);
+                info!("✨ Section embedding generated");
+                
+                Ok::<_, nt_core::Error>(())
             }
-        } else {
-            ArticleStatus::New
-        };
+        }).collect();
 
-        if matches!(status, ArticleStatus::New | ArticleStatus::Updated) {
-            let embedding = self.inference.generate_embeddings(&article.content).await?;
-            self.storage.store_article(&article, &embedding).await?;
-        }
+        join_all(section_futures).await.into_iter().collect::<Result<Vec<_>>>()?;
 
-        Ok((article, status))
-    }
+        // Generate article embedding for similarity search
+        info!("🔢 Generating article embedding for similarity search");
+        let _permit = self.semaphore.acquire().await.map_err(|e| nt_core::Error::External(e.into()))?;
+        let article_embedding = self.inference.generate_embeddings(&article.content).await?;
+        info!("✨ Article embedding generated");
 
-    pub async fn scrape_all(&mut self) -> Result<Vec<(Article, ArticleStatus)>> {
-        let mut results = Vec::new();
-        let mut logger = crate::logging::init_logging();
-
-        // Get all scrapers
-        let scraper_sources: Vec<String> = self.scrapers.iter()
-            .map(|s| s.lock().unwrap().source_metadata().name.to_string())
+        // Find similar articles
+        info!("🔍 Finding similar articles");
+        let similar_articles = self.storage.find_similar(&article_embedding, 5).await?;
+        info!("✨ Found {} similar articles", similar_articles.len());
+        
+        // Process similar articles in parallel
+        info!("🔄 Converting similar articles to related articles");
+        let similar_futures: Vec<_> = similar_articles.into_iter()
+            .filter(|a| a.url != article.url) // Exclude self
+            .map(|a| {
+                let inference = self.inference.clone();
+                let semaphore = self.semaphore.clone();
+                let article_embedding = article_embedding.clone();
+                async move {
+                    info!("📊 Calculating similarity score for article: {}", a.title);
+                    let _permit = semaphore.acquire().await.map_err(|e| nt_core::Error::External(e.into()))?;
+                    let a_embedding = inference.generate_embeddings(&a.content).await?;
+                    let similarity = nt_core::cosine_similarity(&article_embedding, &a_embedding);
+                    info!("✨ Similarity score calculated: {:.2}", similarity);
+                    let related = nt_core::RelatedArticle {
+                        article: a,
+                        similarity_score: Some(similarity),
+                    };
+                    Ok::<_, nt_core::Error>(related)
+                }
+            })
             .collect();
 
-        // For each scraper
-        for source in scraper_sources {
-            // Find the scraper again to get a mutable reference
-            if let Some(scraper) = self.scrapers.iter_mut().find(|s| s.lock().unwrap().source_metadata().name == source) {
-                // Get all article URLs
-                let urls = scraper.lock().unwrap().get_article_urls().await?;
-                let metadata = scraper.lock().unwrap().source_metadata();
-                let prefix = format!("{} {} |", metadata.region.emoji, metadata.emoji);
-                logger = logger.with_new_prefixes(prefix);
-                logger.info(&format!("Found {} articles", urls.len()));
+        article.related_articles = join_all(similar_futures).await.into_iter().collect::<Result<Vec<_>>>()?;
+        info!("✨ Related articles processed");
 
-                // Process articles in batches of 5
-                let batch_size = 5;
-                for chunk in urls.chunks(batch_size) {
-                    let mut batch_results = Vec::new();
-                    
-                    // Process each URL in the batch
-                    for url in chunk {
-                        match self.scrape_url(url).await {
-                            Ok(result) => {
-                                let (article, status) = result.clone();
-                                let status_emoji = match status {
-                                    ArticleStatus::New => "💥",
-                                    ArticleStatus::Updated => "👻",
-                                    ArticleStatus::Unchanged => "✅",
-                                };
-                                let authors_str = if article.authors.is_empty() {
-                                    logger.debug("🤷🏾‍♂️ No authors found");
-                                    String::from("🤷🏾‍♂️ ")
-                                } else {
-                                    format!(" | by \x1b[1m{}\x1b[0m", article.authors.join(", "))
-                                };
-                                let message = format!("{} {} - {}{}", 
-                                    status_emoji, 
-                                    article.title,
-                                    authors_str,
-                                    if matches!(status, ArticleStatus::New | ArticleStatus::Updated) {
-                                        " (saved)"
-                                    } else {
-                                        " (unchanged)"
-                                    }
-                                );
-                                logger.info(&message);
-                                batch_results.push(result);
-                            }
-                            Err(e) => {
-                                logger.error(&format!("Failed to scrape {}: {}", url, e));
-                            }
-                        }
+        // Store the processed article
+        info!("💾 Storing processed article");
+        self.storage.store_article(&article, &article_embedding).await?;
+        info!("✨ Article stored successfully");
+
+        info!("✅ Article processing completed: {}", article.title);
+        Ok(article)
+    }
+
+    pub async fn scrape_url(&self, url: &str) -> Result<Article> {
+        let mut scraper = self.get_scraper_for_url(url)?;
+        let article = scraper.scrape_article(url).await?;
+        self.process_article(article).await
+    }
+
+    pub async fn scrape_source(&self, source: Option<&str>) -> Result<Vec<Article>> {
+        let mut articles = Vec::new();
+        
+        // If source is specified, get specific scrapers
+        let scrapers = if let Some(target_source) = source {
+            self.get_scrapers_for_source(target_source)?
+        } else {
+            // Convert Arc<Mutex<ScraperType>> to ScraperType
+            self.get_scrapers().into_iter()
+                .map(|s| {
+                    let s = s.lock().unwrap();
+                    s.clone()
+                })
+                .collect()
+        };
+        
+        for scraper in scrapers {
+            let source_name = scraper.source_metadata().name;
+            info!("Scraping articles from {}", source_name);
+            
+            let urls = scraper.get_article_urls().await?;
+            for url in urls {
+                match self.scrape_url(&url).await {
+                    Ok(article) => articles.push(article),
+                    Err(e) => {
+                        info!("Failed to scrape {}: {}", url, e);
                     }
-                    results.extend(batch_results);
                 }
             }
         }
 
-        Ok(results)
+        Ok(articles)
     }
 
     fn parse_source(&self, source: &str) -> Result<(String, Option<String>)> {
@@ -218,5 +255,9 @@ impl ArticleStorage for ScraperManager {
 
     async fn get_by_source(&self, source: &str) -> Result<Vec<Article>> {
         self.storage.get_by_source(source).await
+    }
+
+    async fn delete_article(&self, url: &str) -> Result<()> {
+        self.storage.delete_article(url).await
     }
 } 
