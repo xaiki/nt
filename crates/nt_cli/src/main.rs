@@ -78,6 +78,7 @@ async fn check_storage(storage: &Arc<dyn ArticleStorage>, storage_type: &str) ->
         sections: vec![],
         summary: None,
         authors: vec!["Test Author".to_string()],
+        related_articles: Vec::new(),
     };
 
     storage.store_article(&test_article, &vec![0.0; DEFAULT_VECTOR_SIZE as usize]).await?;
@@ -89,6 +90,12 @@ async fn check_storage(storage: &Arc<dyn ArticleStorage>, storage_type: &str) ->
     }
 
     info!("🏦 Storage backend initialized successfully (using {})", storage_type);
+
+    // Clean up test article
+    if let Err(e) = storage.delete_article(&test_article.url).await {
+        info!("⚠️ Failed to clean up test article: {}", e);
+    }
+
     Ok(())
 }
 
@@ -122,6 +129,8 @@ pub struct Cli {
     model_url: Option<String>,
     #[arg(long)]
     backend_url: Option<String>,
+    #[arg(long, default_value = "ollama", help = "Model to use for inference. Available models: ollama (default), deepseek")]
+    model: String,
     #[command(subcommand)]
     command: Commands,
 }
@@ -224,11 +233,11 @@ async fn main() -> Result<()> {
     };
     let config = nt_inference::Config {
         api_key: None,
-        model_name: None,
+        model_name: Some(cli.model.clone()),
         backend_config: nt_storage::backends::memory::MemoryConfig::new().config,
         inference_config,
     };
-    let inference = nt_inference::models::create_model(Some(config))?;
+    let inference = nt_inference::models::create_model(Some(config)).await?;
     info!("🧠 Inference model initialized successfully (using {})", inference.name());
     let mut manager = ScraperManager::new(storage.clone(), inference.clone()).await?;
     
@@ -289,6 +298,7 @@ async fn main() -> Result<()> {
         sections: vec![],
         summary: None,
         authors: vec!["Test Author".to_string()],
+        related_articles: Vec::new(),
     };
 
     // Try to store the article with a test embedding

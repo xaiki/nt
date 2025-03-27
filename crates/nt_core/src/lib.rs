@@ -53,6 +53,14 @@ pub struct Article {
     pub source: String,
     pub sections: Vec<ArticleSection>,
     pub authors: Vec<String>,
+    pub related_articles: Vec<RelatedArticle>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RelatedArticle {
+    pub article: Article,
+    #[serde(default)]
+    pub similarity_score: Option<f32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -125,4 +133,20 @@ pub trait ArticleStorage: Send + Sync + Any {
 
     /// Get all articles from a specific source
     async fn get_by_source(&self, source: &str) -> Result<Vec<Article>>;
+
+    /// Delete an article by its URL
+    async fn delete_article(&self, url: &str) -> Result<()>;
+}
+
+pub fn cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
+    let dot_product: f32 = a.iter().zip(b.iter()).map(|(x, y)| x * y).sum();
+    let norm_a: f32 = a.iter().map(|x| x * x).sum::<f32>().sqrt();
+    let norm_b: f32 = b.iter().map(|x| x * x).sum::<f32>().sqrt();
+    
+    // If either vector has zero norm, return 0.0 (no similarity)
+    if norm_a == 0.0 || norm_b == 0.0 {
+        return 0.0;
+    }
+    
+    dot_product / (norm_a * norm_b)
 } 
