@@ -5,6 +5,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      name: nt-chroma
       args:
         - FEATURES=chroma
     depends_on:
@@ -23,6 +24,8 @@ services:
     image: docker.io/chromadb/chroma:latest
     ports:
       - "8000:8000"  # REST API
+    expose:
+      - 8000
     volumes:
       - chroma_data:/chroma/chroma
     environment:
