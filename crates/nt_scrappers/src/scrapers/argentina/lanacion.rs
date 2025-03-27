@@ -133,14 +133,15 @@ impl Scraper for LaNacionScraper {
             .unwrap_or_else(Utc::now);
 
         Ok(Article {
+            url: url.to_string(),
             title,
             content,
-            url: url.to_string(),
-            authors,
             published_at,
             source: self.source_metadata().name.to_string(),
-            sections: vec![],
+            sections,
             summary: None,
+            authors,
+            related_articles: Vec::new(),
         })
     }
 

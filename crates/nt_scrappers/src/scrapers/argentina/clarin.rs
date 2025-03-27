@@ -1,9 +1,10 @@
 use async_trait::async_trait;
 use chrono::Utc;
 use scraper::{Html, Selector};
-use nt_core::{Result, Article, Scraper, SourceMetadata};
+use nt_core::{Result, Article, Scraper, SourceMetadata, ArticleSection};
 use serde_json;
 use super::REGION;
+use crate::scrapers::jsonld;
 
 #[derive(Debug, Clone)]
 pub struct ClarinScraper;
@@ -51,6 +52,9 @@ impl Scraper for ClarinScraper {
             .collect::<Vec<_>>()
             .join("\n");
 
+        tracing::debug!("Scraped content length: {} chars", content.len());
+        tracing::debug!("First 100 chars of content: {}", content.chars().take(100).collect::<String>());
+
         let authors = if url.contains("elle.clarin.com") {
             // For Elle articles, get author from meta tag
             document
@@ -60,79 +64,44 @@ impl Scraper for ClarinScraper {
                 .map(|author| vec![author.to_string()])
                 .unwrap_or_default()
         } else {
-            // For regular Clarín articles, try multiple author sources
-            let mut authors = Vec::new();
-            
-            // Try getting authors from script tag with article data
-            if let Ok(script_selector) = Selector::parse("script[type='application/ld+json']") {
-                for script in document.select(&script_selector) {
-                    if let Ok(json) = serde_json::from_str::<serde_json::Value>(script.text().collect::<String>().trim()) {
-                        // First try the discover array which contains article metadata
-                        if let Some(discover) = json.get("discover") {
-                            if let Some(discover_array) = discover.as_array() {
-                                for item in discover_array {
-                                    if let Some(article_authors) = item.get("authors") {
-                                        if let Some(authors_array) = article_authors.as_array() {
-                                            for author in authors_array {
-                                                if let Some(name) = author.get("name") {
-                                                    if let Some(name_str) = name.as_str() {
-                                                        authors.push(name_str.to_string());
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                        
-                        // If no authors found in discover array, try the old format
-                        if authors.is_empty() {
-                            if let Some(author) = json.get("author") {
-                                // Try array format first
-                                if let Some(authors_array) = author.as_array() {
-                                    for author_obj in authors_array {
-                                        if let Some(name) = author_obj.get("name") {
-                                            if let Some(name_str) = name.as_str() {
-                                                authors.push(name_str.to_string());
-                                            }
-                                        }
-                                    }
-                                } else {
-                                    // Try single author object
-                                    if let Some(name) = author.get("name") {
-                                        if let Some(name_str) = name.as_str() {
-                                            authors.push(name_str.to_string());
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-            
-            // If no authors found in JSON, try .firma class
-            if authors.is_empty() {
-                authors = document
-                    .select(&Selector::parse(".firma").unwrap())
-                    .map(|el| el.text().collect::<String>().trim().to_string())
-                    .filter(|text| !text.is_empty())
-                    .collect();
-            }
-            
-            authors
+            // For regular articles, get authors from JSON-LD
+            jsonld::extract_authors(&document)
         };
 
+        let published_at = document
+            .select(&Selector::parse("time").unwrap())
+            .next()
+            .and_then(|el| el.value().attr("datetime"))
+            .map(|date_str| chrono::DateTime::parse_from_rfc3339(date_str).ok())
+            .flatten()
+            .map(|dt| dt.with_timezone(&Utc))
+            .unwrap_or_else(Utc::now);
+
+        let mut sections = Vec::new();
+        
+        // Add article paragraphs as sections
+        for paragraph in content.split("\n") {
+            if !paragraph.trim().is_empty() {
+                sections.push(ArticleSection {
+                    content: paragraph.trim().to_string(),
+                    summary: None,
+                    embedding: None,
+                });
+            }
+        }
+
+        tracing::debug!("Created {} sections", sections.len());
+
         Ok(Article {
+            url: url.to_string(),
             title,
             content,
-            url: url.to_string(),
-            authors,
-            published_at: Utc::now(),
+            published_at,
             source: self.source_metadata().name.to_string(),
-            sections: vec![],
+            sections,
             summary: None,
+            authors,
+            related_articles: Vec::new(),
         })
     }
 

@@ -177,6 +177,7 @@ impl Scraper for LaVozScraper {
             source: self.source_metadata().name.to_string(),
             sections,
             authors,
+            related_articles: Vec::new(),
         })
     }
 
