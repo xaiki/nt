@@ -1,6 +1,7 @@
 use clap::{Parser, Subcommand};
 use nt_core::{Result, ArticleStatus, Scraper};
 use crate::{ScraperManager, };
+use tracing::info;
 
 #[derive(Parser, Clone)]
 #[command(author, version, about, long_about = None)]
@@ -28,80 +29,49 @@ pub enum ScraperCommands {
 pub async fn handle_command(args: ScraperArgs, manager: &mut ScraperManager) -> Result<()> {
     match args.command {
         ScraperCommands::Source { source } => {
-            if source.is_none() || source.as_ref().unwrap().is_empty() {
-                // If no source specified, scrape all regions and scrapers
-                for scraper in crate::scrapers::argentina::get_scrapers() {
-                    let s = scraper.lock().unwrap();
-                    let cloned = s.clone();
-                    drop(s); // Release the lock
-                    manager.add_scraper(cloned);
+            let articles = manager.scrape_source(source.as_deref()).await?;
+            for article in articles {
+                info!("📰 Article: {}", article.title);
+                info!("   Source: {}", article.source);
+                info!("   URL: {}", article.url);
+                if let Some(summary) = &article.summary {
+                    info!("   Summary: {}", summary);
                 }
-            } else {
-                let scrapers = manager.get_scrapers_for_source(source.as_ref().unwrap())?;
-                for scraper in scrapers {
-                    manager.add_scraper(scraper);
+                if !article.related_articles.is_empty() {
+                    info!("   Related Articles:");
+                    for related in article.related_articles {
+                        info!("     - {} ({}): {:.2}% similar", 
+                            related.article.title,
+                            related.article.source,
+                            related.similarity_score.map(|score| score * 100.0).unwrap_or(0.0)
+                        );
+                    }
                 }
-            }
-            
-            let results = manager.scrape_all().await?;
-            for (article, status) in results {
-                let emoji = match status {
-                    ArticleStatus::New => "💥",
-                    ArticleStatus::Updated => "👻",
-                    ArticleStatus::Unchanged => "✅",
-                };
-                let authors = if article.authors.is_empty() {
-                    "".to_string()
-                } else {
-                    format!(" | by {}", article.authors.join(", "))
-                };
-                println!("{} {} - {}{}", emoji, article.title, article.url, authors);
+                info!("");
             }
         }
         ScraperCommands::List => {
-            println!("Available scrapers:");
-            for scraper in manager.get_scrapers() {
-                let s = scraper.lock().unwrap();
-                let aliases = s.cli_names();
-                let alias_str = if !aliases.is_empty() {
-                    format!(" (aliases: {})", aliases.join(", "))
-                } else {
-                    String::new()
-                };
-                println!("  {}/{} - {}{}", 
-                    "argentina",
-                    aliases.first().unwrap_or(&s.source_metadata().name.to_lowercase().as_str()),
-                    s.source_metadata().name,
-                    alias_str
-                );
-            }
+            manager.list_scrapers().await?;
         }
         ScraperCommands::Url { url } => {
-            // Add all available scrapers
-            for scraper in crate::scrapers::argentina::get_scrapers() {
-                let s = scraper.lock().unwrap();
-                let cloned = s.clone();
-                drop(s); // Release the lock
-                manager.add_scraper(cloned);
+            let article = manager.scrape_url(&url).await?;
+            info!("📰 Article: {}", article.title);
+            info!("   Source: {}", article.source);
+            info!("   URL: {}", article.url);
+            if let Some(summary) = &article.summary {
+                info!("   Summary: {}", summary);
             }
-            
-            // Try to scrape the URL
-            match manager.scrape_url(&url).await {
-                Ok((article, status)) => {
-                    let emoji = match status {
-                        ArticleStatus::New => "💥",
-                        ArticleStatus::Updated => "👻",
-                        ArticleStatus::Unchanged => "✅",
-                    };
-                    let authors = if article.authors.is_empty() {
-                        "".to_string()
-                    } else {
-                        format!(" | by \x1b[1m{}\x1b[0m", article.authors.join(", "))
-                    };
-                    println!("{} {} - {}{}", emoji, article.title, article.url, authors);
+            if !article.related_articles.is_empty() {
+                info!("   Related Articles:");
+                for related in article.related_articles {
+                    info!("     - {} ({}): {:.2}% similar", 
+                        related.article.title,
+                        related.article.source,
+                        related.similarity_score.map(|score| score * 100.0).unwrap_or(0.0)
+                    );
                 }
-                Err(e) => eprintln!("Failed to scrape {}: {}", url, e),
             }
+            info!("");
         }
     }
     Ok(())
