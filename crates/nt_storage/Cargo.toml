@@ -18,12 +18,17 @@ clap = { workspace = true }
 
 [features]
 default = []
-qdrant = ["dep:qdrant-client"]
+qdrant = ["dep:qdrant-client", "dep:uuid"]
 chroma = ["dep:chromadb"]
 sqlite = ["dep:sqlx"]
 
 [dependencies.qdrant-client]
+version = "1.7.0"
+optional = true
+
+[dependencies.uuid]
 version = "1.7"
+features = ["v4"]
 optional = true
 
 [dependencies.chromadb]

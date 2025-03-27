@@ -1,20 +1,20 @@
 version: '3.8'
 
 services:
-  app:
+  app_qdrant:
     build:
       context: .
       dockerfile: Dockerfile
-      name: nt-qdrant
       args:
         - FEATURES=qdrant
     depends_on:
-      qdrant:
-        condition: service_healthy
+      - qdrant
     environment:
       - RUST_LOG=info
       - STORAGE=qdrant
-      - QDRANT_URL=http://qdrant:6333
+      - QDRANT_URL=http://qdrant:6334
+      - QDRANT_HOST=qdrant
+      - SCRAPE_INTERVAL=3600
     volumes:
       - ./data:/app/data
     networks:
@@ -37,12 +37,6 @@ services:
       - QDRANT_DEBUG=true
     networks:
       - nt-network
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:6333/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 10s
 
 volumes:
   qdrant_data:

@@ -13,6 +13,8 @@ use qdrant_client::{
 };
 use std::collections::HashMap;
 use crate::StorageBackend;
+use std::env;
+use uuid::Uuid;
 
 #[async_trait::async_trait]
 pub trait EmbeddingModel: Send + Sync {
@@ -36,7 +38,8 @@ pub struct QdrantStore {
 
 impl QdrantStore {
     pub async fn new(collection_name: String, model: Arc<dyn EmbeddingModel>) -> Result<Self> {
-        let client = Qdrant::from_url("http://localhost:6333")
+        let host = env::var("QDRANT_HOST").unwrap_or_else(|_| "qdrant".to_string());
+        let client = Qdrant::from_url(&format!("http://{}:6334", host))
             .build()
             .map_err(|e| nt_core::Error::External(e.into()))?;
         let client = Arc::new(client);
@@ -84,7 +87,7 @@ impl QdrantStore {
         payload.insert("doc".to_string(), doc_str.into());
 
         let point = PointStruct {
-            id: Some(article.url.clone().into()),
+            id: Some(Uuid::new_v4().to_string().into()),
             vectors: Some(Vectors::from(embedding)),
             payload: payload,
         };
