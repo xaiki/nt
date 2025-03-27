@@ -43,25 +43,32 @@ cargo build --release --features "qdrant"  # Only Qdrant
 cargo build --release --features "sqlite"  # Only SQLite
 ```
 
-When running the CLI, specify the backend using the `--storage` flag:
+When running the CLI, specify the backend using the `--storage` flag and configure URLs using `--model-url` and `--backend-url`:
+
 ```bash
 # Use in-memory storage (default)
 nt scrapers list
 
-# Use ChromaDB
-nt --storage chroma scrapers list
+# Use Qdrant with custom URLs
+nt --storage qdrant --model-url http://ollama:2543 --backend-url http://qdrant:3244 scrapers list
 
-# Use Qdrant
-nt --storage qdrant scrapers list
+# Use ChromaDB with custom URLs
+nt --storage chroma --model-url http://ollama:2543 --backend-url http://chroma:8000 scrapers list
 
-# Use SQLite
-nt --storage sqlite scrapers list
+# Use SQLite with custom model URL
+nt --storage sqlite --model-url http://ollama:2543 scrapers list
 ```
 
 Requirements for each backend:
-- **ChromaDB**: Requires ChromaDB server running on `http://localhost:8000`
-- **Qdrant**: Requires Qdrant server running on `http://localhost:6333`
+- **ChromaDB**: Requires ChromaDB server running on `http://localhost:8000` (or custom URL via `--backend-url`)
+- **Qdrant**: Requires Qdrant server running on `http://localhost:6333` (or custom URL via `--backend-url`)
 - **SQLite**: Creates a database file at `./articles.db` in the current working directory
+- **Ollama**: Requires Ollama server running on `http://localhost:11434` (or custom URL via `--model-url`)
+
+### Configuration Options
+- `--storage`: Choose the storage backend (memory, chroma, qdrant, sqlite)
+- `--model-url`: URL for the Ollama model server (default: http://localhost:11434)
+- `--backend-url`: URL for the vector storage backend (default: depends on backend)
 
 ### Current Crates
 - `nt_core`: Core types, utilities, and CLI entry point
