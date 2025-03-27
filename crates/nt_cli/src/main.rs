@@ -27,6 +27,7 @@ impl FromStr for HumanDuration {
     fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
         let mut total_seconds = 0u64;
         let mut current_number = String::new();
+        let mut has_unit = false;
         
         for c in s.chars() {
             if c.is_ascii_digit() {
@@ -40,13 +41,24 @@ impl FromStr for HumanDuration {
                     _ => return Err(format!("Invalid duration unit: {}", c)),
                 }
                 current_number.clear();
+                has_unit = true;
             } else if !c.is_whitespace() {
                 return Err(format!("Invalid character in duration: {}", c));
             }
         }
 
+        // If we have a number but no unit, assume seconds
         if !current_number.is_empty() {
-            return Err("Duration string must end with a unit (s, m, h, d)".to_string());
+            if let Ok(num) = current_number.parse::<u64>() {
+                total_seconds += num;
+                has_unit = true;
+            } else {
+                return Err("Invalid number in duration".to_string());
+            }
+        }
+
+        if !has_unit {
+            return Err("Duration must include a number".to_string());
         }
 
         Ok(HumanDuration(Duration::from_secs(total_seconds)))
