@@ -23,7 +23,7 @@ chroma = ["dep:chromadb"]
 sqlite = ["dep:sqlx"]
 
 [dependencies.qdrant-client]
-version = "1.7.0"
+version = "1.13.0"
 optional = true
 
 [dependencies.uuid]
