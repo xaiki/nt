@@ -6,15 +6,14 @@ use qdrant_client::{
     prelude::*,
     qdrant::{
         vectors_config::Config, CreateCollectionBuilder, Distance, Filter, PointStruct, ScalarQuantizationBuilder, SearchPointsBuilder, UpsertPointsBuilder, VectorParamsBuilder, Condition,
-        CreateCollection, DeleteCollection, GetCollectionInfoRequest,
-        VectorParams, VectorsConfig,
+        CreateCollection, DeleteCollection, GetCollectionInfoRequest, DeletePoints, PointsSelector, DeletePointsBuilder,
+        VectorParams, VectorsConfig, PointId,
     },
     Payload, Qdrant,
 };
 use crate::{StorageBackend, BackendConfig, EmbeddingModel};
 use std::env;
 use uuid::Uuid;
-use std::error::Error;
 use chrono::{DateTime, Utc};
 use std::ops::Deref;
 
@@ -271,6 +270,23 @@ impl ArticleStorage for QdrantStorage {
         let store = self.store.read().await;
         store.get_by_source(source).await
     }
+
+    async fn delete_article(&self, url: &str) -> Result<()> {
+        let store = self.store.read().await;
+        
+        // Try to delete but don't treat errors as fatal
+        if let Err(e) = store.client.delete_points(
+            DeletePoints {
+                collection_name: store.config.collection.clone(),
+                points: Some(PointsSelector::from(vec![PointId::from(url.to_string())])),
+                ..Default::default()
+            }
+        ).await {
+            tracing::warn!("Failed to delete article from Qdrant: {}", e);
+            // Return Ok even if delete fails
+        }
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -289,6 +305,7 @@ mod tests {
             sections: vec![],
             summary: None,
             authors: vec!["Test Author".to_string()],
+            related_articles: Vec::new(),
         };
 
         let storage = QdrantStorage::new().await.unwrap();

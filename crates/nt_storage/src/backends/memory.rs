@@ -33,7 +33,7 @@ impl Deref for MemoryConfig {
 
 pub struct MemoryStore {
     collection: String,
-    articles: Vec<(Article, Vec<f32>)>,
+    articles: std::collections::HashMap<String, (Article, Vec<f32>)>,
     vector_size: u64,
 }
 
@@ -41,35 +41,38 @@ impl MemoryStore {
     pub fn new(collection: String, vector_size: u64) -> Self {
         Self {
             collection,
-            articles: Vec::new(),
+            articles: std::collections::HashMap::new(),
             vector_size,
         }
     }
 
     pub async fn store_article(&mut self, article: &Article, embedding: &[f32]) -> Result<()> {
-        if let Some((existing_article, _)) = self.articles.iter_mut().find(|(a, _)| a.url == article.url) {
-            *existing_article = article.clone();
-        } else {
-            self.articles.push((article.clone(), embedding.to_vec()));
-        }
+        self.articles.insert(article.url.clone(), (article.clone(), embedding.to_vec()));
         Ok(())
     }
 
-    pub async fn find_similar(&self, _embedding: &[f32], limit: usize) -> Result<Vec<Article>> {
-        // For now, just return the most recent articles
-        // In a real implementation, we would compute cosine similarity between embeddings
-        let mut articles = self.articles.iter()
-            .map(|(article, _)| article.clone())
-            .collect::<Vec<_>>();
-        articles.sort_by(|a, b| b.published_at.cmp(&a.published_at));
-        Ok(articles.into_iter().take(limit).collect())
+    pub async fn find_similar(&self, embedding: &[f32], limit: usize) -> Result<Vec<Article>> {
+        let mut articles_with_scores = Vec::new();
+
+        for (_, (article, article_embedding)) in &self.articles {
+            let similarity = nt_core::cosine_similarity(embedding, article_embedding);
+            articles_with_scores.push((article.clone(), similarity));
+        }
+
+        articles_with_scores.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+        Ok(articles_with_scores.into_iter().take(limit).map(|(a, _)| a).collect())
     }
 
     pub async fn get_by_source(&self, source: &str) -> Result<Vec<Article>> {
-        Ok(self.articles.iter()
+        Ok(self.articles.values()
             .filter(|(article, _)| article.source == source)
             .map(|(article, _)| article.clone())
             .collect())
+    }
+
+    pub async fn delete_article(&mut self, url: &str) -> Result<()> {
+        self.articles.remove(url);
+        Ok(())
     }
 }
 
@@ -120,6 +123,11 @@ impl ArticleStorage for MemoryStorage {
         let store = self.store.read().await;
         store.get_by_source(source).await
     }
+
+    async fn delete_article(&self, url: &str) -> Result<()> {
+        let mut store = self.store.write().await;
+        store.delete_article(url).await
+    }
 }
 
 #[cfg(test)]
@@ -138,6 +146,7 @@ mod tests {
             sections: vec![],
             summary: None,
             authors: vec!["Test Author".to_string()],
+            related_articles: Vec::new(),
         };
 
         let storage = MemoryStorage::new().await.unwrap();

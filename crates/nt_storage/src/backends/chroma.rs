@@ -323,6 +323,16 @@ impl ArticleStorage for ChromaStorage {
         let store = self.store.read().await;
         store.get_by_source(source).await
     }
+
+    async fn delete_article(&self, url: &str) -> Result<()> {
+        let store = self.store.read().await;
+        let collection = store.client.get_or_create_collection(&store.config.collection, None)
+            .map_err(|e| nt_core::Error::External(e))?;
+        
+        collection.delete(Some(vec![url]), None, None)
+            .map_err(|e| nt_core::Error::Database(format!("Failed to delete article: {}", e)))?;
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -341,6 +351,7 @@ mod tests {
             sections: vec![],
             summary: None,
             authors: vec!["Test Author".to_string()],
+            related_articles: Vec::new(),
         };
 
         let storage = ChromaStorage::new().await.unwrap();
