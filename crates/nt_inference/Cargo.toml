@@ -20,11 +20,11 @@ reqwest = { version = "0.11", features = ["json"] }
 futures-util = { workspace = true }
 
 [features]
-qdrant = ["dep:langchain-rust"]
-sqlite = ["dep:langchain-rust"]
+default = []
 ollama = ["dep:langchain-rust"]
+qdrant = ["dep:langchain-rust"]
 
 [dependencies.langchain-rust]
 version = "4.6.0"
-features = ["qdrant", "ollama"]
+features = ["ollama", "qdrant"]
 optional = true 

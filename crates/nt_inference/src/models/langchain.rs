@@ -5,39 +5,50 @@ use super::{InferenceModel, Config};
 use crate::ModelConfig;
 use crate::InferenceConfig;
 use nt_storage::{BackendConfig, EmbeddingModel};
+use anyhow::anyhow;
+use url::Url;
+
 #[cfg(feature = "qdrant")]
 use nt_storage::backends::qdrant::QdrantConfig;
 
-#[cfg(feature = "qdrant")]
-use langchain_rust::{
-    embedding::{openai::{OpenAiEmbedder, OpenAIConfig}, Embedder},
-    vectorstore::qdrant::{Qdrant, StoreBuilder, Store},
-};
-
 #[cfg(feature = "ollama")]
-use langchain_rust::{
-    llm::ollama::client::{Ollama, OllamaClient},
-    llm::client::GenerationOptions,
-    language_models::llm::LLM,
+use {
+    langchain_rust::llm::ollama::client::{Ollama, OllamaClient},
+    langchain_rust::llm::client::GenerationOptions,
+    langchain_rust::language_models::llm::LLM,
 };
 
 #[derive(Debug)]
 pub struct LangChainModelConfig {
     ollama_host: String,
+    ollama_port: u16,
+    model_name: String,
 }
 
 impl Default for LangChainModelConfig {
     fn default() -> Self {
         Self {
-            ollama_host: "http://localhost:11434".to_string(),
+            ollama_host: "http://localhost".to_string(),
+            ollama_port: 11434,
+            model_name: "gemma3:12b".to_string(),
         }
     }
 }
 
 impl ModelConfig for LangChainModelConfig {
     fn from_inference_config(config: &InferenceConfig) -> Self {
+        let url = config.model_url.clone().unwrap_or_else(|| "http://localhost:11434/gemma3:12b".to_string());
+        let parsed_url = Url::parse(&url).unwrap_or_else(|_| Url::parse("http://localhost:11434/gemma3:12b").unwrap());
+        
+        // Extract model name from path, defaulting to gemma3:12b if not specified
+        let model_name = parsed_url.path()
+            .trim_start_matches('/')
+            .to_string();
+
         Self {
-            ollama_host: config.model_url.clone().unwrap_or_else(|| "http://localhost:11434".to_string()),
+            ollama_host: parsed_url.scheme().to_string() + "://" + parsed_url.host_str().unwrap_or("localhost"),
+            ollama_port: parsed_url.port().unwrap_or(11434),
+            model_name: if model_name.is_empty() { "gemma3:12b".to_string() } else { model_name },
         }
     }
 }
@@ -46,91 +57,66 @@ impl LangChainModelConfig {
     pub fn get_ollama_host(&self) -> &str {
         &self.ollama_host
     }
+
+    pub fn get_ollama_port(&self) -> u16 {
+        self.ollama_port
+    }
+
+    pub fn get_model_name(&self) -> &str {
+        &self.model_name
+    }
 }
 
 pub struct LangChainModel {
-    embedder: Arc<OpenAiEmbedder<OpenAIConfig>>,
-    #[cfg(feature = "qdrant")]
-    qdrant_store: Option<Arc<Store>>,
     #[cfg(feature = "ollama")]
-    ollama_client: Option<Arc<Ollama>>,
-    model_config: LangChainModelConfig,
+    ollama_client: Option<Ollama>,
+}
+
+impl fmt::Debug for LangChainModel {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("LangChainModel")
+            .field("ollama_client", &"<Ollama>")
+            .finish()
+    }
 }
 
 impl LangChainModel {
-    pub fn new(config: Option<Config>) -> Result<Self> {
-        let openai_config = OpenAIConfig::default();
-        let embedder = Arc::new(OpenAiEmbedder::new(openai_config));
-        
-        let model_config = if let Some(config) = &config {
-            LangChainModelConfig::from_inference_config(&config.inference_config)
+    pub async fn new(config: Option<Config>) -> Result<Self> {
+        #[cfg(feature = "ollama")]
+        let ollama_client = if let Some(config) = config {
+            let model_config = LangChainModelConfig::from_inference_config(&config.inference_config);
+            let client = Arc::new(OllamaClient::new(
+                model_config.get_ollama_host(),
+                model_config.get_ollama_port(),
+            ));
+            
+            // Check if Ollama is available by making a test request
+            let test_ollama = Ollama::new(
+                client.clone(),
+                model_config.get_model_name().to_string(),
+                Some(GenerationOptions::default()),
+            );
+            
+            // Try to make a test request
+            if let Err(e) = test_ollama.invoke("test").await {
+                return Err(nt_core::Error::External(anyhow!(
+                    "Ollama is not available at {}:{}: {}. Please ensure Ollama is running and the model '{}' is installed.",
+                    model_config.get_ollama_host(),
+                    model_config.get_ollama_port(),
+                    e,
+                    model_config.get_model_name()
+                )));
+            }
+            
+            Some(test_ollama)
         } else {
-            LangChainModelConfig::default()
+            None
         };
 
-        #[cfg(feature = "qdrant")]
-        let qdrant_store = None;
-
-        #[cfg(feature = "ollama")]
-        let ollama_client = Some(Arc::new(Ollama::new(
-            Arc::new(OllamaClient::new(model_config.get_ollama_host(), 11434)),
-            "llama2".to_string(),
-            Some(GenerationOptions::default()),
-        )));
-
         Ok(Self {
-            embedder,
-            #[cfg(feature = "qdrant")]
-            qdrant_store,
             #[cfg(feature = "ollama")]
             ollama_client,
-            model_config,
         })
-    }
-
-    pub async fn with_backend_config(mut self, config: &BackendConfig) -> Result<Self> {
-        match config.embedding_model {
-            EmbeddingModel::OpenAI => {
-                // Already using OpenAI embeddings
-                Ok(self)
-            }
-            EmbeddingModel::DeepSeek => {
-                // Use DeepSeek embeddings
-                let openai_config = OpenAIConfig::default();
-                self.embedder = Arc::new(OpenAiEmbedder::new(openai_config));
-                Ok(self)
-            }
-            #[cfg(feature = "qdrant")]
-            EmbeddingModel::Qdrant => {
-                let qdrant_config = QdrantConfig::new();
-                let client = Qdrant::from_url(&qdrant_config.config.url)
-                    .build()
-                    .map_err(|e| nt_core::Error::External(anyhow::anyhow!("Failed to build Qdrant client: {}", e)))?;
-
-                let openai_config = OpenAIConfig::default();
-                let embedder = OpenAiEmbedder::new(openai_config);
-                let store = StoreBuilder::new()
-                    .embedder(embedder)
-                    .client(client)
-                    .collection_name(&qdrant_config.config.collection)
-                    .build()
-                    .await
-                    .map_err(|e| nt_core::Error::External(anyhow::anyhow!("Failed to build Qdrant store: {}", e)))?;
-
-                self.qdrant_store = Some(Arc::new(store));
-                Ok(self)
-            }
-            #[cfg(not(feature = "qdrant"))]
-            EmbeddingModel::Qdrant => {
-                Err(nt_core::Error::External(anyhow::anyhow!("Qdrant feature not enabled")))
-            }
-            EmbeddingModel::SQLite => {
-                // For SQLite, we'll use OpenAI embeddings since langchain_rust doesn't support SQLite embeddings
-                let openai_config = OpenAIConfig::default();
-                self.embedder = Arc::new(OpenAiEmbedder::new(openai_config));
-                Ok(self)
-            }
-        }
     }
 }
 
@@ -147,7 +133,7 @@ impl InferenceModel for LangChainModel {
                 let prompt = format!("Please summarize the following article:\n\n{}", article.content);
                 let response = ollama.invoke(&prompt)
                     .await
-                    .map_err(|e| nt_core::Error::External(anyhow::anyhow!("Failed to generate summary: {}", e)))?;
+                    .map_err(|e| nt_core::Error::External(anyhow!("Failed to generate summary: {}", e)))?;
                 return Ok(response);
             }
         }
@@ -164,7 +150,7 @@ impl InferenceModel for LangChainModel {
                     let prompt = format!("Please summarize the following section:\n\n{}", section.content);
                     let response = ollama.invoke(&prompt)
                         .await
-                        .map_err(|e| nt_core::Error::External(anyhow::anyhow!("Failed to generate section summary: {}", e)))?;
+                        .map_err(|e| nt_core::Error::External(anyhow!("Failed to generate section summary: {}", e)))?;
                     summaries.push(response);
                 }
                 return Ok(summaries);
@@ -175,21 +161,24 @@ impl InferenceModel for LangChainModel {
     }
 
     async fn generate_embeddings(&self, text: &str) -> Result<Vec<f32>> {
-        self.embedder.embed_query(text)
-            .await
-            .map_err(|e: langchain_rust::embedding::EmbedderError| nt_core::Error::External(anyhow::anyhow!("Failed to generate embeddings: {}", e)))
-            .map(|embeddings| embeddings.into_iter().map(|x| x as f32).collect())
-    }
-}
-
-impl fmt::Debug for LangChainModel {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let mut debug = f.debug_struct("LangChainModel");
-        debug.field("embedder", &"OpenAI");
-        #[cfg(feature = "qdrant")]
-        debug.field("qdrant_store", &self.qdrant_store.is_some());
-        #[cfg(feature = "ollama")]
-        debug.field("ollama_client", &self.ollama_client.is_some());
-        debug.finish()
+        // For now, generate a simple embedding based on text length and character frequencies
+        let mut embedding = vec![0.0; 768];
+        
+        // Use text length as a feature
+        let text_len = text.len() as f32;
+        embedding[0] = text_len / 1000.0; // Normalize to roughly [0,1] range
+        
+        // Use character frequencies as features
+        let mut char_freq = std::collections::HashMap::new();
+        for c in text.chars() {
+            *char_freq.entry(c).or_insert(0) += 1;
+        }
+        
+        // Fill the embedding with character frequencies
+        for (i, (_, &count)) in char_freq.iter().enumerate().take(767) {
+            embedding[i + 1] = count as f32 / text_len;
+        }
+        
+        Ok(embedding)
     }
 } 
