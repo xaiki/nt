@@ -8,7 +8,12 @@ A news aggregator that uses AI to detect similar stories across many digital new
 - **Cross-Source Analysis**: Detect and analyze how the same story is covered across different news sources
 - **Divergence Detection**: Identify parts of stories that are present in some sources but missing in others
 - **AI-Powered Analysis**: Use LLMs for summarization and semantic understanding of articles
-- **Vector Search**: Utilize Chroma DB for efficient similarity search and article comparison
+- **Vector Search**: Utilize multiple vector databases for efficient similarity search and article comparison
+- **Health Checks**: Automatic storage backend health verification with retries
+- **Flexible Scraping**: Support for periodic scraping with customizable intervals
+- **Article Sections**: Intelligent article section splitting and analysis
+- **Similarity Scoring**: Cosine similarity-based article comparison
+- **Author Detection**: Automatic author extraction from multiple sources
 
 ### Architecture
 - **Modular Design**: Each major feature is a separate crate with clear responsibilities
@@ -19,16 +24,18 @@ A news aggregator that uses AI to detect similar stories across many digital new
 
 ### Technology Stack
 - **Web Scraping**: Using `scraper` for robust HTML parsing
-- **LLM Integration**: Using DeepSeek API for:
-  - Article summarization
-  - Semantic analysis
-  - Text embeddings
+- **LLM Integration**: Multiple model support:
+  - Ollama (default)
+  - DeepSeek API
+  - LangChain integration
 - **Vector Storage**: Multiple backend options:
   - In-memory storage (default)
   - ChromaDB for vector similarity search
   - Qdrant for vector similarity search
   - SQLite for persistent storage
 - **Web Interface**: Using `axum` for the API server
+- **Docker Support**: Containerized deployment with health checks
+- **Rate Limiting**: Built-in concurrency control for API calls
 
 ### Storage Backends
 The project supports multiple storage backends that can be enabled via feature flags:
@@ -67,8 +74,10 @@ Requirements for each backend:
 
 ### Configuration Options
 - `--storage`: Choose the storage backend (memory, chroma, qdrant, sqlite)
-- `--model-url`: URL for the Ollama model server (default: http://localhost:11434)
+- `--model-url`: URL for the model server (default: http://localhost:11434)
 - `--backend-url`: URL for the vector storage backend (default: depends on backend)
+- `--model`: Choose the inference model (ollama, deepseek)
+- `--interval`: Set periodic scraping interval (e.g., 1h, 30m, 1d, 1h15m30s)
 
 ### Current Crates
 - `nt_core`: Core types, utilities, and CLI entry point
@@ -91,9 +100,21 @@ Requirements for each backend:
 - [x] Article parsing and section splitting
 - [x] Basic test infrastructure
 - [x] Article status tracking (new, updated, unchanged)
-- [x] ChromaDB integration for article storage
-- [x] DeepSeek API integration for embeddings
+- [x] Multiple vector database integrations:
+  - [x] ChromaDB
+  - [x] Qdrant
+  - [x] SQLite
+- [x] Multiple LLM backend support:
+  - [x] Ollama
+  - [x] DeepSeek
+  - [x] LangChain
 - [x] Web API structure with proper layer separation
+- [x] Docker support with health checks
+- [x] Periodic scraping with customizable intervals
+- [x] Article similarity scoring
+- [x] Author detection from multiple sources
+- [x] Storage backend health verification
+- [x] Rate limiting for API calls
 
 ### In Progress
 - [ ] Article divergence algorithm implementation
@@ -146,6 +167,11 @@ nt scrapers scrape source --interval 30m   # Scrape every 30 minutes
 nt scrapers scrape source --interval 1d    # Scrape every day
 nt scrapers scrape source --interval 1h15m # Scrape every 1 hour and 15 minutes
 nt scrapers scrape source --interval 1h15m30s # Scrape every 1 hour, 15 minutes and 30 seconds
+
+# Use specific model and storage backend
+nt --model deepseek --storage chroma scrapers scrape
+nt --model ollama --storage qdrant scrapers scrape
+nt --model langchain --storage sqlite scrapers scrape
 ```
 
 ### Web API
@@ -188,3 +214,23 @@ docker compose -f docker-compose.chroma.yml up -d app_chroma chroma
 The services will be available at:
 - Qdrant: http://localhost:6333
 - Chroma: http://localhost:8000
+
+### Environment Variables
+- `SCRAPE_INTERVAL`: Interval between scraping cycles (default: 3600)
+- `STORAGE`: Storage backend to use (default: sqlite)
+- `MODEL_URL`: URL for the model server
+- `BACKEND_URL`: URL for the vector storage backend
+- `RUST_LOG`: Logging level (default: info)
+
+### Health Checks
+The application includes automatic health checks for:
+- Storage backend connectivity
+- Model server availability
+- Database migrations
+- API endpoints
+
+### Rate Limiting
+Built-in rate limiting is implemented for:
+- API calls to external services
+- Database operations
+- Model inference requests
