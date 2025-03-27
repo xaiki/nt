@@ -12,6 +12,7 @@ services:
       qdrant:
         condition: service_healthy
     environment:
+      - RUST_LOG=info
       - STORAGE=qdrant
       - QDRANT_URL=http://qdrant:6333
     volumes:
@@ -30,13 +31,18 @@ services:
       - 6335
     volumes:
       - qdrant_data:/qdrant/storage
+    environment:
+      - QDRANT_ALLOW_RECOVERY=true
+      - QDRANT_LOG_LEVEL=debug
+      - QDRANT_DEBUG=true
     networks:
       - nt-network
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:6333/"]
+      test: ["CMD", "curl", "-f", "http://localhost:6333/health"]
       interval: 30s
       timeout: 10s
       retries: 3
+      start_period: 10s
 
 volumes:
   qdrant_data:
