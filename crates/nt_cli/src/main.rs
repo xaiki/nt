@@ -143,9 +143,38 @@ enum ScraperCommands {
     },
 }
 
-async fn create_storage<T: StorageBackend + 'static>() -> Result<Arc<RwLock<dyn ArticleStorage>>> {
-    let storage = T::new().await?;
-    Ok(Arc::new(RwLock::new(storage)))
+async fn create_storage<T: StorageBackend + ArticleStorage + 'static>() -> Result<Arc<RwLock<dyn ArticleStorage>>> {
+    let mut retries = 3;
+    let mut last_error = None;
+
+    while retries > 0 {
+        match T::new().await {
+            Ok(storage) => {
+                let storage = Arc::new(RwLock::new(storage)) as Arc<RwLock<dyn ArticleStorage>>;
+                // Check storage health with retries
+                if let Err(e) = check_storage_with_retry(&storage, 3, Duration::from_secs(10)).await {
+                    last_error = Some(e);
+                    retries -= 1;
+                    if retries > 0 {
+                        info!("Storage initialization failed, retrying {}/3...", 4 - retries);
+                        tokio::time::sleep(Duration::from_secs(2)).await;
+                    }
+                } else {
+                    return Ok(storage);
+                }
+            }
+            Err(e) => {
+                last_error = Some(e);
+                retries -= 1;
+                if retries > 0 {
+                    info!("Storage initialization failed, retrying {}/3...", 4 - retries);
+                    tokio::time::sleep(Duration::from_secs(2)).await;
+                }
+            }
+        }
+    }
+
+    Err(last_error.unwrap_or_else(|| nt_core::Error::Storage("Storage initialization failed after all retries".to_string())))
 }
 
 #[tokio::main]
