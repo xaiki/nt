@@ -1,5 +1,5 @@
 use clap::Parser;
-use nt_core::{Result, ArticleStorage, Article};
+use nt_core::{Result, ArticleStorage, Article, Scraper};
 use nt_storage::{StorageBackend, backends::memory::MemoryStorage as InMemoryStorage, UrlConfig};
 use chrono::Utc;
 use nt_scrappers::cli::{ScraperArgs, ScraperCommands as NtScraperCommands, handle_command};
@@ -68,7 +68,7 @@ impl FromStr for HumanDuration {
     }
 }
 
-async fn check_storage(storage: &Arc<dyn ArticleStorage>) -> Result<()> {
+async fn check_storage(storage: &Arc<dyn ArticleStorage>, storage_type: &str) -> Result<()> {
     let test_article = Article {
         url: "http://test.com".to_string(),
         title: "Test Article".to_string(),
@@ -88,16 +88,16 @@ async fn check_storage(storage: &Arc<dyn ArticleStorage>) -> Result<()> {
         return Err(nt_core::Error::Storage("Failed to retrieve test article".to_string()));
     }
 
-    info!("🏦 Storage backend initialized successfully");
+    info!("🏦 Storage backend initialized successfully (using {})", storage_type);
     Ok(())
 }
 
-async fn check_storage_with_retry(storage: &Arc<dyn ArticleStorage>, max_retries: u32, timeout: Duration) -> Result<()> {
+async fn check_storage_with_retry(storage: &Arc<dyn ArticleStorage>, storage_type: &str, max_retries: u32, timeout: Duration) -> Result<()> {
     let mut retries = 0;
     let mut last_error = None;
 
     while retries < max_retries {
-        match tokio::time::timeout(timeout, check_storage(storage)).await {
+        match tokio::time::timeout(timeout, check_storage(storage, storage_type)).await {
             Ok(result) => return result,
             Err(timeout_error) => {
                 last_error = Some(nt_core::Error::Storage(format!("Storage health check timed out: {}", timeout_error)));
@@ -153,6 +153,7 @@ enum ScraperCommands {
 async fn create_storage<T: StorageBackend + ArticleStorage + 'static>(backend_url: Option<&str>) -> Result<Arc<dyn ArticleStorage>> {
     let mut retries = 3;
     let mut last_error = None;
+    let storage_type = std::any::type_name::<T>().split("::").last().unwrap_or("unknown").to_string();
 
     while retries > 0 {
         match T::new().await {
@@ -164,7 +165,7 @@ async fn create_storage<T: StorageBackend + ArticleStorage + 'static>(backend_ur
                 }
                 let storage = Arc::new(storage) as Arc<dyn ArticleStorage>;
                 // Check storage health with retries
-                if let Err(e) = check_storage_with_retry(&storage, 3, Duration::from_secs(10)).await {
+                if let Err(e) = check_storage_with_retry(&storage, &storage_type, 3, Duration::from_secs(10)).await {
                     last_error = Some(e);
                     retries -= 1;
                     if retries > 0 {
@@ -228,14 +229,17 @@ async fn main() -> Result<()> {
         inference_config,
     };
     let inference = nt_inference::models::create_model(Some(config))?;
-    info!("🧠 Inference model initialized successfully");
+    info!("🧠 Inference model initialized successfully (using {})", inference.name());
     let mut manager = ScraperManager::new(storage.clone(), inference.clone()).await?;
     
     // Add all available scrapers
+    let mut scraper_names = Vec::new();
     for scraper_type in nt_scrappers::scrapers::argentina::get_scrapers() {
-        manager.add_scraper(scraper_type.lock().unwrap().clone());
+        let scraper = scraper_type.lock().unwrap();
+        scraper_names.push(scraper.source_metadata().name);
+        manager.add_scraper(scraper.clone());
     }
-    info!("🦗 Scrapers initialized successfully");
+    info!("🦗 Scrapers initialized successfully: {}", scraper_names.join(", "));
 
     match cli.command {
         Commands::Scrape { command } => match command.unwrap_or(ScraperCommands::Source { source: None, interval: None }) {
