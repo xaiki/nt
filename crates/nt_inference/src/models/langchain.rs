@@ -90,25 +90,55 @@ impl LangChainModel {
                 model_config.get_ollama_port(),
             ));
             
-            // Check if Ollama is available by making a test request
+            // Try to make a test request
             let test_ollama = Ollama::new(
                 client.clone(),
                 model_config.get_model_name().to_string(),
                 Some(GenerationOptions::default()),
             );
             
-            // Try to make a test request
-            if let Err(e) = test_ollama.invoke("test").await {
-                return Err(nt_core::Error::External(anyhow!(
-                    "Ollama is not available at {}:{}: {}. Please ensure Ollama is running and the model '{}' is installed.",
-                    model_config.get_ollama_host(),
-                    model_config.get_ollama_port(),
-                    e,
-                    model_config.get_model_name()
-                )));
+            // Try to make a test request, if it fails with model not found, try to pull it
+            match test_ollama.invoke("test").await {
+                Ok(_) => Some(test_ollama),
+                Err(e) => {
+                    if e.to_string().contains("model not found") {
+                        // Try to pull the model using the client directly
+                        let pull_result = client.pull_model(
+                            model_config.get_model_name().to_string(),
+                            false, // Don't force pull by default
+                        ).await;
+                        if let Err(pull_err) = pull_result {
+                            return Err(nt_core::Error::External(anyhow!(
+                                "Failed to pull model '{}': {}. Please ensure Ollama is running and you have internet access.",
+                                model_config.get_model_name(),
+                                pull_err
+                            )));
+                        }
+                        
+                        // Try the test request again after pulling
+                        match test_ollama.invoke("test").await {
+                            Ok(_) => Some(test_ollama),
+                            Err(e) => {
+                                return Err(nt_core::Error::External(anyhow!(
+                                    "Ollama is not available at {}:{}: {}. Please ensure Ollama is running and the model '{}' is installed.",
+                                    model_config.get_ollama_host(),
+                                    model_config.get_ollama_port(),
+                                    e,
+                                    model_config.get_model_name()
+                                )));
+                            }
+                        }
+                    } else {
+                        return Err(nt_core::Error::External(anyhow!(
+                            "Ollama is not available at {}:{}: {}. Please ensure Ollama is running and the model '{}' is installed.",
+                            model_config.get_ollama_host(),
+                            model_config.get_ollama_port(),
+                            e,
+                            model_config.get_model_name()
+                        )));
+                    }
+                }
             }
-            
-            Some(test_ollama)
         } else {
             None
         };
@@ -130,7 +160,7 @@ impl InferenceModel for LangChainModel {
         #[cfg(feature = "ollama")]
         {
             if let Some(ollama) = &self.ollama_client {
-                let prompt = format!("Please summarize the following article:\n\n{}", article.content);
+                let prompt = format!("Please summarize the following article, make sure to include all the details and produce output in the same language as the original article:\n\n{}", article.content);
                 let response = ollama.invoke(&prompt)
                     .await
                     .map_err(|e| nt_core::Error::External(anyhow!("Failed to generate summary: {}", e)))?;
@@ -147,7 +177,7 @@ impl InferenceModel for LangChainModel {
             if let Some(ollama) = &self.ollama_client {
                 let mut summaries = Vec::new();
                 for section in sections {
-                    let prompt = format!("Please summarize the following section:\n\n{}", section.content);
+                    let prompt = format!("Please summarize the following section, make sure to include all the details and produce output in the same language as the original article:\n\n{}", section.content);
                     let response = ollama.invoke(&prompt)
                         .await
                         .map_err(|e| nt_core::Error::External(anyhow!("Failed to generate section summary: {}", e)))?;
