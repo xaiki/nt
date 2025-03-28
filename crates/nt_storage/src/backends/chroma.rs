@@ -333,6 +333,39 @@ impl ArticleStorage for ChromaStorage {
             .map_err(|e| nt_core::Error::Database(format!("Failed to delete article: {}", e)))?;
         Ok(())
     }
+
+    async fn get_article_embedding(&self, url: &str) -> Result<Vec<f32>> {
+        let store = self.store.read().await;
+        let collection = store.client.get_or_create_collection(&store.config.collection, None)
+            .map_err(|e| nt_core::Error::External(e))?;
+
+        let query_options = QueryOptions {
+            query_embeddings: Some(vec![vec![0.0; store.config.vector_size as usize]]), // Dummy embedding for filtering
+            query_texts: None,
+            n_results: Some(1),
+            where_document: None,
+            where_metadata: Some(serde_json::Value::Object(serde_json::Map::from_iter(vec![
+                ("url".to_string(), serde_json::Value::String(url.to_string())),
+            ]))),
+            include: Some(vec!["embeddings"]),
+        };
+
+        let results = collection.query(query_options, None)
+            .map_err(|e| nt_core::Error::External(e))?;
+
+        let embeddings = results.embeddings
+            .ok_or_else(|| nt_core::Error::Database("No embeddings found in results".to_string()))?;
+
+        if embeddings.is_empty() {
+            return Err(nt_core::Error::Database("No embedding found for article".to_string()));
+        }
+
+        let embedding_vec = embeddings[0].as_ref().expect("No embedding vector found").first()
+            .ok_or_else(|| nt_core::Error::Database("Empty embedding vector".to_string()))?
+            .clone();
+
+        Ok(embedding_vec)
+    }
 }
 
 #[cfg(test)]
