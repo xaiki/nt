@@ -4,6 +4,7 @@ use crate::Config;
 
 pub mod deepseek;
 pub mod langchain;
+pub mod dummy;
 
 pub async fn create_model(config: Option<Config>) -> Result<Arc<dyn InferenceModel>> {
     let config = config.unwrap_or_default();
@@ -25,6 +26,10 @@ pub async fn create_model(config: Option<Config>) -> Result<Arc<dyn InferenceMod
             let model = deepseek::DeepSeekModel::new(config.api_key)?;
             Ok(Arc::new(model))
         }
-        _ => Err(nt_core::Error::Inference(format!("Unknown model: {}. Available models: ollama, deepseek", model_name))),
+        "dummy" => {
+            let model = dummy::DummyModel::new(Some(config)).await?;
+            Ok(Arc::new(model))
+        }
+        _ => Err(nt_core::Error::Inference(format!("Unknown model: {}. Available models: ollama, deepseek, dummy", model_name))),
     }
 } 
