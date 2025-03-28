@@ -222,6 +222,38 @@ impl QdrantStore {
         .map_err(|e| nt_core::Error::External(e.into()))?;
         Ok(())
     }
+
+    pub async fn get_article_embedding(&self, url: &str) -> Result<Vec<f32>> {
+        let results = self.client.search_points(
+            SearchPointsBuilder::new(
+                self.config.collection.clone(),
+                vec![0.0; self.config.vector_size as usize],
+                1
+            )
+            .with_payload(true)
+            .filter(Filter::all([Condition::matches("url", url.to_string())]))
+        )
+        .await
+        .map_err(|e| nt_core::Error::External(e.into()))?;
+
+        let point = results.result.first()
+            .ok_or_else(|| nt_core::Error::Database(format!("No embedding found for article: {}", url)))?;
+
+        let doc_str = point.payload.get("doc")
+            .ok_or_else(|| nt_core::Error::Database(format!("No document found for article: {}", url)))?
+            .as_str()
+            .ok_or_else(|| nt_core::Error::Database(format!("Invalid document format for article: {}", url)))?;
+
+        let article: Article = serde_json::from_str(doc_str)
+            .map_err(|e| nt_core::Error::Database(format!("Failed to deserialize article: {}", e)))?;
+
+        Ok(article.sections.first()
+            .ok_or_else(|| nt_core::Error::Database(format!("No sections found for article: {}", url)))?
+            .embedding
+            .as_ref()
+            .ok_or_else(|| nt_core::Error::Database(format!("No embedding found for article: {}", url)))?
+            .clone())
+    }
 }
 
 pub struct QdrantStorage {
@@ -286,6 +318,11 @@ impl ArticleStorage for QdrantStorage {
             // Return Ok even if delete fails
         }
         Ok(())
+    }
+
+    async fn get_article_embedding(&self, url: &str) -> Result<Vec<f32>> {
+        let store = self.store.read().await;
+        store.get_article_embedding(url).await
     }
 }
 

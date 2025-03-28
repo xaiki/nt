@@ -458,6 +458,24 @@ impl ArticleStorage for SQLiteStorage {
         let store = self.store.read().await;
         store.delete_article(url).await
     }
+
+    async fn get_article_embedding(&self, url: &str) -> Result<Vec<f32>> {
+        let store = self.store.read().await;
+        let row = sqlx::query("SELECT embedding FROM embeddings WHERE url = ?")
+            .bind(url)
+            .fetch_one(&store.pool)
+            .await
+            .map_err(|e| nt_core::Error::Database(format!("Failed to fetch embedding: {}", e)))?;
+
+        let embedding_bytes: Vec<u8> = row.get("embedding");
+        let embedding = unsafe {
+            std::slice::from_raw_parts(
+                embedding_bytes.as_ptr() as *const f32,
+                embedding_bytes.len() / std::mem::size_of::<f32>(),
+            ).to_vec()
+        };
+        Ok(embedding)
+    }
 }
 
 #[cfg(test)]

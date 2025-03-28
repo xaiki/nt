@@ -74,6 +74,13 @@ impl MemoryStore {
         self.articles.remove(url);
         Ok(())
     }
+
+    pub async fn get_article_embedding(&self, url: &str) -> Result<Vec<f32>> {
+        match self.articles.get(url) {
+            Some((_, embedding)) => Ok(embedding.clone()),
+            None => Err(nt_core::Error::Database(format!("Article not found: {}", url)))
+        }
+    }
 }
 
 pub struct MemoryStorage {
@@ -127,6 +134,11 @@ impl ArticleStorage for MemoryStorage {
     async fn delete_article(&self, url: &str) -> Result<()> {
         let mut store = self.store.write().await;
         store.delete_article(url).await
+    }
+
+    async fn get_article_embedding(&self, url: &str) -> Result<Vec<f32>> {
+        let store = self.store.read().await;
+        store.get_article_embedding(url).await
     }
 }
 
