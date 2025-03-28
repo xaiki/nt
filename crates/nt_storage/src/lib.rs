@@ -1,13 +1,20 @@
 use async_trait::async_trait;
-use nt_core::Result;
-use std::fmt;
-use std::fmt::Debug;
-use std::any::Any;
+use nt_core::{Result, Article, ArticleStorage};
+use std::collections::HashMap;
+use std::sync::Arc;
 use std::str::FromStr;
+use std::any::Any;
 
 pub mod backends;
-
 pub use backends::*;
+
+pub use backends::memory::MemoryStorage as InMemoryStorage;
+#[cfg(feature = "chroma")]
+pub use backends::chroma::ChromaStorage;
+#[cfg(feature = "qdrant")]
+pub use backends::qdrant::QdrantStorage;
+#[cfg(feature = "sqlite")]
+pub use backends::sqlite::SQLiteStorage;
 
 #[async_trait]
 pub trait StorageBackend: Send + Sync + Any {
@@ -108,4 +115,72 @@ pub trait ModelConfig: UrlConfig {
 pub mod prelude {
     pub use super::BackendConfig;
     pub use super::backends::*;
+}
+
+pub async fn get_available_storage_backends() -> HashMap<String, String> {
+    let mut backends = HashMap::new();
+    backends.insert("memory".to_string(), "In-memory storage".to_string());
+    
+    #[cfg(feature = "chroma")]
+    backends.insert("chroma".to_string(), "ChromaDB vector database".to_string());
+    
+    #[cfg(feature = "qdrant")]
+    backends.insert("qdrant".to_string(), "Qdrant vector database".to_string());
+    
+    #[cfg(feature = "sqlite")]
+    backends.insert("sqlite".to_string(), "SQLite database".to_string());
+    
+    backends
+}
+
+pub async fn create_storage(backend: &str, url: Option<&str>) -> Result<Arc<dyn ArticleStorage>> {
+    match backend {
+        "memory" => {
+            let mut storage = InMemoryStorage::new().await?;
+            if let Some(url) = url {
+                if let Some(config) = storage.get_config() {
+                    config.with_url(url);
+                }
+            }
+            Ok(Arc::new(storage))
+        }
+        #[cfg(feature = "chroma")]
+        "chroma" => {
+            let mut storage = ChromaStorage::new().await?;
+            if let Some(url) = url {
+                if let Some(config) = storage.get_config() {
+                    config.with_url(url);
+                }
+            }
+            Ok(Arc::new(storage))
+        }
+        #[cfg(feature = "qdrant")]
+        "qdrant" => {
+            let mut storage = QdrantStorage::new().await?;
+            if let Some(url) = url {
+                if let Some(config) = storage.get_config() {
+                    config.with_url(url);
+                }
+            }
+            Ok(Arc::new(storage))
+        }
+        #[cfg(feature = "sqlite")]
+        "sqlite" => {
+            let mut storage = SQLiteStorage::new().await?;
+            if let Some(url) = url {
+                if let Some(config) = storage.get_config() {
+                    config.with_url(url);
+                }
+            }
+            Ok(Arc::new(storage))
+        }
+        _ => {
+            let backends = get_available_storage_backends().await;
+            let available = backends.keys().map(|s| s.as_str()).collect::<Vec<_>>().join(", ");
+            Err(nt_core::Error::Storage(format!(
+                "Unknown storage backend. Available backends: {}",
+                available
+            )))
+        }
+    }
 }

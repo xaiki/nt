@@ -1,6 +1,6 @@
 use clap::Parser;
 use nt_core::{Result, ArticleStorage, Article, Scraper};
-use nt_storage::{StorageBackend, backends::memory::MemoryStorage as InMemoryStorage, UrlConfig};
+use nt_storage::{StorageBackend, UrlConfig};
 use chrono::Utc;
 use nt_scrappers::cli::{ScraperArgs, ScraperCommands as NtScraperCommands, handle_command};
 use std::sync::Arc;
@@ -8,16 +8,6 @@ use tracing::info;
 use std::str::FromStr;
 use std::time::Duration;
 use nt_scrappers::ScraperManager;
-use std::any::Any;
-
-#[cfg(feature = "chroma")]
-use nt_storage::ChromaDBStorage;
-
-#[cfg(feature = "qdrant")]
-use nt_storage::QdrantStorage;
-
-#[cfg(feature = "sqlite")]
-use nt_storage::SQLiteStorage;
 
 const DEFAULT_VECTOR_SIZE: u64 = 768;
 
@@ -204,27 +194,10 @@ async fn main() -> Result<()> {
     tracing_subscriber::fmt::init();
     let cli = Cli::parse();
 
-    let storage = match cli.storage.as_str() {
-        "memory" => create_storage::<InMemoryStorage>(cli.backend_url.as_deref()).await?,
-        #[cfg(feature = "chroma")]
-        "chroma" => create_storage::<ChromaDBStorage>(cli.backend_url.as_deref()).await?,
-        #[cfg(feature = "qdrant")]
-        "qdrant" => create_storage::<QdrantStorage>(cli.backend_url.as_deref()).await?,
-        #[cfg(feature = "sqlite")]
-        "sqlite" => create_storage::<SQLiteStorage>(cli.backend_url.as_deref()).await?,
-        _ => {
-            #[allow(unused_mut)]
-            let mut msg = "Unknown storage backend. Available backends: memory".to_string();
-            #[cfg(feature = "chroma")]
-            msg.push_str(", chroma");
-            #[cfg(feature = "qdrant")]
-            msg.push_str(", qdrant");
-            #[cfg(feature = "sqlite")]
-            msg.push_str(", sqlite");
-            eprintln!("{}", msg);
-            return Err(nt_core::Error::Storage(msg));
-        }
-    };
+    let storage: Arc<dyn ArticleStorage> = nt_storage::create_storage(
+        cli.storage.as_str(),
+        cli.backend_url.as_deref()
+    ).await?;
 
     // Initialize inference model based on configuration
     let inference_config = nt_inference::InferenceConfig {
