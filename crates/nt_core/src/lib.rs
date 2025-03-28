@@ -136,6 +136,9 @@ pub trait ArticleStorage: Send + Sync + Any {
 
     /// Delete an article by its URL
     async fn delete_article(&self, url: &str) -> Result<()>;
+
+    /// Get the embedding for an article by its URL
+    async fn get_article_embedding(&self, url: &str) -> Result<Vec<f32>>;
 }
 
 pub fn cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
