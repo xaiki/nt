@@ -260,4 +260,8 @@ impl ArticleStorage for ScraperManager {
     async fn delete_article(&self, url: &str) -> Result<()> {
         self.storage.delete_article(url).await
     }
+
+    async fn get_article_embedding(&self, url: &str) -> Result<Vec<f32>> {
+        self.storage.get_article_embedding(url).await
+    }
 } 
