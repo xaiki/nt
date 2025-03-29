@@ -42,6 +42,13 @@ services:
       - ollama_data:/root/.ollama
     networks:
       - nt-network
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
 
 volumes:
   qdrant_data:

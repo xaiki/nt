@@ -1,18 +1,23 @@
 use async_trait::async_trait;
 use std::sync::{Arc, Mutex};
 use std::collections::HashMap;
+use std::ops::Deref;
 use nt_core::{Article, Result, Error, ArticleStorage, InferenceModel, ArticleStatus, Scraper};
 use crate::scrapers::ScraperType;
 use tracing::info;
-use tokio::sync::{Mutex as TokioMutex, Semaphore};
+use tokio::sync::{Mutex as TokioMutex, Semaphore, mpsc};
 use futures::future::join_all;
 use std::sync::Mutex as StdMutex;
+use tokio::task::JoinHandle;
+use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 
 pub struct ScraperManager {
     storage: Arc<dyn ArticleStorage>,
     inference: Arc<dyn InferenceModel>,
     scrapers: Arc<StdMutex<Vec<Arc<Mutex<ScraperType>>>>>,
     semaphore: Arc<Semaphore>,
+    inference_tasks: Arc<TokioMutex<Vec<JoinHandle<Result<()>>>>>,
+    progress: Arc<MultiProgress>,
 }
 
 impl ScraperManager {
@@ -21,7 +26,9 @@ impl ScraperManager {
             storage,
             inference,
             scrapers: Arc::new(StdMutex::new(Vec::new())),
-            semaphore: Arc::new(Semaphore::new(5)), // Limit concurrent API calls
+            semaphore: Arc::new(Semaphore::new(32)), // Limit concurrent operations to 32
+            inference_tasks: Arc::new(TokioMutex::new(Vec::new())),
+            progress: Arc::new(MultiProgress::new()),
         })
     }
 
@@ -67,7 +74,7 @@ impl ScraperManager {
         Ok(result)
     }
 
-    async fn process_article(&self, mut article: Article) -> Result<Article> {
+    async fn process_article(&self, mut article: Article) -> Result<()> {
         info!("📰 Processing article: {}", article.title);
         
         // Generate article summary
@@ -147,13 +154,91 @@ impl ScraperManager {
         info!("✨ Article stored successfully");
 
         info!("✅ Article processing completed: {}", article.title);
-        Ok(article)
+        Ok(())
+    }
+
+    async fn queue_inference_task(&self, article: Article) {
+        let inference = self.inference.clone();
+        let storage = self.storage.clone();
+        let semaphore = self.semaphore.clone();
+        
+        let handle = tokio::spawn(async move {
+            let _permit = semaphore.acquire().await.map_err(|e| nt_core::Error::External(e.into()))?;
+            
+            let mut article = article;
+            let mut emoji_chain = String::new();
+            
+            // Generate article summary
+            article.summary = Some(inference.summarize_article(&article).await?);
+            emoji_chain.push_str("🤖");
+
+            // Generate section summaries and embeddings in parallel
+            let num_sections = article.sections.len();
+            let section_futures: Vec<_> = article.sections.iter_mut().enumerate().map(|(i, section)| {
+                let inference = inference.clone();
+                let semaphore = semaphore.clone();
+                async move {
+                    let _permit = semaphore.acquire().await.map_err(|e| nt_core::Error::External(e.into()))?;
+                    section.summary = Some(inference.summarize_sections(&[section.clone()]).await?[0].clone());
+                    section.embedding = Some(inference.generate_embeddings(&section.content).await?);
+                    Ok::<_, nt_core::Error>(())
+                }
+            }).collect();
+
+            join_all(section_futures).await.into_iter().collect::<Result<Vec<_>>>()?;
+            emoji_chain.push_str("📑");
+
+            // Generate article embedding for similarity search
+            let article_embedding = inference.generate_embeddings(&article.content).await?;
+            emoji_chain.push_str("🔢");
+
+            // Find similar articles
+            let similar_articles = storage.find_similar(&article_embedding, 5).await?;
+            
+            // Process similar articles in parallel
+            let similar_futures: Vec<_> = similar_articles.into_iter()
+                .filter(|a| a.url != article.url)
+                .map(|a| {
+                    let inference = inference.clone();
+                    let semaphore = semaphore.clone();
+                    let article_embedding = article_embedding.clone();
+                    async move {
+                        let _permit = semaphore.acquire().await.map_err(|e| nt_core::Error::External(e.into()))?;
+                        let a_embedding = inference.generate_embeddings(&a.content).await?;
+                        let similarity = nt_core::cosine_similarity(&article_embedding, &a_embedding);
+                        let related = nt_core::RelatedArticle {
+                            article: a,
+                            similarity_score: Some(similarity),
+                        };
+                        Ok::<_, nt_core::Error>(related)
+                    }
+                })
+                .collect();
+
+            article.related_articles = join_all(similar_futures).await.into_iter().collect::<Result<Vec<_>>>()?;
+            emoji_chain.push_str("🔄");
+            for _ in 0..article.related_articles.len() {
+                emoji_chain.push_str("📊");
+            }
+
+            // Store the processed article
+            storage.store_article(&article, &article_embedding).await?;
+            emoji_chain.push_str("✨");
+            emoji_chain.push_str("✅");
+
+            info!("{} Article processed: {}", emoji_chain, article.title);
+            Ok(())
+        });
+
+        let mut tasks = self.inference_tasks.lock().await;
+        tasks.push(handle);
     }
 
     pub async fn scrape_url(&self, url: &str) -> Result<Article> {
         let mut scraper = self.get_scraper_for_url(url)?;
         let article = scraper.scrape_article(url).await?;
-        self.process_article(article).await
+        self.queue_inference_task(article.clone()).await;
+        Ok(article)
     }
 
     pub async fn scrape_source(&self, source: Option<&str>) -> Result<Vec<Article>> {
@@ -172,20 +257,79 @@ impl ScraperManager {
                 .collect()
         };
         
-        for scraper in scrapers {
+        // Create progress bar for scrapers
+        let scraper_pb = self.progress.add(ProgressBar::new(scrapers.len() as u64));
+        scraper_pb.set_style(ProgressStyle::default_bar()
+            .template("[{elapsed}] {bar:40} {pos:>3}/{len:3} {msg}")
+            .unwrap());
+        scraper_pb.set_message("Scraping sources");
+        
+        // Run all scrapers in parallel
+        let scraper_futures: Vec<_> = scrapers.into_iter().map(|scraper| {
             let source_name = scraper.source_metadata().name;
-            info!("Scraping articles from {}", source_name);
+            let scraper_pb = scraper_pb.clone();
             
-            let urls = scraper.get_article_urls().await?;
-            for url in urls {
-                match self.scrape_url(&url).await {
-                    Ok(article) => articles.push(article),
-                    Err(e) => {
-                        info!("Failed to scrape {}: {}", url, e);
+            async move {
+                scraper_pb.set_message(format!("Scraping: {}", source_name));
+                let urls = scraper.get_article_urls().await?;
+                let mut scraper_articles = Vec::new();
+                
+                // Process URLs in parallel
+                let url_futures: Vec<_> = urls.into_iter().map(|url| {
+                    let manager = self.clone();
+                    async move {
+                        match manager.scrape_url(&url).await {
+                            Ok(article) => Some(article),
+                            Err(e) => {
+                                info!("Failed to scrape {}: {}", url, e);
+                                None
+                            }
+                        }
                     }
+                }).collect();
+
+                let results = join_all(url_futures).await;
+                for result in results {
+                    if let Some(article) = result {
+                        scraper_articles.push(article);
+                    }
+                }
+                
+                scraper_pb.inc(1);
+                Ok::<_, nt_core::Error>(scraper_articles)
+            }
+        }).collect();
+
+        // Collect results from all scrapers
+        let results = join_all(scraper_futures).await;
+        for result in results {
+            if let Ok(scraper_articles) = result {
+                articles.extend(scraper_articles);
+            }
+        }
+
+        // Wait for all inference tasks to complete
+        let mut tasks = self.inference_tasks.lock().await;
+        
+        // Process tasks in chunks to avoid overwhelming the system
+        while !tasks.is_empty() {
+            let mut chunk = Vec::new();
+            for _ in 0..32.min(tasks.len()) {
+                if let Some(task) = tasks.pop() {
+                    chunk.push(task);
+                }
+            }
+            
+            // Wait for current chunk to complete
+            for handle in chunk {
+                if let Err(e) = handle.await {
+                    info!("Inference task failed: {}", e);
                 }
             }
         }
+
+        // Wait for all progress bars to complete
+        (*self.progress).clear();
 
         Ok(articles)
     }

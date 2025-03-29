@@ -22,4 +22,5 @@ lazy_static = "1.4"
 sha2 = "0.10"
 thiserror = { workspace = true }
 anyhow = { workspace = true }
-futures = "0.3" 
+futures = "0.3"
+indicatif = "0.17" 
