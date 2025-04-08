@@ -1,86 +1,39 @@
-#![allow(unused_imports)]
+#![deny(unused_imports)]
 #![feature(internal_output_capture)]
 
-use std::sync::Arc;
-use tokio::sync::{Mutex, mpsc};
-use std::collections::{HashMap, VecDeque};
-use std::io::{Write, stderr, stdout, Stdout, Stderr};
+use std::{
+    collections::HashMap,
+    io::Write,
+    sync::{
+        atomic::{AtomicBool, AtomicUsize, Ordering},
+        Arc,
+    },
+    time::Duration,
+};
+use tokio::{
+    sync::{mpsc, Mutex},
+    task::JoinHandle,
+};
 use anyhow::{Result, anyhow};
-use std::fmt;
-use std::sync::atomic::{AtomicUsize, Ordering};
-use crossterm::terminal::size;
-use rand::Rng;
-use std::time::Duration;
-use serial_test::serial;
-use std::future::Future;
-use tokio::task::LocalSet;
+use std::fmt::Debug;
 use std::cell::RefCell;
-use stdio_override::{StdoutOverride, StderrOverride};
-use std::io::{self, Read};
-use tokio::task::JoinHandle;
-use std::sync::atomic::{AtomicBool};
+use crate::modes::{Config, ThreadMode};
+
+mod modes;
 
 thread_local! {
     static CURRENT_THREAD_ID: AtomicUsize = AtomicUsize::new(0);
-    static CURRENT_WRITER: RefCell<Option<ThreadWriter>> = RefCell::new(None);
-}
-
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub enum ThreadMode {
-    Capturing,    // All lines output, last one constantly displayed
-    Limited,      // Only last line displayed
-    Window(usize), // Last n lines displayed
-    WindowWithTitle(usize), // Last n lines displayed with title
+    static CURRENT_WRITER: RefCell<Option<ThreadLogger>> = RefCell::new(None);
 }
 
 #[derive(Debug, Clone)]
-struct ThreadConfig {
-    mode: ThreadMode,
-    lines_to_display: usize,
-    result_emoji_stack: String,
-    total_jobs: usize,
-    completed_jobs: Arc<AtomicUsize>,
-    title: Option<String>,
-}
-
-impl ThreadConfig {
-    fn new(mode: ThreadMode, total_jobs: usize) -> Self {
-        Self {
-            mode,
-            lines_to_display: match mode {
-                ThreadMode::Window(n) | ThreadMode::WindowWithTitle(n) => n,
-                _ => 1,
-            },
-            result_emoji_stack: String::new(),
-            total_jobs,
-            completed_jobs: Arc::new(AtomicUsize::new(0)),
-            title: None,
-        }
-    }
-
-    fn update_mode(&mut self, mode: ThreadMode) {
-        self.mode = mode;
-        self.lines_to_display = match mode {
-            ThreadMode::Window(n) | ThreadMode::WindowWithTitle(n) => n,
-            _ => 1,
-        };
-    }
-}
-
-impl Default for ThreadConfig {
-    fn default() -> Self {
-        Self::new(ThreadMode::Limited, 1)
-    }
-}
-
-#[derive(Debug)]
 pub struct ThreadMessage {
     pub thread_id: usize,
     pub lines: Vec<String>,
-    pub config: ThreadConfig,
+    pub config: Config,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct ProgressDisplay {
     outputs: Arc<Mutex<HashMap<usize, Vec<String>>>>,
     spinner_index: Arc<AtomicUsize>,
@@ -91,39 +44,76 @@ pub struct ProgressDisplay {
     running: Arc<AtomicBool>,
     message_tx: mpsc::Sender<ThreadMessage>,
     message_rx: Arc<Mutex<mpsc::Receiver<ThreadMessage>>>,
+    thread_configs: Arc<Mutex<HashMap<usize, Config>>>,
+    writer: Arc<Mutex<Box<dyn Write + Send + 'static>>>,
+}
+
+impl Debug for ProgressDisplay {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ProgressDisplay")
+            .field("outputs", &self.outputs)
+            .field("spinner_index", &self.spinner_index)
+            .field("terminal_size", &self.terminal_size)
+            .field("processing_task", &self.processing_task)
+            .field("thread_handles", &self.thread_handles)
+            .field("next_thread_id", &self.next_thread_id)
+            .field("running", &self.running)
+            .field("message_tx", &self.message_tx)
+            .field("message_rx", &self.message_rx)
+            .field("thread_configs", &self.thread_configs)
+            .finish()
+    }
 }
 
 impl ProgressDisplay {
     pub async fn new() -> Self {
-        let (width, height) = crossterm::terminal::size().unwrap_or((80, 24));
-        let (message_tx, message_rx) = mpsc::channel(1024);
+        Self::new_with_mode_and_writer(ThreadMode::Limited, Box::new(std::io::stderr())).await
+    }
 
-        let progress = Self {
+    pub async fn new_with_mode(mode: ThreadMode) -> Self {
+        Self::new_with_mode_and_writer(mode, Box::new(std::io::stderr())).await
+    }
+
+    pub async fn new_with_mode_and_writer<W: Write + Send + 'static>(mode: ThreadMode, writer: W) -> Self {
+        let (message_tx, message_rx) = mpsc::channel(100);
+        let display = Self {
             outputs: Arc::new(Mutex::new(HashMap::new())),
             spinner_index: Arc::new(AtomicUsize::new(0)),
-            terminal_size: Arc::new(Mutex::new((width, height))),
+            terminal_size: Arc::new(Mutex::new((80, 24))),
             processing_task: Arc::new(Mutex::new(None)),
             thread_handles: Arc::new(Mutex::new(HashMap::new())),
             next_thread_id: Arc::new(AtomicUsize::new(0)),
             running: Arc::new(AtomicBool::new(true)),
             message_tx,
             message_rx: Arc::new(Mutex::new(message_rx)),
+            thread_configs: Arc::new(Mutex::new(HashMap::new())),
+            writer: Arc::new(Mutex::new(Box::new(writer))),
         };
 
         // Start the display thread
-        let handle = Self::start_display_thread(
-            progress.outputs.clone(),
-            progress.terminal_size.clone(),
-            progress.spinner_index.clone(),
-            progress.message_rx.clone(),
-            progress.running.clone(),
-        ).await;
-        *progress.processing_task.lock().await = Some(handle);
+        let processing_task = tokio::spawn(Self::start_display_thread(
+            Arc::clone(&display.outputs),
+            Arc::clone(&display.terminal_size),
+            Arc::clone(&display.spinner_index),
+            Arc::clone(&display.message_rx),
+            Arc::clone(&display.running),
+            mode,
+            Arc::clone(&display.writer),
+        ));
+        *display.processing_task.lock().await = Some(processing_task);
 
-        progress
+        display
     }
 
     pub async fn spawn<F, R>(&self, f: F) -> Result<TaskHandle>
+    where
+        F: FnOnce() -> R + Send + 'static,
+        R: Send + std::fmt::Debug + 'static,
+    {
+        self.spawn_with_mode(ThreadMode::Limited, f).await
+    }
+
+    pub async fn spawn_with_mode<F, R>(&self, mode: ThreadMode, f: F) -> Result<TaskHandle>
     where
         F: FnOnce() -> R + Send + 'static,
         R: Send + std::fmt::Debug + 'static,
@@ -132,13 +122,18 @@ impl ProgressDisplay {
         let message_tx = self.message_tx.clone();
         let progress = Arc::new(self.clone());
         
+        // Create the thread's config with specified mode
+        let mut configs = self.thread_configs.lock().await;
+        let config = Config::new(mode, 1).map_err(|e| anyhow!(e))?;
+        configs.insert(thread_id, config.clone());
+        
         let handle = tokio::spawn(async move {
             let output = f();
             let lines = vec![format!("{:?}", output)];
             if let Err(e) = message_tx.send(ThreadMessage { 
                 thread_id, 
                 lines,
-                config: ThreadConfig::default(),
+                config,
             }).await {
                 eprintln!("[Error] Failed to send message for thread {}: {}", thread_id, e);
             }
@@ -150,98 +145,13 @@ impl ProgressDisplay {
         Ok(TaskHandle::new(thread_id, progress))
     }
 
-    async fn start_display_thread(
-        outputs: Arc<Mutex<HashMap<usize, Vec<String>>>>,
-        terminal_size: Arc<Mutex<(u16, u16)>>,
-        spinner_index: Arc<AtomicUsize>,
-        message_rx: Arc<Mutex<mpsc::Receiver<ThreadMessage>>>,
-        running: Arc<AtomicBool>,
-    ) -> JoinHandle<()> {
-        tokio::spawn(async move {
-            while running.load(Ordering::SeqCst) {
-                // Process any pending messages
-                let mut message_rx = message_rx.lock().await;
-                while let Ok(message) = message_rx.try_recv() {
-                    let mut outputs = outputs.lock().await;
-                    outputs.entry(message.thread_id)
-                        .or_insert_with(Vec::new)
-                        .extend(message.lines);
-                }
-
-                // Update display
-                let result: std::io::Result<()> = async {
-                    let mut outputs = outputs.lock().await;
-                    let (_width, height) = *terminal_size.lock().await;
-                    
-                    // Get all thread IDs and sort them
-                    let mut thread_ids: Vec<usize> = outputs.keys().copied().collect();
-                    thread_ids.sort();
-                    
-                    // Calculate total lines needed and adjust for terminal height
-                    let mut total_lines = 0;
-                    let mut display_lines = Vec::new();
-                    
-                    // First pass: calculate total lines and collect lines to display
-                    for thread_id in &thread_ids {
-                        if let Some(lines) = outputs.get(thread_id) {
-                            total_lines += lines.len();
-                            display_lines.extend(lines.iter().cloned());
-                        }
-                    }
-                    
-                    // If we need more lines than the terminal can display, adjust
-                    if total_lines > height as usize {
-                        let available_lines = height as usize;
-                        let lines_per_thread = available_lines / outputs.len();
-                        
-                        // Adjust each thread's window size
-                        for (_, lines) in outputs.iter_mut() {
-                            if lines.len() > lines_per_thread {
-                                lines.drain(0..lines.len() - lines_per_thread);
-                            }
-                        }
-                        
-                        // Recalculate total lines after adjustment
-                        total_lines = 0;
-                        display_lines.clear();
-                        for thread_id in &thread_ids {
-                            if let Some(lines) = outputs.get(thread_id) {
-                                total_lines += lines.len();
-                                display_lines.extend(lines.iter().cloned());
-                            }
-                        }
-                    }
-                    
-                    // Move cursor up by the number of lines we're actually going to display
-                    let mut stderr = std::io::stderr().lock();
-                    write!(stderr, "\x1B[{}A", total_lines)?;
-                    
-                    // Update spinner
-                    let spinner_chars = ["▏▎▍", "▎▍▌", "▍▌▋", "▌▋▊", "▋▊▉", "▊▉█", "▉█▉", "█▉▊", "▉▊▋", "▊▋▌", "▋▌▍", "▌▍▎", "▍▎▏"];
-                    let mut spinner_index = spinner_index.fetch_add(1, Ordering::SeqCst);
-                    spinner_index = (spinner_index + 1) % spinner_chars.len();
-                    
-                    // Print all lines in order
-                    for thread_id in thread_ids {
-                        if let Some(lines) = outputs.get(&thread_id) {
-                            for line in lines {
-                                writeln!(stderr, "{} {}", spinner_chars[spinner_index], line)?;
-                            }
-                        }
-                    }
-                    
-                    stderr.flush()?;
-                    Ok(())
-                }.await;
-
-                if let Err(e) = result {
-                    eprintln!("Error updating display: {}", e);
-                }
-
-                // Sleep a bit to prevent CPU spinning
-                tokio::time::sleep(Duration::from_millis(100)).await;
-            }
-        })
+    pub async fn display(&self) -> std::io::Result<()> {
+        Self::render_display(
+            &self.outputs,
+            &self.terminal_size,
+            &self.spinner_index,
+            &self.writer,
+        ).await
     }
 
     pub async fn stop(&self) -> Result<()> {
@@ -254,46 +164,16 @@ impl ProgressDisplay {
         Ok(())
     }
 
-    pub async fn set_title(&self, title: String) -> Result<()> {
-        let mut outputs = self.outputs.lock().await;
-        if let Some(lines) = outputs.get_mut(&0) {
-            if lines.is_empty() {
-                lines.push(title);
-            } else {
-                lines[0] = title;
-            }
-        } else {
-            outputs.insert(0, vec![title]);
-        }
-        Ok(())
+    pub async fn set_title(&self, _title: String) -> Result<()> {
+        unimplemented!("Title support not yet implemented");
     }
 
-    pub async fn set_total_jobs(&self, total: usize) -> Result<()> {
-        let mut outputs = self.outputs.lock().await;
-        if let Some(lines) = outputs.get_mut(&0) {
-            if lines.is_empty() {
-                lines.push(format!("Total jobs: {}", total));
-            } else {
-                lines[0] = format!("Total jobs: {}", total);
-            }
-        } else {
-            outputs.insert(0, vec![format!("Total jobs: {}", total)]);
-        }
-        Ok(())
+    pub async fn add_emoji(&self, _thread_id: usize, _emoji: &str) -> Result<()> {
+        unimplemented!("Emoji support not yet implemented");
     }
 
-    pub async fn capture_stdout(&self, output: String) -> Result<()> {
-        let mut outputs = self.outputs.lock().await;
-        let thread_outputs = outputs.entry(0).or_insert_with(Vec::new);
-        thread_outputs.push(output);
-        Ok(())
-    }
-
-    pub async fn capture_stderr(&self, output: String) -> Result<()> {
-        let mut outputs = self.outputs.lock().await;
-        let thread_outputs = outputs.entry(0).or_insert_with(Vec::new);
-        thread_outputs.push(output);
-        Ok(())
+    pub async fn set_total_jobs(&self, _total: usize) -> Result<()> {
+        unimplemented!("Total jobs support not yet implemented");
     }
 
     pub async fn update_progress(&self, thread_id: usize, current: usize, total: usize, prefix: &str) -> Result<()> {
@@ -317,75 +197,6 @@ impl ProgressDisplay {
         } else {
             outputs.insert(thread_id, vec![message]);
         }
-        Ok(())
-    }
-
-    pub async fn display(&self) -> std::io::Result<()> {
-        let mut outputs = self.outputs.lock().await;
-        if outputs.is_empty() {
-            return Ok(());
-        }
-
-        let mut stderr = std::io::stderr().lock();
-        let (_width, height) = *self.terminal_size.lock().await;
-        
-        // Get all thread IDs and sort them
-        let mut thread_ids: Vec<usize> = outputs.keys().copied().collect();
-        thread_ids.sort();
-        
-        // Calculate total lines needed and adjust for terminal height
-        let mut total_lines = 0;
-        let mut display_lines = Vec::new();
-        
-        // First pass: calculate total lines and collect lines to display
-        for thread_id in &thread_ids {
-            if let Some(lines) = outputs.get(thread_id) {
-                total_lines += lines.len();
-                display_lines.extend(lines.iter().cloned());
-            }
-        }
-        
-        // If we need more lines than the terminal can display, adjust
-        if total_lines > height as usize {
-            let available_lines = height as usize;
-            let lines_per_thread = available_lines / outputs.len();
-            
-            // Adjust each thread's window size
-            for (_, lines) in outputs.iter_mut() {
-                if lines.len() > lines_per_thread {
-                    lines.drain(0..lines.len() - lines_per_thread);
-                }
-            }
-            
-            // Recalculate total lines after adjustment
-            total_lines = 0;
-            display_lines.clear();
-            for thread_id in &thread_ids {
-                if let Some(lines) = outputs.get(thread_id) {
-                    total_lines += lines.len();
-                    display_lines.extend(lines.iter().cloned());
-                }
-            }
-        }
-        
-        // Move cursor up by the number of lines we're actually going to display
-        write!(stderr, "\x1B[{}A", total_lines)?;
-        
-        // Update spinner
-        let spinner_chars = ["▏▎▍", "▎▍▌", "▍▌▋", "▌▋▊", "▋▊▉", "▊▉█", "▉█▉", "█▉▊", "▉▊▋", "▊▋▌", "▋▌▍", "▌▍▎", "▍▎▏"];
-        let mut spinner_index = self.spinner_index.load(Ordering::SeqCst);
-        spinner_index = (spinner_index + 1) % spinner_chars.len();
-        
-        // Print all lines in order
-        for thread_id in thread_ids {
-            if let Some(lines) = outputs.get(&thread_id) {
-                for line in lines {
-                    writeln!(stderr, "{} {}", spinner_chars[spinner_index], line)?;
-                }
-            }
-        }
-        
-        stderr.flush()?;
         Ok(())
     }
 
@@ -421,115 +232,197 @@ impl ProgressDisplay {
 
     pub async fn get_task(&self, thread_id: usize) -> Option<TaskHandle> {
         let handles = self.thread_handles.lock().await;
-        handles.get(&thread_id).map(|handle| TaskHandle {
+        handles.get(&thread_id).map(|_handle| TaskHandle {
             thread_id,
             progress: Arc::new(self.clone()),
+            message_tx: self.message_tx.clone(),
+            thread_config: Arc::new(Mutex::new(Config::new(ThreadMode::Limited, 1).unwrap())),
+            writer: self.writer.clone(),
         })
     }
-}
 
-#[derive(Clone)]
-struct ThreadWriter {
-    thread_id: usize,
-    tx: mpsc::Sender<String>,
-}
+    async fn start_display_thread(
+        outputs: Arc<Mutex<HashMap<usize, Vec<String>>>>,
+        terminal_size: Arc<Mutex<(u16, u16)>>,
+        spinner_index: Arc<AtomicUsize>,
+        message_rx: Arc<Mutex<mpsc::Receiver<ThreadMessage>>>,
+        running: Arc<AtomicBool>,
+        mode: ThreadMode,
+        writer: Arc<Mutex<Box<dyn Write + Send + 'static>>>,
+    ) {
+        while running.load(Ordering::SeqCst) {
+            // Process any pending messages
+            let mut message_rx = message_rx.lock().await;
+            while let Ok(message) = message_rx.try_recv() {
+                let mut outputs = outputs.lock().await;
+                outputs.entry(message.thread_id)
+                    .or_insert_with(Vec::new)
+                    .extend(message.lines);
+            }
 
-impl Write for ThreadWriter {
-    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-        let msg = String::from_utf8_lossy(buf).to_string();
-        
-        // Try to send the message, but don't block if the channel is full
-        if let Err(e) = self.tx.try_send(msg.clone()) {
-            eprintln!("[Error] ThreadWriter {} failed to send message: {} (error: {:?})", self.thread_id, msg, e);
-            // Return an error if the channel is full
-            return Err(std::io::Error::new(std::io::ErrorKind::WouldBlock, "Channel is full"));
+            // Update display
+            let result = Self::render_display(
+                &outputs,
+                &terminal_size,
+                &spinner_index,
+                &writer,
+            ).await;
+
+            if let Err(e) = result {
+                eprintln!("Error updating display: {}", e);
+            }
+
+            // Sleep a bit to prevent CPU spinning
+            tokio::time::sleep(Duration::from_millis(100)).await;
         }
-        
-        Ok(buf.len())
     }
 
-    fn flush(&mut self) -> std::io::Result<()> {
+    // Private method for rendering the display
+    async fn render_display(
+        outputs: &Arc<Mutex<HashMap<usize, Vec<String>>>>,
+        terminal_size: &Arc<Mutex<(u16, u16)>>,
+        spinner_index: &Arc<AtomicUsize>,
+        writer: &Arc<Mutex<Box<dyn Write + Send + 'static>>>,
+    ) -> std::io::Result<()> {
+        // Gather all data under their respective locks first
+        let (thread_ids, lines_by_thread, line_count, terminal_height) = {
+            let outputs_guard = outputs.lock().await;
+            if outputs_guard.is_empty() {
+                return Ok(());
+            }
+            
+            let (_width, height) = *terminal_size.lock().await;
+            
+            // Get all thread IDs and sort them
+            let mut thread_ids: Vec<usize> = outputs_guard.keys().copied().collect();
+            thread_ids.sort();
+            
+            // Calculate total lines and adjust if needed
+            let mut total_lines = 0;
+            
+            // First pass: calculate total lines
+            for thread_id in &thread_ids {
+                if let Some(lines) = outputs_guard.get(thread_id) {
+                    total_lines += lines.len();
+                }
+            }
+            
+            // Clone the necessary data to avoid holding the lock
+            let mut lines_by_thread = HashMap::new();
+            for (thread_id, lines) in outputs_guard.iter() {
+                lines_by_thread.insert(*thread_id, lines.clone());
+            }
+            
+            (thread_ids, lines_by_thread, total_lines, height)
+        };
+        
+        if line_count == 0 {
+            return Ok(());
+        }
+
+        // Adjust line count if needed based on terminal height
+        let mut adjusted_lines_by_thread = lines_by_thread.clone();
+        if line_count > terminal_height as usize && !adjusted_lines_by_thread.is_empty() {
+            let available_lines = terminal_height as usize;
+            let lines_per_thread = available_lines / adjusted_lines_by_thread.len();
+            
+            // Adjust each thread's window size
+            for (_, lines) in adjusted_lines_by_thread.iter_mut() {
+                if lines.len() > lines_per_thread {
+                    lines.drain(0..lines.len() - lines_per_thread);
+                }
+            }
+        }
+        
+        // Get the spinner index
+        let spinner_chars = ["▏▎▍", "▎▍▌", "▍▌▋", "▌▋▊", "▋▊▉", "▊▉█", "▉█▉", "█▉▊", "▉▊▋", "▊▋▌", "▋▌▍", "▌▍▎", "▍▎▏"];
+        let spinner_index_value = {
+            let idx = spinner_index.fetch_add(1, Ordering::SeqCst);
+            (idx + 1) % spinner_chars.len()
+        };
+        
+        // Prepare all lines first
+        let mut output_lines = Vec::new();
+        for thread_id in thread_ids {
+            if let Some(lines) = adjusted_lines_by_thread.get(&thread_id) {
+                for line in lines {
+                    output_lines.push(format!("{} {}", spinner_chars[spinner_index_value], line));
+                }
+            }
+        }
+        
+        // Now do all the writing at once without any await points in between
+        let mut writer = writer.lock().await;
+        write!(writer, "\x1B[{}A", line_count)?;
+        for line in output_lines {
+            writeln!(writer, "{}", line)?;
+        }
+        writer.flush()?;
         Ok(())
     }
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct ThreadLogger {
     thread_id: usize,
     message_tx: mpsc::Sender<ThreadMessage>,
-    config: ThreadConfig,
-    lines: Vec<String>,
-    spinner: usize,
+    config: Config,
 }
 
 impl ThreadLogger {
-    pub fn new(thread_id: usize, message_tx: mpsc::Sender<ThreadMessage>, config: ThreadConfig) -> Self {
+    pub fn new(thread_id: usize, message_tx: mpsc::Sender<ThreadMessage>, config: Config) -> Self {
         Self {
             thread_id,
             message_tx,
             config,
-            lines: Vec::new(),
-            spinner: 0,
         }
-    }
-
-    async fn send_message(&self) -> Result<()> {
-        let message = ThreadMessage {
-            thread_id: self.thread_id,
-            lines: self.lines.clone(),
-            config: self.config.clone(),
-        };
-        self.message_tx.send(message).await.map_err(|e| anyhow!("Failed to send message for thread {}: {}", self.thread_id, e))
     }
 
     pub async fn log(&mut self, message: String) -> Result<()> {
-        self.lines.push(message);
+        let lines = self.config.handle_message(message);
         
-        // Trim lines based on mode
-        match self.config.mode {
-            ThreadMode::Capturing => {
-                // Keep all lines, but only display last
-                self.send_message().await?;
-            }
-            ThreadMode::Limited => {
-                // Keep only last line
-                if self.lines.len() > 1 {
-                    self.lines.remove(0);
-                }
-                self.send_message().await?;
-            }
-            ThreadMode::Window(n) => {
-                // Keep last n lines
-                if self.lines.len() > n {
-                    self.lines.drain(0..self.lines.len() - n);
-                }
-                self.send_message().await?;
-            }
-            ThreadMode::WindowWithTitle(n) => {
-                // Keep last n lines plus title
-                if self.lines.len() > n + 1 {
-                    self.lines.drain(1..self.lines.len() - n);
-                }
-                self.send_message().await?;
-            }
-        }
-        Ok(())
+        let message = ThreadMessage {
+            thread_id: self.thread_id,
+            lines,
+            config: self.config.clone(),
+        };
+        
+        self.message_tx.send(message).await.map_err(|e| anyhow!("Failed to send message: {}", e))
     }
 
-    pub fn update_config(&mut self, config: ThreadConfig) {
+    pub fn update_config(&mut self, config: Config) {
         self.config = config;
     }
 }
 
-#[derive(Debug)]
 pub struct TaskHandle {
     thread_id: usize,
     progress: Arc<ProgressDisplay>,
+    message_tx: mpsc::Sender<ThreadMessage>,
+    thread_config: Arc<Mutex<Config>>,
+    writer: Arc<Mutex<Box<dyn Write + Send + 'static>>>,
+}
+
+impl Debug for TaskHandle {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("TaskHandle")
+            .field("thread_id", &self.thread_id)
+            .field("progress", &self.progress)
+            .field("message_tx", &self.message_tx)
+            .field("thread_config", &self.thread_config)
+            .finish()
+    }
 }
 
 impl TaskHandle {
     pub fn new(thread_id: usize, progress: Arc<ProgressDisplay>) -> Self {
-        Self { thread_id, progress }
+        Self {
+            thread_id,
+            progress: progress.clone(),
+            message_tx: progress.message_tx.clone(),
+            thread_config: Arc::new(Mutex::new(Config::new(ThreadMode::Limited, 1).unwrap())),
+            writer: progress.writer.clone(),
+        }
     }
 
     pub async fn join(self) -> Result<()> {
@@ -559,320 +452,33 @@ impl TaskHandle {
     pub fn thread_id(&self) -> usize {
         self.thread_id
     }
+
+    pub async fn set_mode(&mut self, mode: ThreadMode) -> Result<()> {
+        let mut config = self.thread_config.lock().await;
+        *config = Config::new(mode, 1).unwrap();
+        Ok(())
+    }
+
+    pub async fn capture_stdout(&mut self, line: String) -> Result<()> {
+        let config = self.thread_config.lock().await.clone();
+        self.message_tx.send(ThreadMessage {
+            thread_id: self.thread_id,
+            lines: vec![line],
+            config,
+        }).await.map_err(|e| anyhow!("Failed to send message: {}", e))?;
+        Ok(())
+    }
+
+    pub async fn capture_stderr(&mut self, line: String) -> Result<()> {
+        let config = self.thread_config.lock().await.clone();
+        self.message_tx.send(ThreadMessage {
+            thread_id: self.thread_id,
+            lines: vec![line],
+            config,
+        }).await.map_err(|e| anyhow!("Failed to send message: {}", e))?;
+        Ok(())
+    }
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use tokio::time::{sleep, timeout};
-    use std::time::Duration;
-    use rand::Rng;
-    use serial_test::serial;
-
-    const THREAD_COUNT: usize = 10;
-    const MESSAGES_PER_THREAD: usize = 20;
-    const JOBS_PER_THREAD: usize = 5;
-    const EMOJIS: &[&str] = &["✅", "❌", "⚠️", "🚀", "💫", "⭐", "🌟", "✨", "💥", "💪"];
-    const TEST_TIMEOUT: Duration = Duration::from_secs(20);
-
-    async fn clear_screen() {
-        print!("\x1B[2J\x1B[1;1H");
-    }
-
-    fn random_message() -> String {
-        let mut rng = rand::thread_rng();
-        let words = ["processing", "analyzing", "scanning", "checking", "verifying", "testing", "validating", "inspecting"];
-        let word = words[rng.gen_range(0..words.len())];
-        let number = rng.gen_range(1..1000);
-        format!("{} item {}", word, number)
-    }
-
-    fn random_emoji() -> String {
-        let mut rng = rand::thread_rng();
-        EMOJIS[rng.gen_range(0..EMOJIS.len())].to_string()
-    }
-
-    #[tokio::test(flavor = "current_thread")]
-    #[serial]
-    async fn test_thread_config() {
-        clear_screen().await;
-        // Test ThreadConfig creation with different modes
-        let config1 = ThreadConfig::new(ThreadMode::Limited, 10);
-        assert_eq!(config1.lines_to_display, 1);
-        assert_eq!(config1.total_jobs, 10);
-        assert_eq!(config1.completed_jobs.load(Ordering::SeqCst), 0);
-
-        let config2 = ThreadConfig::new(ThreadMode::Window(5), 10);
-        assert_eq!(config2.lines_to_display, 5);
-
-        let config3 = ThreadConfig::new(ThreadMode::WindowWithTitle(3), 10);
-        assert_eq!(config3.lines_to_display, 3);
-
-        // Test mode update
-        let mut config = ThreadConfig::new(ThreadMode::Limited, 10);
-        config.update_mode(ThreadMode::Window(4));
-        assert_eq!(config.lines_to_display, 4);
-        assert_eq!(config.mode, ThreadMode::Window(4));
-    }
-
-    #[tokio::test]
-    async fn test_progress_display_basic() -> Result<()> {
-        let progress = ProgressDisplay::new().await;
-        
-        // Spawn a task that takes 100ms
-        let handle = progress.spawn(|| {
-            std::thread::sleep(Duration::from_millis(100));
-            "Task completed"
-        }).await?;
-        
-        // Wait for the task to complete
-        handle.join().await?;
-        
-        // Stop the display
-        progress.stop().await?;
-        
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn test_progress_display_multiple_threads() -> Result<()> {
-        let progress = ProgressDisplay::new().await;
-        
-        // Spawn multiple tasks
-        let mut handles = Vec::new();
-        for i in 0..3 {
-            let handle = progress.spawn(move || {
-                std::thread::sleep(Duration::from_millis(100));
-                format!("Task {} completed", i)
-            }).await?;
-            handles.push(handle);
-        }
-        
-        // Wait for all tasks to complete
-        for handle in handles {
-            handle.join().await?;
-        }
-        
-        // Stop the display
-        progress.stop().await?;
-        
-        Ok(())
-    }
-
-    #[tokio::test]
-    #[serial]
-    async fn test_progress_display_window_mode() {
-        timeout(TEST_TIMEOUT, async {
-            clear_screen().await;
-            let progress = ProgressDisplay::new().await;
-            
-            // Create multiple progress displays
-            for i in 0..THREAD_COUNT {
-                // Send multiple messages with emojis
-                for _ in 0..MESSAGES_PER_THREAD {
-                    let emoji = random_emoji();
-                    let message = format!("[test_progress_display_window_mode] [Thread {}] {} {}", i, emoji, random_message());
-                    progress.capture_stdout(message).await;
-                    sleep(Duration::from_millis(100)).await;
-                }
-                
-                // Complete the jobs
-                for j in 0..JOBS_PER_THREAD {
-                    progress.update_progress(i, j + 1, JOBS_PER_THREAD, &format!("[test_progress_display_window_mode] [Thread {}]", i)).await;
-                    sleep(Duration::from_millis(200)).await;
-                }
-            }
-
-            // Allow time for final updates
-            sleep(Duration::from_millis(200)).await;
-            
-            // Clean up
-            progress.stop().await;
-        }).await.unwrap();
-    }
-
-    #[tokio::test]
-    #[serial]
-    async fn test_progress_display_capturing_mode() {
-        timeout(TEST_TIMEOUT, async {
-            clear_screen().await;
-            let progress = ProgressDisplay::new().await;
-            
-            // Create multiple progress displays
-            for i in 0..THREAD_COUNT {
-                // Send multiple messages with emojis
-                for _ in 0..MESSAGES_PER_THREAD {
-                    let emoji = random_emoji();
-                    let message = format!("[test_progress_display_capturing_mode] [Thread {}] {} {}", i, emoji, random_message());
-                    progress.capture_stdout(message).await;
-                    sleep(Duration::from_millis(100)).await;
-                }
-                
-                // Complete the jobs
-                for j in 0..JOBS_PER_THREAD {
-                    progress.update_progress(i, j + 1, JOBS_PER_THREAD, &format!("[test_progress_display_capturing_mode] [Thread {}]", i)).await;
-                    sleep(Duration::from_millis(200)).await;
-                }
-            }
-
-            // Allow time for final updates
-            sleep(Duration::from_millis(200)).await;
-            
-            // Verify all threads are present
-            let outputs = progress.outputs.lock().await;
-            assert_eq!(outputs.len(), THREAD_COUNT, "Expected {} threads, found {}", THREAD_COUNT, outputs.len());
-            for i in 0..THREAD_COUNT {
-                assert!(outputs.contains_key(&i), "Missing thread {}", i);
-            }
-            
-            // Clean up
-            progress.stop().await;
-        }).await.unwrap();
-    }
-
-    #[tokio::test]
-    #[serial]
-    async fn test_progress_display_window_with_title() {
-        timeout(TEST_TIMEOUT, async {
-            clear_screen().await;
-            let progress = ProgressDisplay::new().await;
-            
-            // Create multiple progress displays
-            for i in 0..THREAD_COUNT {
-                // Set title
-                progress.set_title(format!("[test_progress_display_window_with_title] Thread {} Processing", i)).await;
-                sleep(Duration::from_millis(100)).await;
-                
-                // Send multiple messages with emojis
-                for _ in 0..MESSAGES_PER_THREAD {
-                    let emoji = random_emoji();
-                    let message = format!("[test_progress_display_window_with_title] [Thread {}] {} {}", i, emoji, random_message());
-                    progress.capture_stdout(message).await;
-                    sleep(Duration::from_millis(100)).await;
-                }
-                
-                // Complete the jobs
-                for j in 0..JOBS_PER_THREAD {
-                    progress.update_progress(i, j + 1, JOBS_PER_THREAD, &format!("[test_progress_display_window_with_title] [Thread {}]", i)).await;
-                    sleep(Duration::from_millis(200)).await;
-                }
-            }
-
-            // Allow time for final updates
-            sleep(Duration::from_millis(200)).await;
-            
-            // Clean up
-            progress.stop().await;
-        }).await.unwrap();
-    }
-
-    #[tokio::test]
-    #[serial]
-    async fn test_progress_display_limited_mode() {
-        timeout(TEST_TIMEOUT, async {
-            clear_screen().await;
-            let progress = ProgressDisplay::new().await;
-            
-            // Create multiple progress displays
-            for i in 0..THREAD_COUNT {
-                // Send multiple messages with emojis
-                for _ in 0..MESSAGES_PER_THREAD {
-                    let emoji = random_emoji();
-                    let message = format!("[test_progress_display_limited_mode] [Thread {}] {} {}", i, emoji, random_message());
-                    progress.capture_stdout(message).await;
-                    sleep(Duration::from_millis(100)).await;
-                }
-                
-                // Complete the jobs
-                for j in 0..JOBS_PER_THREAD {
-                    progress.update_progress(i, j + 1, JOBS_PER_THREAD, &format!("[test_progress_display_limited_mode] [Thread {}]", i)).await;
-                    sleep(Duration::from_millis(200)).await;
-                }
-            }
-
-            // Allow time for final updates
-            sleep(Duration::from_millis(200)).await;
-            
-            // Clean up
-            progress.stop().await;
-        }).await.unwrap();
-    }
-
-    #[tokio::test]
-    #[serial]
-    async fn test_progress_display_terminal_size_handling() {
-        timeout(TEST_TIMEOUT, async {
-            clear_screen().await;
-            let progress = ProgressDisplay::new().await;
-            
-            // Set a small terminal size
-            *progress.terminal_size.lock().await = (80, 3);
-            
-            // Create multiple progress displays
-            for i in 0..THREAD_COUNT {
-                // Send multiple messages with emojis
-                for j in 0..2 {
-                    let emoji = random_emoji();
-                    let message = format!("[test_progress_display_terminal_size_handling] [Thread {}] {} Message {}", i, emoji, j);
-                    progress.capture_stdout(message).await;
-                    sleep(Duration::from_millis(100)).await;
-                }
-                
-                // Complete the jobs
-                for j in 0..2 {
-                    progress.update_progress(i, j + 1, 2, &format!("[test_progress_display_terminal_size_handling] [Thread {}]", i)).await;
-                    sleep(Duration::from_millis(200)).await;
-                }
-            }
-
-            // Allow time for final updates
-            sleep(Duration::from_millis(200)).await;
-            
-            // Verify output is constrained by terminal height
-            let outputs = progress.outputs.lock().await;
-            let mut total_lines = 0;
-            for (_, lines) in outputs.iter() {
-                total_lines += lines.len();
-            }
-            assert!(total_lines <= 3, "Total lines ({}) exceeds terminal height (3)", total_lines);
-            
-            // Clean up
-            progress.stop().await;
-        }).await.unwrap();
-    }
-
-    #[tokio::test]
-    #[serial]
-    async fn test_full_progress_workflow() {
-        timeout(TEST_TIMEOUT, async {
-            clear_screen().await;
-            let progress = ProgressDisplay::new().await;
-            
-            // Update progress displays
-            for i in 0..5 {
-                for j in 0..THREAD_COUNT {
-                    let prefix = match j {
-                        0 => "[test_full_progress_workflow] tic - toc",
-                        1 => "[test_full_progress_workflow] blah - gnu",
-                        _ => &format!("[test_full_progress_workflow] Thread {} Processing", j),
-                    };
-                    progress.update_progress(j, i + 1, 5, prefix).await;
-                    sleep(Duration::from_millis(100)).await;
-                }
-            }
-
-            // Allow time for final updates
-            sleep(Duration::from_millis(200)).await;
-            
-            // Verify final state
-            let outputs = progress.outputs.lock().await;
-            assert_eq!(outputs.len(), THREAD_COUNT);
-            for (_, lines) in outputs.iter() {
-                assert!(lines.len() <= 3);
-                assert!(lines.last().unwrap().contains("100%"));
-            }
-
-            progress.stop().await;
-        }).await.unwrap();
-    }
-}
+mod tests;
