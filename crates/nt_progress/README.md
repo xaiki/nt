@@ -12,6 +12,7 @@ A flexible and thread-safe progress display library for Rust applications, featu
 - 🚀 Async/await support
 - 🎯 Progress bar support
 - 🔍 Automatic terminal size detection
+- 🛡️ Robust error handling with context and recovery strategies
 
 ## Installation
 
@@ -180,6 +181,62 @@ progress.set_title(thread_id, "Another Title".to_string()).await?;
 ```
 
 Note that attempting to set a title for a task that is not in WindowWithTitle mode will result in an error.
+
+## Error Handling
+
+The library provides robust error handling with detailed context and graceful recovery:
+
+### Error Types
+
+- **ProgressError**: Top-level error type with various variants:
+  - `ModeCreation`: Errors related to creating and configuring display modes
+  - `TaskOperation`: Errors that occur during task operations
+  - `DisplayOperation`: Errors during display operations
+  - `Io`: Input/output errors
+  - `External`: Errors from external sources
+  - `WithContext`: Errors with additional context information
+
+- **ModeCreationError**: Specific errors for mode creation:
+  - `InvalidWindowSize`: When window size parameters are invalid
+  - `MissingParameter`: When a required parameter is missing
+  - `Implementation`: General implementation errors
+
+### Context-Aware Errors
+
+Errors include rich context information to aid debugging:
+
+```rust
+// Add context to an error
+let result = operation().with_context("creating config", "ProgressDisplay");
+
+// Add detailed context
+let ctx = ErrorContext::new("operation", "component")
+    .with_thread_id(42)
+    .with_details("Additional details");
+    
+let result = operation().context(ctx);
+```
+
+### Error Recovery
+
+The library implements graceful recovery strategies:
+
+- Mode creation will attempt to use reasonable fallback values
+- If a requested window size is invalid, a sensible default is used
+- If a mode can't be created, simpler modes are tried as fallbacks
+- Operations never panic due to configuration errors
+
+### Error Logging and Debugging
+
+```rust
+// Get detailed error chain information
+let debug_info = format_error_debug(&error);
+
+// Log the complete error chain
+log_error(&error);
+```
+
+Error chains preserve all context, making it easy to trace the source of problems.
 
 ## Contributing
 

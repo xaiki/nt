@@ -6,4 +6,5 @@ pub mod window;
 pub mod window_with_title;
 pub mod capturing;
 pub mod test_builder;
-pub mod test_builder_example; 
+pub mod test_builder_example;
+pub mod error_handling; 
