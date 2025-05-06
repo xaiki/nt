@@ -99,13 +99,27 @@ The `nt_progress` library provides a flexible and thread-safe progress display f
 ### Code Duplication Reduction
 - [x] Create a `HasBaseConfig` trait with blanket implementations for `JobTracker`
 - [x] Implement generic downcast methods for Config instead of type-specific ones
-- [ ] Create trait-based pattern for common ThreadConfig implementations
-- [ ] Refactor error context addition to reduce boilerplate
+- [x] Refactor error context addition to reduce boilerplate
 - [ ] Standardize access patterns for mode-specific features
-- [ ] Implement a factory pattern with registry for mode creation
+- [x] Implement a factory pattern with registry for mode creation
+- [x] Fix factory-mode layering violation by moving fallback logic to mode creators
 - [ ] Extract common terminal size adjustment logic to a shared module
 - [ ] Create composable components for message formatting and rendering
-- [ ] Implement templating pattern for task progress reporting
+- [x] Implement templating pattern for task progress reporting
+- [ ] Separate mode-specific functionality from the Config wrapper to reduce coupling
+- [ ] Implement a proper separation between thread management and mode implementation
+
+### Architectural Improvements
+- [ ] Create a dedicated Terminal module to encapsulate all terminal-related functionality
+- [ ] Implement a proper I/O abstraction to decouple TaskHandle from direct writer references
+- [ ] Establish a clear separation between UI rendering logic and progress tracking logic
+- [ ] Apply the Interface Segregation Principle to split large interfaces into smaller, more focused ones
+- [ ] Implement a proper event system to decouple error propagation from direct function calls
+- [ ] Remove terminal size detection from mode implementations and move it to a dedicated service
+- [ ] Extract testing utilities into a separate module that doesn't pollute production code
+- [ ] Implement a proper dependency injection system for mode creation instead of static registry
+- [ ] Separate configuration from implementations to follow the Dependency Inversion Principle
+- [ ] Replace static, mutable state (like REGISTRY) with a more testable and maintainable design
 
 ### Job Tracking Enhancements
 - [x] Update `Config::set_total_jobs` method to use the trait system instead of manual downcasting

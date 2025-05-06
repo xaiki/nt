@@ -9,10 +9,13 @@ mod limited;
 mod capturing;
 mod window;
 mod window_with_title;
+mod factory;
+
 pub use limited::Limited;
 pub use capturing::Capturing;
 pub use window::Window;
 pub use window_with_title::WindowWithTitle;
+pub use factory::{ModeRegistry, ModeCreator, get_registry, create_thread_config, set_error_propagation};
 
 /// Trait defining the behavior of different display modes.
 ///
@@ -283,7 +286,7 @@ impl Clone for Config {
 }
 
 impl Config {
-    /// Create a new Config with the specified mode and total jobs.
+    /// Create a new Config from a ThreadMode and total jobs count
     ///
     /// # Parameters
     /// * `mode` - The display mode to use
@@ -292,16 +295,16 @@ impl Config {
     /// # Returns
     /// A Result containing either the new Config or a ModeCreationError
     ///
-    /// # Errors
-    /// Returns an error if the mode's constructor returns an error
+    /// # Examples
+    /// ```
+    /// use nt_progress::modes::{Config, ThreadMode};
+    ///
+    /// let config = Config::new(ThreadMode::Limited, 10).unwrap();
+    /// let config = Config::new(ThreadMode::Window(3), 10).unwrap();
+    /// ```
     pub fn new(mode: ThreadMode, total_jobs: usize) -> Result<Self, ModeCreationError> {
-        let config: Box<dyn ThreadConfig> = match mode {
-            ThreadMode::Limited => Box::new(Limited::new(total_jobs)),
-            ThreadMode::Capturing => Box::new(Capturing::new(total_jobs)),
-            ThreadMode::Window(max_lines) => Box::new(Window::new(total_jobs, max_lines)?),
-            ThreadMode::WindowWithTitle(max_lines) => Box::new(WindowWithTitle::new(total_jobs, max_lines)?),
-        };
-
+        // Use the factory to create the thread config
+        let config = factory::create_thread_config(mode, total_jobs)?;
         Ok(Self { config })
     }
 
@@ -519,67 +522,5 @@ impl<T: HasBaseConfig + Send + Sync + Debug> JobTracker for T {
     
     fn set_total_jobs(&mut self, total: usize) {
         self.base_config_mut().set_total_jobs(total);
-    }
-}
-
-/// Factory function to create a ThreadConfig implementation from a ThreadMode.
-/// 
-/// This function provides a consistent way to create ThreadConfig instances
-/// with built-in error handling and graceful fallback logic.
-///
-/// # Parameters
-/// * `mode` - The display mode to use
-/// * `total_jobs` - The total number of jobs to track
-///
-/// # Returns
-/// A boxed ThreadConfig implementation
-///
-/// # Error Recovery
-/// This function will never panic. If the requested mode cannot be created:
-/// 1. First tries with a reasonable default size for the requested mode
-/// 2. If that fails, falls back to a simpler mode (Window -> Limited)
-/// 3. Always guarantees a working mode will be returned
-pub fn create_thread_config(mode: ThreadMode, total_jobs: usize) -> Box<dyn ThreadConfig> {
-    match mode {
-        ThreadMode::Limited => Box::new(Limited::new(total_jobs)),
-        ThreadMode::Capturing => Box::new(Capturing::new(total_jobs)),
-        ThreadMode::Window(max_lines) => {
-            // Try with the requested size
-            if let Ok(window) = Window::new(total_jobs, max_lines) {
-                return Box::new(window);
-            }
-            
-            // Try with a reasonable fallback size
-            if let Ok(window) = Window::new(total_jobs, 3) {
-                eprintln!("Warning: Requested window size {} was invalid, using size 3 instead", max_lines);
-                return Box::new(window);
-            }
-            
-            // Last resort: fall back to Limited mode
-            eprintln!("Warning: Could not create Window mode, falling back to Limited mode");
-            Box::new(Limited::new(total_jobs))
-        },
-        ThreadMode::WindowWithTitle(max_lines) => {
-            // Try with the requested size
-            if let Ok(window) = WindowWithTitle::new(total_jobs, max_lines) {
-                return Box::new(window);
-            }
-            
-            // Try with a reasonable fallback size
-            if let Ok(window) = WindowWithTitle::new(total_jobs, 3) {
-                eprintln!("Warning: Requested window size {} was invalid, using size 3 instead", max_lines);
-                return Box::new(window);
-            }
-            
-            // Try with Window mode as a fallback
-            if let Ok(window) = Window::new(total_jobs, 3) {
-                eprintln!("Warning: Could not create WindowWithTitle mode, falling back to Window mode");
-                return Box::new(window);
-            }
-            
-            // Last resort: fall back to Limited mode
-            eprintln!("Warning: Could not create any window mode, falling back to Limited mode");
-            Box::new(Limited::new(total_jobs))
-        },
     }
 } 

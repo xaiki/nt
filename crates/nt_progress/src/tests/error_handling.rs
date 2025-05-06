@@ -1,6 +1,7 @@
 use crate::{
     ProgressDisplay, 
     ThreadMode, 
+    modes::set_error_propagation,
     errors::{ProgressError, ModeCreationError, ErrorContext, ContextExt, format_error_debug}
 };
 use std::error::Error;
@@ -9,6 +10,9 @@ use anyhow::Result;
 
 #[tokio::test]
 async fn test_error_context_propagation() {
+    // Enable error propagation for this test
+    set_error_propagation(true);
+    
     // Test that error context is properly propagated through the error chain
     let display = ProgressDisplay::new().await;
     
@@ -22,6 +26,9 @@ async fn test_error_context_propagation() {
     let error_str = result.unwrap_err().to_string();
     assert!(error_str.contains("ProgressDisplay"));  // Component name
     assert!(error_str.contains("spawning task"));    // Operation name
+    
+    // Reset error propagation for other tests
+    set_error_propagation(false);
 }
 
 #[tokio::test]
@@ -29,9 +36,12 @@ async fn test_error_recovery_window_mode() {
     // Test the recovery strategy in create_thread_config for Window mode
     
     // Create a window with an invalid size (0) using the recovery function
-    let mut thread_config = crate::modes::create_thread_config(ThreadMode::Window(0), 1);
+    let thread_config_result = crate::modes::create_thread_config(ThreadMode::Window(0), 1);
     
     // The function should recover and return a valid config
+    assert!(thread_config_result.is_ok(), "Recovery mechanism failed to create a valid config");
+    
+    let mut thread_config = thread_config_result.unwrap();
     // This can be verified by checking that it has a reasonable number of lines
     assert!(thread_config.lines_to_display() > 0);
     
@@ -46,9 +56,12 @@ async fn test_error_recovery_window_with_title_mode() {
     // Test the recovery strategy in create_thread_config for WindowWithTitle mode
     
     // Create a window with an invalid size (1) using the recovery function
-    let mut thread_config = crate::modes::create_thread_config(ThreadMode::WindowWithTitle(1), 1);
+    let thread_config_result = crate::modes::create_thread_config(ThreadMode::WindowWithTitle(1), 1);
     
     // The function should recover and return a valid config
+    assert!(thread_config_result.is_ok(), "Recovery mechanism failed to create a valid config");
+    
+    let mut thread_config = thread_config_result.unwrap();
     // This can be verified by checking that it has a reasonable number of lines
     assert!(thread_config.lines_to_display() > 0);
     

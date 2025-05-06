@@ -104,6 +104,9 @@ async fn test_progress_display_different_modes() {
 
 #[tokio::test]
 async fn test_progress_display_error_handling() {
+    // Enable error propagation for this test
+    crate::modes::set_error_propagation(true);
+    
     let display = ProgressDisplay::new().await;
     
     // Test invalid mode configuration
@@ -123,6 +126,9 @@ async fn test_progress_display_error_handling() {
     
     // Should not crash the display
     assert!(handle.await.is_err());
+    
+    // Disable error propagation after test
+    crate::modes::set_error_propagation(false);
 }
 
 #[tokio::test]
