@@ -100,11 +100,11 @@ The `nt_progress` library provides a flexible and thread-safe progress display f
 - [x] Create a `HasBaseConfig` trait with blanket implementations for `JobTracker`
 - [x] Implement generic downcast methods for Config instead of type-specific ones
 - [x] Refactor error context addition to reduce boilerplate
-- [ ] Standardize access patterns for mode-specific features
+- [x] Standardize access patterns for mode-specific features through capability traits
 - [x] Implement a factory pattern with registry for mode creation
 - [x] Fix factory-mode layering violation by moving fallback logic to mode creators
 - [ ] Extract common terminal size adjustment logic to a shared module
-- [ ] Create composable components for message formatting and rendering
+- [x] Create composable components for message formatting and rendering
 - [x] Implement templating pattern for task progress reporting
 - [ ] Separate mode-specific functionality from the Config wrapper to reduce coupling
 - [ ] Implement a proper separation between thread management and mode implementation
@@ -138,13 +138,22 @@ The `nt_progress` library provides a flexible and thread-safe progress display f
 ## Implementation Priority
 
 1. Fix warnings and linter issues
-2. Implement remaining features
-3. Reduce code duplication through refactoring patterns
-4. Add job tracking enhancements
-5. Improve terminal handling
-6. Add optimization techniques
-7. Enhance display features
-8. Update documentation
+   - [ ] Fix the unused `writer` field in TaskHandle (src/lib.rs:487)
+   - [ ] Address shared reference to mutable static in factory.rs (src/modes/factory.rs:245)
+   - [ ] Fix unused `width` and `height` fields in TestBuilder (src/tests/test_builder.rs:14-16)
+   - [ ] Clean up unused imports in terminal.rs tests (tests/terminal.rs:3-4)
+   - [ ] Address unused mutable variable in terminal.rs (tests/terminal.rs:73)
+2. Fix failing terminal integration tests
+   - [ ] Fix test_basic_terminal_output (tests/terminal.rs:17)
+   - [ ] Fix test_terminal_operations (tests/terminal.rs:68)
+   - [ ] Fix test_terminal_state (tests/terminal.rs:34)
+3. Implement remaining features
+4. Reduce code duplication through refactoring patterns
+5. Add job tracking enhancements
+6. Improve terminal handling
+7. Add optimization techniques
+8. Enhance display features
+9. Update documentation
 
 ## Development Guidelines
 
