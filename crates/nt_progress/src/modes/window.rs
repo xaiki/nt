@@ -99,21 +99,23 @@ mod tests {
 
     #[tokio::test]
     async fn test_window_mode_concurrent() {
-        let mut display = ProgressDisplay::new().await;
+        let display = ProgressDisplay::new().await;
+        let total_jobs = 3;
         let mut handles = vec![];
+        let (width, height) = TestEnv::new(80, 24).size();
         
         // Spawn multiple tasks in Window mode
-        for i in 0..3 {
-            let mut display = display.clone();
-            let mut env = TestEnv::new(80, 24);
+        for i in 0..total_jobs {
+            let display = display.clone();
             let i = i;
+            let mut task_env = TestEnv::new(width, height);
             handles.push(tokio::spawn(async move {
                 display.spawn_with_mode(ThreadMode::Window(3), move || format!("task-{}", i)).await.unwrap();
                 for j in 0..5 {
-                    env.writeln(&format!("Thread {}: Message {}", i, j));
+                    task_env.writeln(&format!("Thread {}: Message {}", i, j));
                     sleep(Duration::from_millis(50)).await;
                 }
-                env
+                task_env
             }));
         }
         
@@ -134,7 +136,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_window_mode_special_characters() {
-        let mut display = ProgressDisplay::new().await;
+        let display = ProgressDisplay::new().await;
         let mut env = TestEnv::new(80, 24);
         
         // Test with special characters
@@ -153,7 +155,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_window_mode_long_lines() {
-        let mut display = ProgressDisplay::new().await;
+        let display = ProgressDisplay::new().await;
         let mut env = TestEnv::new(80, 24);
         
         // Test with long lines

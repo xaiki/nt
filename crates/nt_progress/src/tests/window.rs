@@ -6,7 +6,7 @@ use std::time::Duration;
 
 #[tokio::test]
 async fn test_window_basic() {
-    let mut display = ProgressDisplay::new_with_mode(ThreadMode::Window(3)).await;
+    let display = ProgressDisplay::new_with_mode(ThreadMode::Window(3)).await;
     let mut env = TestEnv::new(80, 24);
     
     let _handle = display.spawn_with_mode(ThreadMode::Window(3), || "window-test").await.unwrap();
@@ -19,7 +19,7 @@ async fn test_window_basic() {
 
 #[tokio::test]
 async fn test_window_scroll() {
-    let mut display = ProgressDisplay::new_with_mode(ThreadMode::Window(3)).await;
+    let display = ProgressDisplay::new_with_mode(ThreadMode::Window(3)).await;
     let mut env = TestEnv::new(80, 24);
     
     let _handle = display.spawn_with_mode(ThreadMode::Window(3), || "scroll-test").await.unwrap();
@@ -35,7 +35,7 @@ async fn test_window_scroll() {
 #[tokio::test]
 async fn test_window_size() {
     for size in [1, 3, 5, 10] {
-        let mut display = ProgressDisplay::new_with_mode(ThreadMode::Window(size)).await;
+        let display = ProgressDisplay::new_with_mode(ThreadMode::Window(size)).await;
         let mut env = TestEnv::new(80, 24);
         
         display.spawn_with_mode(ThreadMode::Window(size), move || format!("size-{}", size)).await.unwrap();
@@ -51,12 +51,12 @@ async fn test_window_size() {
 
 #[tokio::test]
 async fn test_window_concurrent() {
-    let mut display = ProgressDisplay::new().await;
+    let display = ProgressDisplay::new().await;
     let mut handles = vec![];
     
     // Spawn multiple tasks in Window mode
     for i in 0..3 {
-        let mut display = display.clone();
+        let display = display.clone();
         let mut env = TestEnv::new(80, 24);
         let i = i;
         handles.push(tokio::spawn(async move {
@@ -86,7 +86,7 @@ async fn test_window_concurrent() {
 
 #[tokio::test]
 async fn test_window_edge_cases() {
-    let mut display = ProgressDisplay::new().await;
+    let display = ProgressDisplay::new().await;
     let mut env = TestEnv::new(80, 24);
     
     // Test with minimal window (size 1 instead of 0)
@@ -98,7 +98,7 @@ async fn test_window_edge_cases() {
     env.verify();
     
     // Test with large window
-    let mut display = ProgressDisplay::new_with_mode(ThreadMode::Window(30)).await;
+    let display = ProgressDisplay::new_with_mode(ThreadMode::Window(30)).await;
     let mut env = TestEnv::new(80, 24);
     
     let _handle = display.spawn_with_mode(ThreadMode::Window(30), || "large-window").await.unwrap();

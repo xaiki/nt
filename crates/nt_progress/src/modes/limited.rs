@@ -4,12 +4,35 @@ use super::{ThreadConfig, SingleLineBase, JobTracker};
 /// 
 /// In Limited mode, only the last line is displayed,
 /// and all output is passed through to stdout/stderr.
+///
+/// # Features
+///
+/// - Displays only the last message received
+/// - Requires only a single line of display space
+/// - Passes output through to stdout/stderr
+///
+/// # Example
+///
+/// ```
+/// use nt_progress::modes::{ThreadConfig, Limited};
+///
+/// let mut limited = Limited::new(1);
+/// let lines = limited.handle_message("test message".to_string());
+/// assert_eq!(lines, vec!["test message"]);
+/// ```
 #[derive(Debug, Clone)]
 pub struct Limited {
     single_line_base: SingleLineBase,
 }
 
 impl Limited {
+    /// Create a new Limited mode configuration.
+    ///
+    /// # Parameters
+    /// * `total_jobs` - The total number of jobs to track
+    ///
+    /// # Returns
+    /// A new Limited instance
     pub fn new(total_jobs: usize) -> Self {
         Self {
             single_line_base: SingleLineBase::new(total_jobs, true), // true = passthrough enabled
@@ -122,7 +145,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_limited_mode_error_handling() {
-        let mut display = ProgressDisplay::new().await;
+        let display = ProgressDisplay::new().await;
         let mut env = TestEnv::new(80, 24);
         
         // Test stdout error
@@ -140,7 +163,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_limited_mode_special_characters() {
-        let mut display = ProgressDisplay::new().await;
+        let display = ProgressDisplay::new().await;
         let mut env = TestEnv::new(80, 24);
         
         // Test with special characters
@@ -159,7 +182,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_limited_mode_long_lines() {
-        let mut display = ProgressDisplay::new().await;
+        let display = ProgressDisplay::new().await;
         let mut env = TestEnv::new(80, 24);
         
         // Test with long lines
