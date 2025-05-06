@@ -17,9 +17,14 @@ use tokio::{
 use anyhow::{Result, anyhow};
 use std::fmt::Debug;
 use std::cell::RefCell;
-use crate::modes::{Config, ThreadMode};
+use crate::modes::Config;
 
 mod modes;
+pub mod test_utils;
+#[cfg(test)]
+pub mod tests;
+
+pub use modes::ThreadMode;
 
 thread_local! {
     static CURRENT_THREAD_ID: AtomicUsize = AtomicUsize::new(0);
@@ -342,21 +347,29 @@ impl ProgressDisplay {
         };
         
         // Prepare all lines first
-        let mut output_lines = Vec::new();
+        let mut output = String::new();
+        output.push_str(&format!("\x1B[{}A", line_count));
+        
+        // Collect all formatted lines first
+        let mut all_lines = Vec::new();
         for thread_id in thread_ids {
             if let Some(lines) = adjusted_lines_by_thread.get(&thread_id) {
                 for line in lines {
-                    output_lines.push(format!("{} {}", spinner_chars[spinner_index_value], line));
+                    all_lines.push(format!("{} {}", spinner_chars[spinner_index_value], line));
                 }
             }
         }
         
+        // Join all lines with newlines and write in one operation
+        let complete_output = all_lines.join("\n");
+        if !complete_output.is_empty() {
+            output.push_str(&complete_output);
+            output.push('\n');
+        }
+        
         // Now do all the writing at once without any await points in between
         let mut writer = writer.lock().await;
-        write!(writer, "\x1B[{}A", line_count)?;
-        for line in output_lines {
-            writeln!(writer, "{}", line)?;
-        }
+        write!(writer, "{}", output)?;
         writer.flush()?;
         Ok(())
     }
@@ -479,6 +492,3 @@ impl TaskHandle {
         Ok(())
     }
 }
-
-#[cfg(test)]
-mod tests;
