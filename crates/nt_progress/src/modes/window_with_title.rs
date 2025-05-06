@@ -1,4 +1,4 @@
-use super::{ThreadConfig, WindowBase, HasBaseConfig, WithTitle, WithCustomSize, WithEmoji};
+use super::{ThreadConfig, WindowBase, HasBaseConfig, WithTitle, WithCustomSize, WithEmoji, WithTitleAndEmoji, StandardWindow};
 use std::any::Any;
 use crate::errors::ModeCreationError;
 use std::fmt::Debug;
@@ -190,6 +190,50 @@ impl WithEmoji for WindowWithTitle {
     
     fn get_emojis(&self) -> Vec<String> {
         self.emojis.clone()
+    }
+}
+
+impl WithTitleAndEmoji for WindowWithTitle {
+    fn reset_with_title(&mut self, title: String) {
+        // Clear all emojis and set a new title
+        self.emojis.clear();
+        self.set_title(title);
+    }
+    
+    fn get_formatted_title(&self) -> String {
+        self.render_title()
+    }
+}
+
+impl StandardWindow for WindowWithTitle {
+    fn clear(&mut self) {
+        // Clear all content from the window, but keep the title
+        self.window_base.clear();
+    }
+    
+    fn get_content(&self) -> Vec<String> {
+        // Get all content including the title as the first line
+        self.get_lines()
+    }
+    
+    fn add_line(&mut self, line: String) {
+        // Add a line to the window content (not as title)
+        self.window_base.add_message(line);
+    }
+    
+    fn is_empty(&self) -> bool {
+        // The window is empty if it has no content besides the title
+        self.window_base.is_empty() && self.title.is_none()
+    }
+    
+    fn line_count(&self) -> usize {
+        // Count includes the title if present, plus content lines
+        let content_count = self.window_base.line_count();
+        if self.title.is_some() {
+            content_count + 1
+        } else {
+            content_count
+        }
     }
 }
 

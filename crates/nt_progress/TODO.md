@@ -173,12 +173,12 @@ The `nt_progress` library provides a flexible and thread-safe progress display f
   - [x] Test WithTitle functionality
   - [x] Test WithCustomSize functionality
   - [x] Test WithEmoji functionality
-- [ ] Create composite capabilities
-  - [ ] WithTitleAndEmoji trait for combined functionality
-  - [ ] StandardWindow trait for common window operations
-- [ ] Add capability discovery API
-  - [ ] Create a capabilities() method returning HashSet of supported capabilities
-  - [ ] Add runtime capability checking
+- [x] Create composite capabilities
+  - [x] WithTitleAndEmoji trait for combined functionality
+  - [x] StandardWindow trait for common window operations
+- [x] Add capability discovery API
+  - [x] Create a capabilities() method returning HashSet of supported capabilities
+  - [x] Add runtime capability checking
 
 ### Phase 2: Terminal Module Refactoring
 - [ ] Create a dedicated terminal module

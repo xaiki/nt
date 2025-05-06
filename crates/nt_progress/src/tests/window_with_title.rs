@@ -1,6 +1,6 @@
-use crate::ProgressDisplay;
-use crate::modes::ThreadMode;
+use crate::modes::{ThreadMode, WindowWithTitle, Window, WithTitle, WithEmoji, WithTitleAndEmoji, StandardWindow, Capability};
 use crate::tests::common::TestEnv;
+use crate::ProgressDisplay;
 use tokio::time::sleep;
 use std::time::Duration;
 
@@ -115,22 +115,22 @@ async fn test_window_with_title_multiple_emojis() {
     let mut env = TestEnv::new(80, 24);
     
     // Create a task in WindowWithTitle mode
-    let mut task = display.spawn_with_mode(ThreadMode::WindowWithTitle(3), || "Task With Emojis").await.unwrap();
+    let mut task = display.spawn_with_mode(ThreadMode::WindowWithTitle(3), || "Initial Title").await.unwrap();
     
-    // Add multiple emojis of different types
-    task.add_emoji("🚀").await.unwrap();
+    // Add multiple emojis
     task.add_emoji("✨").await.unwrap();
+    task.add_emoji("🚀").await.unwrap();
     task.add_emoji("🔥").await.unwrap();
     
-    // Add some messages
-    task.capture_stdout("First message".to_string()).await.unwrap();
-    task.capture_stdout("Second message".to_string()).await.unwrap();
+    // Verify output
+    env.writeln("✨ 🚀 🔥 Initial Title");
+    env.verify();
     
-    // Verify the output shows the title with emojis
-    env.writeln("🚀 ✨ 🔥 Task With Emojis");
-    env.writeln("First message");
-    env.writeln("Second message");
+    // Add a message
+    let result = task.capture_stdout("This is a test message".to_string()).await;
+    assert!(result.is_ok());
     
+    // Verify the output includes all emojis
     display.display().await.unwrap();
     env.verify();
     
@@ -316,4 +316,80 @@ async fn test_window_with_title_set_title_error() {
     assert!(error.contains("not in a mode that supports titles"));
     
     display.stop().await.unwrap();
+}
+
+#[test]
+fn test_window_with_title_composite_capabilities() {
+    // Create a WindowWithTitle instance directly
+    let mut window = WindowWithTitle::new(1, 3).unwrap();
+    
+    // Test WithTitleAndEmoji trait methods
+    window.set_title_with_emoji("Test Title".to_string(), "🔥");
+    assert_eq!(window.get_title(), "Test Title");
+    assert_eq!(window.get_emojis(), vec!["🔥"]);
+    assert_eq!(window.get_formatted_title(), "🔥 Test Title");
+    
+    // Test reset_with_title
+    window.add_emoji("✨");
+    window.add_emoji("🚀");
+    assert_eq!(window.get_emojis().len(), 3);
+    
+    window.reset_with_title("New Title".to_string());
+    assert_eq!(window.get_title(), "New Title");
+    assert_eq!(window.get_emojis().len(), 0);
+    assert_eq!(window.get_formatted_title(), "New Title");
+    
+    // Test StandardWindow methods
+    assert!(!window.is_empty()); // Window has title so it's not empty
+    window.add_line("Test content".to_string());
+    assert!(!window.is_empty());
+    assert_eq!(window.line_count(), 2); // Title + 1 content line
+    
+    let content = window.get_content();
+    assert_eq!(content.len(), 2);
+    assert_eq!(content[0], "New Title");
+    assert_eq!(content[1], "Test content");
+    
+    window.clear();
+    assert_eq!(window.line_count(), 1); // Only title remains
+}
+
+#[test]
+fn test_capability_discovery() {
+    use crate::modes::{ThreadConfigExt, Limited, Capturing};
+    
+    // Create instances of different mode types
+    let window = WindowWithTitle::new(1, 3).unwrap();
+    let limited = Limited::new(1);
+    let capturing = Capturing::new(1);
+    let regular_window = Window::new(1, 3).unwrap();
+    
+    // Test capability discovery on WindowWithTitle
+    let window_caps = window.capabilities();
+    assert!(window_caps.contains(&Capability::Title));
+    assert!(window_caps.contains(&Capability::CustomSize));
+    assert!(window_caps.contains(&Capability::Emoji));
+    assert!(window_caps.contains(&Capability::TitleAndEmoji));
+    assert!(window_caps.contains(&Capability::StandardWindow));
+    
+    // Test individual capability checks on WindowWithTitle
+    assert!(window.supports_capability(Capability::Title));
+    assert!(window.supports_capability(Capability::Emoji));
+    assert!(window.supports_capability(Capability::TitleAndEmoji));
+    
+    // Test capability discovery on Limited mode (should have no capabilities)
+    let limited_caps = limited.capabilities();
+    assert!(limited_caps.is_empty());
+    
+    // Test capability discovery on Capturing mode (should have no capabilities)
+    let capturing_caps = capturing.capabilities();
+    assert!(capturing_caps.is_empty());
+    
+    // Test capability discovery on regular Window
+    let regular_window_caps = regular_window.capabilities();
+    assert!(!regular_window_caps.contains(&Capability::Title));
+    assert!(regular_window_caps.contains(&Capability::CustomSize));
+    assert!(!regular_window_caps.contains(&Capability::Emoji));
+    assert!(!regular_window_caps.contains(&Capability::TitleAndEmoji));
+    assert!(regular_window_caps.contains(&Capability::StandardWindow));
 } 

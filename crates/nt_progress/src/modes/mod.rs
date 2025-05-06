@@ -1,7 +1,7 @@
 use std::sync::Arc;
 use std::sync::atomic::AtomicUsize;
 use std::fmt::Debug;
-use std::collections::VecDeque;
+use std::collections::{VecDeque, HashSet};
 use std::any::Any;
 use crate::errors::ModeCreationError;
 use std::any::TypeId;
@@ -176,6 +176,99 @@ pub trait WithEmoji: Send + Sync {
     fn get_emojis(&self) -> Vec<String>;
 }
 
+/// Composite trait for types that support both title and emoji functionality.
+///
+/// This capability combines WithTitle and WithEmoji to provide a unified
+/// interface for modes that support both capabilities, reducing the need
+/// for multiple capability checks and casts.
+pub trait WithTitleAndEmoji: WithTitle + WithEmoji {
+    /// Set the title and add an emoji in a single operation.
+    ///
+    /// This is a convenience method that sets the title and adds an emoji
+    /// in a single call, which can be more efficient than separate calls.
+    ///
+    /// # Parameters
+    /// * `title` - The new title to set
+    /// * `emoji` - The emoji to add
+    fn set_title_with_emoji(&mut self, title: String, emoji: &str) {
+        self.set_title(title);
+        self.add_emoji(emoji);
+    }
+    
+    /// Clear all emojis and set a new title.
+    ///
+    /// This method resets the emoji state and sets a new title.
+    ///
+    /// # Parameters
+    /// * `title` - The new title to set
+    fn reset_with_title(&mut self, title: String);
+    
+    /// Get the fully formatted title with emojis.
+    ///
+    /// This method returns the complete title string including any emoji
+    /// characters that have been added.
+    ///
+    /// # Returns
+    /// The formatted title string
+    fn get_formatted_title(&self) -> String;
+}
+
+/// Trait for common window operations across different window-based modes.
+///
+/// This capability provides a standard interface for operations that all
+/// window-based display modes support, such as scrolling, clearing,
+/// and managing displayed lines.
+pub trait StandardWindow: WithCustomSize {
+    /// Clear all content from the window.
+    fn clear(&mut self);
+    
+    /// Get the current content as a vector of strings.
+    ///
+    /// # Returns
+    /// A vector containing all visible lines
+    fn get_content(&self) -> Vec<String>;
+    
+    /// Add a single line to the window.
+    ///
+    /// # Parameters
+    /// * `line` - The line to add
+    fn add_line(&mut self, line: String);
+    
+    /// Check if the window is empty.
+    ///
+    /// # Returns
+    /// true if the window has no content, false otherwise
+    fn is_empty(&self) -> bool;
+    
+    /// Get the number of lines currently displayed.
+    ///
+    /// # Returns
+    /// The current line count
+    fn line_count(&self) -> usize;
+}
+
+/// Enum representing the capabilities supported by different modes.
+///
+/// This enum is used to identify the capabilities that a mode supports
+/// and enables runtime discovery of capabilities.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum Capability {
+    /// The mode supports setting and getting a title.
+    Title,
+    
+    /// The mode supports customizing the display size.
+    CustomSize,
+    
+    /// The mode supports adding emoji characters.
+    Emoji,
+    
+    /// The mode supports both title and emoji capabilities.
+    TitleAndEmoji,
+    
+    /// The mode supports standard window operations.
+    StandardWindow,
+}
+
 /// Extension methods for ThreadConfig to access capabilities.
 pub trait ThreadConfigExt: ThreadConfig {
     /// Check if this config supports the WithTitle capability.
@@ -246,6 +339,118 @@ pub trait ThreadConfigExt: ThreadConfig {
     fn as_emoji_mut(&mut self) -> Option<&mut dyn WithEmoji> {
         // WindowWithTitle is currently the only implementation of WithEmoji
         self.as_any_mut().downcast_mut::<WindowWithTitle>().map(|w| w as &mut dyn WithEmoji)
+    }
+    
+    /// Check if this config supports the WithTitleAndEmoji capability.
+    fn supports_title_and_emoji(&self) -> bool {
+        // WindowWithTitle is currently the only implementation of WithTitleAndEmoji
+        self.as_any().type_id() == TypeId::of::<WindowWithTitle>()
+    }
+    
+    /// Try to get this config as a WithTitleAndEmoji.
+    fn as_title_and_emoji(&self) -> Option<&dyn WithTitleAndEmoji> {
+        // WindowWithTitle is currently the only implementation of WithTitleAndEmoji
+        self.as_any().downcast_ref::<WindowWithTitle>().map(|w| w as &dyn WithTitleAndEmoji)
+    }
+    
+    /// Try to get this config as a mutable WithTitleAndEmoji.
+    fn as_title_and_emoji_mut(&mut self) -> Option<&mut dyn WithTitleAndEmoji> {
+        // WindowWithTitle is currently the only implementation of WithTitleAndEmoji
+        self.as_any_mut().downcast_mut::<WindowWithTitle>().map(|w| w as &mut dyn WithTitleAndEmoji)
+    }
+    
+    /// Check if this config supports the StandardWindow capability.
+    fn supports_standard_window(&self) -> bool {
+        // Both Window and WindowWithTitle will implement StandardWindow
+        let type_id = self.as_any().type_id();
+        type_id == TypeId::of::<Window>() || type_id == TypeId::of::<WindowWithTitle>()
+    }
+    
+    /// Try to get this config as a StandardWindow.
+    fn as_standard_window(&self) -> Option<&dyn StandardWindow> {
+        // Check both Window and WindowWithTitle types
+        let type_id = self.as_any().type_id();
+        
+        if type_id == TypeId::of::<Window>() {
+            self.as_any().downcast_ref::<Window>()
+                .map(|w| w as &dyn StandardWindow)
+        } else if type_id == TypeId::of::<WindowWithTitle>() {
+            self.as_any().downcast_ref::<WindowWithTitle>()
+                .map(|w| w as &dyn StandardWindow)
+        } else {
+            None
+        }
+    }
+    
+    /// Try to get this config as a mutable StandardWindow.
+    fn as_standard_window_mut(&mut self) -> Option<&mut dyn StandardWindow> {
+        // Check both Window and WindowWithTitle types
+        let type_id = self.as_any().type_id();
+        
+        if type_id == TypeId::of::<Window>() {
+            self.as_any_mut().downcast_mut::<Window>()
+                .map(|w| w as &mut dyn StandardWindow)
+        } else if type_id == TypeId::of::<WindowWithTitle>() {
+            self.as_any_mut().downcast_mut::<WindowWithTitle>()
+                .map(|w| w as &mut dyn StandardWindow)
+        } else {
+            None
+        }
+    }
+
+    /// Get a set of all capabilities supported by this config.
+    ///
+    /// This method returns a HashSet containing all the capabilities
+    /// that this mode supports. It can be used for runtime capability
+    /// discovery.
+    ///
+    /// # Returns
+    /// A HashSet of supported Capability values
+    fn capabilities(&self) -> HashSet<Capability> {
+        let mut caps = HashSet::new();
+        
+        if self.supports_title() {
+            caps.insert(Capability::Title);
+        }
+        
+        if self.supports_custom_size() {
+            caps.insert(Capability::CustomSize);
+        }
+        
+        if self.supports_emoji() {
+            caps.insert(Capability::Emoji);
+        }
+        
+        if self.supports_title_and_emoji() {
+            caps.insert(Capability::TitleAndEmoji);
+        }
+        
+        if self.supports_standard_window() {
+            caps.insert(Capability::StandardWindow);
+        }
+        
+        caps
+    }
+    
+    /// Check if this config supports a specific capability.
+    ///
+    /// This method provides a convenient way to check if the mode
+    /// supports a specific capability without having to call
+    /// individual support methods.
+    ///
+    /// # Parameters
+    /// * `capability` - The capability to check for
+    ///
+    /// # Returns
+    /// true if the capability is supported, false otherwise
+    fn supports_capability(&self, capability: Capability) -> bool {
+        match capability {
+            Capability::Title => self.supports_title(),
+            Capability::CustomSize => self.supports_custom_size(),
+            Capability::Emoji => self.supports_emoji(),
+            Capability::TitleAndEmoji => self.supports_title_and_emoji(),
+            Capability::StandardWindow => self.supports_standard_window(),
+        }
     }
 }
 
@@ -322,6 +527,45 @@ impl WindowBase {
     /// The maximum number of lines
     pub fn max_lines(&self) -> usize {
         self.max_lines
+    }
+
+    /// Clear all content from the window.
+    ///
+    /// This method removes all lines from the window, leaving it empty.
+    pub fn clear(&mut self) {
+        self.lines.clear();
+    }
+    
+    /// Check if the window is empty.
+    ///
+    /// # Returns
+    /// true if the window has no content, false otherwise
+    pub fn is_empty(&self) -> bool {
+        self.lines.is_empty()
+    }
+    
+    /// Get the number of lines currently displayed.
+    ///
+    /// # Returns
+    /// The current line count
+    pub fn line_count(&self) -> usize {
+        self.lines.len()
+    }
+    
+    /// Access the internal BaseConfig.
+    ///
+    /// # Returns
+    /// A reference to the BaseConfig
+    pub fn base_config(&self) -> &BaseConfig {
+        &self.base
+    }
+    
+    /// Access the internal BaseConfig mutably.
+    ///
+    /// # Returns
+    /// A mutable reference to the BaseConfig
+    pub fn base_config_mut(&mut self) -> &mut BaseConfig {
+        &mut self.base
     }
 }
 

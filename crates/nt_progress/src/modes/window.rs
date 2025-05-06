@@ -1,4 +1,4 @@
-use super::{ThreadConfig, WindowBase, HasBaseConfig, WithCustomSize};
+use super::{ThreadConfig, WindowBase, HasBaseConfig, WithCustomSize, StandardWindow};
 use std::any::Any;
 use crate::errors::ModeCreationError;
 use std::fmt::Debug;
@@ -92,6 +92,33 @@ impl WithCustomSize for Window {
     
     fn get_max_lines(&self) -> usize {
         self.window_base.max_lines()
+    }
+}
+
+impl StandardWindow for Window {
+    fn clear(&mut self) {
+        // Clear all content from the window
+        self.window_base.clear();
+    }
+    
+    fn get_content(&self) -> Vec<String> {
+        // Get the current content as a vector of strings
+        self.window_base.get_lines()
+    }
+    
+    fn add_line(&mut self, line: String) {
+        // Add a single line to the window
+        self.window_base.add_message(line);
+    }
+    
+    fn is_empty(&self) -> bool {
+        // Check if the window is empty
+        self.window_base.is_empty()
+    }
+    
+    fn line_count(&self) -> usize {
+        // Get the number of lines currently displayed
+        self.window_base.line_count()
     }
 }
 
