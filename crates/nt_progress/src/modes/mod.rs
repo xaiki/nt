@@ -98,6 +98,34 @@ pub trait JobTracker: Send + Sync + Debug {
     /// # Returns
     /// The new count of completed jobs
     fn increment_completed_jobs(&self) -> usize;
+    
+    /// Set the total number of jobs for this tracker.
+    ///
+    /// This method is used to update the total number of jobs
+    /// when it was not known at creation time or has changed.
+    ///
+    /// # Parameters
+    /// * `total` - The new total number of jobs
+    fn set_total_jobs(&mut self, total: usize);
+}
+
+/// Trait for types that contain a BaseConfig, either directly or through composition.
+///
+/// This trait is used to provide a uniform way to access the BaseConfig
+/// of different types, which enables generic implementations for traits
+/// like JobTracker.
+pub trait HasBaseConfig {
+    /// Get a reference to the BaseConfig.
+    ///
+    /// # Returns
+    /// A reference to the BaseConfig
+    fn base_config(&self) -> &BaseConfig;
+    
+    /// Get a mutable reference to the BaseConfig.
+    ///
+    /// # Returns
+    /// A mutable reference to the BaseConfig
+    fn base_config_mut(&mut self) -> &mut BaseConfig;
 }
 
 /// Base implementation for window-based display modes.
@@ -173,17 +201,6 @@ impl WindowBase {
     }
 }
 
-// Implement JobTracker for WindowBase
-impl JobTracker for WindowBase {
-    fn get_total_jobs(&self) -> usize {
-        self.base.get_total_jobs()
-    }
-    
-    fn increment_completed_jobs(&self) -> usize {
-        self.base.increment_completed_jobs()
-    }
-}
-
 /// Base implementation for single-line display modes.
 ///
 /// SingleLineBase provides a foundation for modes that display a single
@@ -235,17 +252,6 @@ impl SingleLineBase {
     /// true if passthrough is enabled, false otherwise
     pub fn has_passthrough(&self) -> bool {
         self.passthrough
-    }
-}
-
-// Implement JobTracker for SingleLineBase
-impl JobTracker for SingleLineBase {
-    fn get_total_jobs(&self) -> usize {
-        self.base.get_total_jobs()
-    }
-    
-    fn increment_completed_jobs(&self) -> usize {
-        self.base.increment_completed_jobs()
     }
 }
 
@@ -325,6 +331,35 @@ impl Config {
     pub fn as_window_with_title_mut(&mut self) -> Option<&mut WindowWithTitle> {
         self.config.as_any_mut().downcast_mut::<WindowWithTitle>()
     }
+    
+    /// Returns a mutable reference to the Window implementation if available
+    ///
+    /// # Returns
+    /// `Some(&mut Window)` if the config is in Window mode, 
+    /// `None` otherwise
+    pub fn as_window_mut(&mut self) -> Option<&mut Window> {
+        self.config.as_any_mut().downcast_mut::<Window>()
+    }
+    
+    /// Set the total number of jobs for this configuration.
+    ///
+    /// This method updates the total number of jobs in the underlying
+    /// ThreadConfig implementation, if it implements the JobTracker trait.
+    ///
+    /// # Parameters
+    /// * `total` - The new total number of jobs
+    pub fn set_total_jobs(&mut self, total: usize) {
+        // Try to downcast to each known implementation that implements JobTracker
+        if let Some(window) = self.config.as_any_mut().downcast_mut::<Window>() {
+            window.set_total_jobs(total);
+        } else if let Some(window_with_title) = self.config.as_any_mut().downcast_mut::<WindowWithTitle>() {
+            window_with_title.set_total_jobs(total);
+        } else if let Some(limited) = self.config.as_any_mut().downcast_mut::<Limited>() {
+            limited.set_total_jobs(total);
+        } else if let Some(capturing) = self.config.as_any_mut().downcast_mut::<Capturing>() {
+            capturing.set_total_jobs(total);
+        }
+    }
 }
 
 impl Default for Config {
@@ -397,16 +432,61 @@ impl BaseConfig {
     pub fn increment_completed_jobs(&self) -> usize {
         self.completed_jobs.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1
     }
+    
+    /// Set the total number of jobs for this configuration.
+    ///
+    /// # Parameters
+    /// * `total` - The new total number of jobs
+    pub fn set_total_jobs(&mut self, total: usize) {
+        self.total_jobs = total;
+    }
 }
 
-// Implement JobTracker for BaseConfig
-impl JobTracker for BaseConfig {
+// Implement HasBaseConfig for BaseConfig itself (trivial case)
+impl HasBaseConfig for BaseConfig {
+    fn base_config(&self) -> &BaseConfig {
+        self
+    }
+    
+    fn base_config_mut(&mut self) -> &mut BaseConfig {
+        self
+    }
+}
+
+// Implement HasBaseConfig for WindowBase
+impl HasBaseConfig for WindowBase {
+    fn base_config(&self) -> &BaseConfig {
+        &self.base
+    }
+    
+    fn base_config_mut(&mut self) -> &mut BaseConfig {
+        &mut self.base
+    }
+}
+
+// Implement HasBaseConfig for SingleLineBase
+impl HasBaseConfig for SingleLineBase {
+    fn base_config(&self) -> &BaseConfig {
+        &self.base
+    }
+    
+    fn base_config_mut(&mut self) -> &mut BaseConfig {
+        &mut self.base
+    }
+}
+
+// Blanket implementation of JobTracker for any type that implements HasBaseConfig
+impl<T: HasBaseConfig + Send + Sync + Debug> JobTracker for T {
     fn get_total_jobs(&self) -> usize {
-        self.total_jobs
+        self.base_config().get_total_jobs()
     }
     
     fn increment_completed_jobs(&self) -> usize {
-        self.completed_jobs.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1
+        self.base_config().increment_completed_jobs()
+    }
+    
+    fn set_total_jobs(&mut self, total: usize) {
+        self.base_config_mut().set_total_jobs(total);
     }
 }
 

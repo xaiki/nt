@@ -28,6 +28,8 @@ pub mod tests;
 pub use modes::ThreadMode;
 pub use modes::ThreadConfig;
 pub use modes::Config;
+pub use modes::JobTracker;
+pub use modes::HasBaseConfig;
 pub use errors::{ProgressError, ModeCreationError};
 
 thread_local! {
@@ -218,8 +220,38 @@ impl ProgressDisplay {
         Err(ProgressError::DisplayOperation("Emoji support not yet implemented".to_string()).into())
     }
 
-    pub async fn set_total_jobs(&self, _total: usize) -> Result<()> {
-        Err(ProgressError::DisplayOperation("Total jobs support not yet implemented".to_string()).into())
+    pub async fn set_total_jobs(&self, thread_id: Option<usize>, total: usize) -> Result<()> {
+        if total == 0 {
+            let ctx = ErrorContext::new("setting total jobs", "ProgressDisplay")
+                .with_details("Total jobs cannot be zero");
+            let error = ProgressError::DisplayOperation("Total jobs cannot be zero".to_string())
+                .into_context(ctx);
+            return Err(anyhow::Error::from(error));
+        }
+        
+        let mut configs = self.thread_configs.lock().await;
+        
+        if let Some(thread_id) = thread_id {
+            // Update a specific thread's total jobs
+            if let Some(config) = configs.get_mut(&thread_id) {
+                config.set_total_jobs(total);
+                Ok(())
+            } else {
+                let ctx = ErrorContext::new("setting total jobs", "ProgressDisplay")
+                    .with_thread_id(thread_id)
+                    .with_details("Thread not found");
+                
+                let error_msg = format!("Thread {} not found", thread_id);
+                let error = ProgressError::TaskOperation(error_msg).into_context(ctx);
+                Err(anyhow::Error::from(error))
+            }
+        } else {
+            // Update total jobs for all threads
+            for (_, config) in configs.iter_mut() {
+                config.set_total_jobs(total);
+            }
+            Ok(())
+        }
     }
 
     pub async fn update_progress(&self, thread_id: usize, current: usize, total: usize, prefix: &str) -> Result<()> {
@@ -545,5 +577,19 @@ impl TaskHandle {
     /// Returns a ProgressError::TaskOperation error if the task is not in WindowWithTitle mode
     pub async fn set_title(&self, title: String) -> Result<()> {
         self.progress.set_title(self.thread_id, title).await
+    }
+    
+    /// Set the total number of jobs for this task.
+    ///
+    /// # Parameters
+    /// * `total` - The new total number of jobs
+    ///
+    /// # Returns
+    /// Ok(()) if the total jobs was set successfully, or an error if the task doesn't exist
+    ///
+    /// # Errors
+    /// Returns a ProgressError::TaskOperation error if the task doesn't exist or if total is zero
+    pub async fn set_total_jobs(&self, total: usize) -> Result<()> {
+        self.progress.set_total_jobs(Some(self.thread_id), total).await
     }
 }

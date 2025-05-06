@@ -1,10 +1,10 @@
-use super::{ThreadConfig, SingleLineBase, JobTracker};
+use super::{ThreadConfig, SingleLineBase, HasBaseConfig};
 use std::any::Any;
 
 /// Configuration for Limited mode
 /// 
-/// In Limited mode, only the last line is displayed,
-/// and all output is passed through to stdout/stderr.
+/// In Limited mode, messages are passed through to stdout/stderr,
+/// but only the most recent message is kept for display.
 ///
 /// # Features
 ///
@@ -41,13 +41,13 @@ impl Limited {
     }
 }
 
-impl JobTracker for Limited {
-    fn get_total_jobs(&self) -> usize {
-        self.single_line_base.get_total_jobs()
+impl HasBaseConfig for Limited {
+    fn base_config(&self) -> &super::BaseConfig {
+        self.single_line_base.base_config()
     }
     
-    fn increment_completed_jobs(&self) -> usize {
-        self.single_line_base.increment_completed_jobs()
+    fn base_config_mut(&mut self) -> &mut super::BaseConfig {
+        self.single_line_base.base_config_mut()
     }
 }
 
@@ -80,7 +80,7 @@ mod tests {
     use tokio::time::sleep;
     use std::time::Duration;
     use crate::ProgressDisplay;
-    use crate::modes::ThreadMode;
+    use crate::modes::{ThreadMode, JobTracker};
     use crate::test_utils::TestEnv;
 
     #[test]

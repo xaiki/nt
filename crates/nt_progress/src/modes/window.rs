@@ -1,4 +1,4 @@
-use super::{ThreadConfig, WindowBase, JobTracker};
+use super::{ThreadConfig, WindowBase, HasBaseConfig};
 use std::any::Any;
 use crate::errors::ModeCreationError;
 
@@ -31,13 +31,13 @@ impl Window {
     }
 }
 
-impl JobTracker for Window {
-    fn get_total_jobs(&self) -> usize {
-        self.window_base.get_total_jobs()
+impl HasBaseConfig for Window {
+    fn base_config(&self) -> &super::BaseConfig {
+        self.window_base.base_config()
     }
     
-    fn increment_completed_jobs(&self) -> usize {
-        self.window_base.increment_completed_jobs()
+    fn base_config_mut(&mut self) -> &mut super::BaseConfig {
+        self.window_base.base_config_mut()
     }
 }
 
@@ -69,7 +69,7 @@ mod tests {
     use super::*;
     use crate::tests::common::TestEnv;
     use crate::ProgressDisplay;
-    use crate::modes::ThreadMode;
+    use crate::modes::{ThreadMode, JobTracker};
     use tokio::time::sleep;
     use std::time::Duration;
 

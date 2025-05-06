@@ -1,17 +1,23 @@
-use super::{ThreadConfig, SingleLineBase, JobTracker};
+use super::{ThreadConfig, SingleLineBase, HasBaseConfig};
 use std::any::Any;
 
 /// Configuration for Capturing mode
 /// 
-/// In Capturing mode, only one line is displayed at a time,
-/// with each new message replacing the previous one.
-/// Unlike Limited mode, it does not send output to stdout/stderr.
+/// In Capturing mode, only the last line is displayed,
+/// and output is not passed through to stdout/stderr.
 #[derive(Debug, Clone)]
 pub struct Capturing {
     single_line_base: SingleLineBase,
 }
 
 impl Capturing {
+    /// Create a new Capturing mode configuration.
+    ///
+    /// # Parameters
+    /// * `total_jobs` - The total number of jobs to track
+    ///
+    /// # Returns
+    /// A new Capturing instance
     pub fn new(total_jobs: usize) -> Self {
         Self {
             single_line_base: SingleLineBase::new(total_jobs, false), // false = no passthrough
@@ -19,15 +25,17 @@ impl Capturing {
     }
 }
 
-impl JobTracker for Capturing {
-    fn get_total_jobs(&self) -> usize {
-        self.single_line_base.get_total_jobs()
+impl HasBaseConfig for Capturing {
+    fn base_config(&self) -> &super::BaseConfig {
+        self.single_line_base.base_config()
     }
     
-    fn increment_completed_jobs(&self) -> usize {
-        self.single_line_base.increment_completed_jobs()
+    fn base_config_mut(&mut self) -> &mut super::BaseConfig {
+        self.single_line_base.base_config_mut()
     }
 }
+
+// Now JobTracker is automatically implemented via the blanket implementation
 
 impl ThreadConfig for Capturing {
     fn lines_to_display(&self) -> usize {
@@ -56,6 +64,7 @@ impl ThreadConfig for Capturing {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::modes::JobTracker;
 
     #[test]
     fn test_capturing_mode() {
