@@ -17,14 +17,15 @@ use tokio::{
 use anyhow::{Result, anyhow};
 use std::fmt::Debug;
 use std::cell::RefCell;
-use crate::modes::Config;
 
-mod modes;
+pub mod modes;
 pub mod test_utils;
 #[cfg(test)]
 pub mod tests;
 
 pub use modes::ThreadMode;
+pub use modes::ThreadConfig;
+pub use modes::Config;
 
 thread_local! {
     static CURRENT_THREAD_ID: AtomicUsize = AtomicUsize::new(0);
@@ -169,8 +170,22 @@ impl ProgressDisplay {
         Ok(())
     }
 
-    pub async fn set_title(&self, _title: String) -> Result<()> {
-        unimplemented!("Title support not yet implemented");
+    pub async fn set_title(&self, thread_id: usize, title: String) -> Result<()> {
+        let mut configs = self.thread_configs.lock().await;
+        
+        // Check if the thread exists
+        if let Some(config) = configs.get_mut(&thread_id) {
+            // Check if the config is for WindowWithTitle mode
+            if let Some(window_with_title) = config.as_window_with_title_mut() {
+                // Set the title
+                window_with_title.set_title(title);
+                return Ok(());
+            } else {
+                return Err(anyhow!("Thread {} is not in WindowWithTitle mode", thread_id));
+            }
+        } else {
+            return Err(anyhow!("Thread {} not found", thread_id));
+        }
     }
 
     pub async fn add_emoji(&self, _thread_id: usize, _emoji: &str) -> Result<()> {
@@ -252,7 +267,7 @@ impl ProgressDisplay {
         spinner_index: Arc<AtomicUsize>,
         message_rx: Arc<Mutex<mpsc::Receiver<ThreadMessage>>>,
         running: Arc<AtomicBool>,
-        mode: ThreadMode,
+        _mode: ThreadMode,
         writer: Arc<Mutex<Box<dyn Write + Send + 'static>>>,
     ) {
         while running.load(Ordering::SeqCst) {
@@ -490,5 +505,19 @@ impl TaskHandle {
             config,
         }).await.map_err(|e| anyhow!("Failed to send message: {}", e))?;
         Ok(())
+    }
+
+    /// Set the title for a task when using WindowWithTitle mode.
+    ///
+    /// # Parameters
+    /// * `title` - The new title to set
+    ///
+    /// # Returns
+    /// Ok(()) if the title was set successfully, or an error if the task is not in WindowWithTitle mode
+    ///
+    /// # Errors
+    /// Returns an error if the task is not in WindowWithTitle mode
+    pub async fn set_title(&self, title: String) -> Result<()> {
+        self.progress.set_title(self.thread_id, title).await
     }
 }

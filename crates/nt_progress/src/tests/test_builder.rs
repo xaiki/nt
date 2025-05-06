@@ -247,9 +247,10 @@ impl TestBuilder {
         
         let display = self.build_display().await;
         let mut task = display.spawn_with_mode(self.mode.unwrap(), || {}).await?;
+        let thread_id = task.thread_id();
         
         // Set the title
-        display.set_title(title.to_string()).await?;
+        display.set_title(thread_id, title.to_string()).await?;
         self.env.writeln(title);
         
         // Send messages to fill the window

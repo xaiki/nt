@@ -108,7 +108,8 @@ ThreadConfig::new(ThreadMode::WindowWithTitle(2), total_jobs) // Title + 2 lines
 - N is specified by the user (e.g., WindowWithTitle(2) for 2 lines)
 - N will be automatically reduced if it doesn't fit the terminal
 - Title is always displayed at the top
-- Supports emoji stacking in the title
+- Supports title updates via `task_handle.set_title("New Title")` or `progress_display.set_title(thread_id, "New Title")`
+- Supports emoji stacking in the title (coming soon)
 
 ### Multiple Progress Trackers
 
@@ -162,6 +163,23 @@ Configure display behavior with:
 - Line count control
 - Job tracking
 - Result emoji support (Window with Title mode only)
+
+### Setting Titles in WindowWithTitle Mode
+
+When using WindowWithTitle mode, you can update the title at any time:
+
+```rust
+// Using a task handle
+let mut task = progress.spawn_with_mode(ThreadMode::WindowWithTitle(3), || "Initial Title").await?;
+// ... later ...
+task.set_title("Updated Title".to_string()).await?;
+
+// Using the progress display directly
+let thread_id = task.thread_id();
+progress.set_title(thread_id, "Another Title".to_string()).await?;
+```
+
+Note that attempting to set a title for a task that is not in WindowWithTitle mode will result in an error.
 
 ## Contributing
 

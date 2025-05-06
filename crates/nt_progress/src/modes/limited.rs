@@ -1,4 +1,5 @@
 use super::{ThreadConfig, SingleLineBase, JobTracker};
+use std::any::Any;
 
 /// Configuration for Limited mode
 /// 
@@ -66,6 +67,10 @@ impl ThreadConfig for Limited {
 
     fn clone_box(&self) -> Box<dyn ThreadConfig> {
         Box::new(self.clone())
+    }
+    
+    fn as_any_mut(&mut self) -> &mut dyn Any {
+        self
     }
 }
 

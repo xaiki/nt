@@ -53,7 +53,7 @@ The `nt_progress` library provides a flexible and thread-safe progress display f
 - [ ] Add context-aware logging for debugging
 
 ### Unimplemented Features
-- [ ] Implement WindowWithTitle mode functionality (`set_title` method in ProgressDisplay)
+- [x] Implement WindowWithTitle mode functionality (`set_title` method in ProgressDisplay)
 - [ ] Implement total jobs support (`set_total_jobs` method in ProgressDisplay)
 - [ ] Add emoji support (`add_emoji` method in ProgressDisplay)
 - [ ] Implement direct writer functionality for TaskHandle (currently unused `writer` field)

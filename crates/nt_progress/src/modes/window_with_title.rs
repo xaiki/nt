@@ -1,4 +1,5 @@
 use super::{ThreadConfig, WindowBase, JobTracker};
+use std::any::Any;
 
 /// Configuration for WindowWithTitle mode
 /// 
@@ -20,6 +21,17 @@ impl WindowWithTitle {
             window_base: WindowBase::new(total_jobs, max_lines)?,
             title: None,
         })
+    }
+    
+    /// Set or update the title of the window.
+    ///
+    /// This method allows changing the title of the window after it has been created.
+    /// If no title has been set yet, this will set the initial title.
+    ///
+    /// # Parameters
+    /// * `new_title` - The new title to set
+    pub fn set_title(&mut self, new_title: String) {
+        self.title = Some(new_title);
     }
 }
 
@@ -82,6 +94,10 @@ impl ThreadConfig for WindowWithTitle {
 
     fn clone_box(&self) -> Box<dyn ThreadConfig> {
         Box::new(self.clone())
+    }
+    
+    fn as_any_mut(&mut self) -> &mut dyn Any {
+        self
     }
 }
 
