@@ -1,5 +1,6 @@
 use super::{ThreadConfig, WindowBase, JobTracker};
 use std::any::Any;
+use crate::errors::ModeCreationError;
 
 /// Configuration for WindowWithTitle mode
 /// 
@@ -12,9 +13,24 @@ pub struct WindowWithTitle {
 }
 
 impl WindowWithTitle {
-    pub fn new(total_jobs: usize, max_lines: usize) -> Result<Self, String> {
+    /// Creates a new WindowWithTitle mode configuration.
+    ///
+    /// # Parameters
+    /// * `total_jobs` - The total number of jobs to track
+    /// * `max_lines` - The maximum number of lines to display, including the title
+    ///
+    /// # Returns
+    /// A Result containing either the new WindowWithTitle or a ModeCreationError
+    ///
+    /// # Errors
+    /// Returns an InvalidWindowSize error if max_lines is less than 2 (need room for title + content)
+    pub fn new(total_jobs: usize, max_lines: usize) -> Result<Self, ModeCreationError> {
         if max_lines < 2 {
-            return Err("Max lines for WindowWithTitle must be at least 2".to_string());
+            return Err(ModeCreationError::InvalidWindowSize {
+                size: max_lines,
+                min_size: 2,
+                mode_name: "WindowWithTitle".to_string(),
+            });
         }
 
         Ok(Self {

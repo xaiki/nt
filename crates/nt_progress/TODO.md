@@ -47,8 +47,8 @@ The `nt_progress` library provides a flexible and thread-safe progress display f
 ## Remaining Tasks
 
 ### Error Handling and Robustness
-- [ ] Implement a better error handling mechanism for mode creation
-- [ ] Add detailed error types
+- [x] Implement a better error handling mechanism for mode creation
+- [x] Add detailed error types
 - [ ] Implement error recovery strategies
 - [ ] Add context-aware logging for debugging
 

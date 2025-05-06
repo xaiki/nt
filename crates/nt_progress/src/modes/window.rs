@@ -1,5 +1,6 @@
 use super::{ThreadConfig, WindowBase, JobTracker};
 use std::any::Any;
+use crate::errors::ModeCreationError;
 
 /// Configuration for Window mode
 /// 
@@ -12,7 +13,18 @@ pub struct Window {
 }
 
 impl Window {
-    pub fn new(total_jobs: usize, max_lines: usize) -> Result<Self, String> {
+    /// Creates a new Window mode configuration.
+    ///
+    /// # Parameters
+    /// * `total_jobs` - The total number of jobs to track
+    /// * `max_lines` - The maximum number of lines to display
+    ///
+    /// # Returns
+    /// A Result containing either the new Window or a ModeCreationError
+    ///
+    /// # Errors
+    /// Returns an error if max_lines is invalid (e.g., zero)
+    pub fn new(total_jobs: usize, max_lines: usize) -> Result<Self, ModeCreationError> {
         Ok(Self {
             window_base: WindowBase::new(total_jobs, max_lines)?,
         })

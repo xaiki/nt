@@ -3,6 +3,7 @@ use std::sync::atomic::AtomicUsize;
 use std::fmt::Debug;
 use std::collections::VecDeque;
 use std::any::Any;
+use crate::errors::ModeCreationError;
 
 mod limited;
 mod capturing;
@@ -119,13 +120,17 @@ impl WindowBase {
     /// * `max_lines` - The maximum number of lines to display
     ///
     /// # Returns
-    /// A Result containing either the new WindowBase or an error message
+    /// A Result containing either the new WindowBase or a ModeCreationError
     ///
     /// # Errors
-    /// Returns an error if max_lines is 0
-    pub fn new(total_jobs: usize, max_lines: usize) -> Result<Self, String> {
+    /// Returns an InvalidWindowSize error if max_lines is 0
+    pub fn new(total_jobs: usize, max_lines: usize) -> Result<Self, ModeCreationError> {
         if max_lines == 0 {
-            return Err("Window size must be at least 1".to_string());
+            return Err(ModeCreationError::InvalidWindowSize {
+                size: max_lines,
+                min_size: 1,
+                mode_name: "WindowBase".to_string(),
+            });
         }
         Ok(Self {
             base: BaseConfig::new(total_jobs),
@@ -270,11 +275,11 @@ impl Config {
     /// * `total_jobs` - The total number of jobs to track
     ///
     /// # Returns
-    /// A Result containing either the new Config or an error message
+    /// A Result containing either the new Config or a ModeCreationError
     ///
     /// # Errors
     /// Returns an error if the mode's constructor returns an error
-    pub fn new(mode: ThreadMode, total_jobs: usize) -> Result<Self, String> {
+    pub fn new(mode: ThreadMode, total_jobs: usize) -> Result<Self, ModeCreationError> {
         let config: Box<dyn ThreadConfig> = match mode {
             ThreadMode::Limited => Box::new(Limited::new(total_jobs)),
             ThreadMode::Capturing => Box::new(Capturing::new(total_jobs)),
@@ -426,12 +431,12 @@ pub fn create_thread_config(mode: ThreadMode, total_jobs: usize) -> Box<dyn Thre
         ThreadMode::Capturing => Box::new(Capturing::new(total_jobs)),
         ThreadMode::Window(max_lines) => Box::new(Window::new(total_jobs, max_lines).unwrap_or_else(|err| {
             eprintln!("Error creating Window mode: {}", err);
-            Window::new(total_jobs, 3).unwrap()
+            Window::new(total_jobs, 3).expect("Fallback Window creation failed")
         })),
         ThreadMode::WindowWithTitle(max_lines) => Box::new(WindowWithTitle::new(total_jobs, max_lines).unwrap_or_else(|err| {
             eprintln!("Error creating WindowWithTitle mode: {}", err);
             // Fallback to a reasonable size if there was an error
-            WindowWithTitle::new(total_jobs, 3).unwrap()
+            WindowWithTitle::new(total_jobs, 3).expect("Fallback WindowWithTitle creation failed")
         })),
     }
 } 

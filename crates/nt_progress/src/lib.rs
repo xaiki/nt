@@ -20,12 +20,14 @@ use std::cell::RefCell;
 
 pub mod modes;
 pub mod test_utils;
+pub mod errors;
 #[cfg(test)]
 pub mod tests;
 
 pub use modes::ThreadMode;
 pub use modes::ThreadConfig;
 pub use modes::Config;
+pub use errors::{ProgressError, ModeCreationError};
 
 thread_local! {
     static CURRENT_THREAD_ID: AtomicUsize = AtomicUsize::new(0);
@@ -130,7 +132,7 @@ impl ProgressDisplay {
         
         // Create the thread's config with specified mode
         let mut configs = self.thread_configs.lock().await;
-        let config = Config::new(mode, 1).map_err(|e| anyhow!(e))?;
+        let config = Config::new(mode, 1).map_err(|e| ProgressError::ModeCreation(e))?;
         configs.insert(thread_id, config.clone());
         
         let handle = tokio::spawn(async move {
@@ -181,24 +183,24 @@ impl ProgressDisplay {
                 window_with_title.set_title(title);
                 return Ok(());
             } else {
-                return Err(anyhow!("Thread {} is not in WindowWithTitle mode", thread_id));
+                return Err(ProgressError::TaskOperation(format!("Thread {} is not in WindowWithTitle mode", thread_id)).into());
             }
         } else {
-            return Err(anyhow!("Thread {} not found", thread_id));
+            return Err(ProgressError::TaskOperation(format!("Thread {} not found", thread_id)).into());
         }
     }
 
     pub async fn add_emoji(&self, _thread_id: usize, _emoji: &str) -> Result<()> {
-        unimplemented!("Emoji support not yet implemented");
+        Err(ProgressError::DisplayOperation("Emoji support not yet implemented".to_string()).into())
     }
 
     pub async fn set_total_jobs(&self, _total: usize) -> Result<()> {
-        unimplemented!("Total jobs support not yet implemented");
+        Err(ProgressError::DisplayOperation("Total jobs support not yet implemented".to_string()).into())
     }
 
     pub async fn update_progress(&self, thread_id: usize, current: usize, total: usize, prefix: &str) -> Result<()> {
         if total == 0 {
-            return Err(anyhow!("Total jobs cannot be zero"));
+            return Err(ProgressError::DisplayOperation("Total jobs cannot be zero".to_string()).into());
         }
         
         let progress_percent = ((current * 100) / total).min(100);
@@ -516,7 +518,7 @@ impl TaskHandle {
     /// Ok(()) if the title was set successfully, or an error if the task is not in WindowWithTitle mode
     ///
     /// # Errors
-    /// Returns an error if the task is not in WindowWithTitle mode
+    /// Returns a ProgressError::TaskOperation error if the task is not in WindowWithTitle mode
     pub async fn set_title(&self, title: String) -> Result<()> {
         self.progress.set_title(self.thread_id, title).await
     }
