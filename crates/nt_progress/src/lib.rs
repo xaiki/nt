@@ -18,16 +18,18 @@ use anyhow::{Result, anyhow};
 use std::fmt::Debug;
 use std::cell::RefCell;
 use crate::errors::{ContextExt, ErrorContext, ProgressError};
-use crate::modes::WindowWithTitle;
 
 pub mod modes;
 pub mod test_utils;
 pub mod errors;
+pub mod formatter;
 #[cfg(test)]
 pub mod tests;
 
 pub use modes::{ThreadMode, ThreadConfig, Config, JobTracker, HasBaseConfig};
+pub use modes::{ModeRegistry, ModeCreator, get_registry, create_thread_config};
 pub use errors::ModeCreationError;
+pub use formatter::{ProgressTemplate, TemplateContext, TemplateVar, TemplatePreset};
 
 thread_local! {
     static CURRENT_THREAD_ID: AtomicUsize = AtomicUsize::new(0);
@@ -188,19 +190,18 @@ impl ProgressDisplay {
         
         // Check if the thread exists
         if let Some(config) = configs.get_mut(&thread_id) {
-            // Check if the config is for WindowWithTitle mode
-            if let Some(window_with_title) = config.as_type_mut::<WindowWithTitle>() {
-                // Set the title
-                window_with_title.set_title(title);
-                return Ok(());
-            } else {
-                let ctx = ErrorContext::new("setting title", "ProgressDisplay")
-                    .with_thread_id(thread_id)
-                    .with_details("Thread is not in WindowWithTitle mode");
-                
-                let error_msg = format!("Thread {} is not in WindowWithTitle mode", thread_id);
-                let error = ProgressError::TaskOperation(error_msg).into_context(ctx);
-                return Err(anyhow::Error::from(error));
+            // Try to set the title using the capability trait
+            match config.set_title(title) {
+                Ok(()) => Ok(()),
+                Err(_) => {
+                    let ctx = ErrorContext::new("setting title", "ProgressDisplay")
+                        .with_thread_id(thread_id)
+                        .with_details("Thread is not in a mode that supports titles");
+                    
+                    let error_msg = format!("Thread {} is not in a mode that supports titles", thread_id);
+                    let error = ProgressError::TaskOperation(error_msg).into_context(ctx);
+                    Err(anyhow::Error::from(error))
+                }
             }
         } else {
             let ctx = ErrorContext::new("setting title", "ProgressDisplay")
@@ -209,7 +210,7 @@ impl ProgressDisplay {
             
             let error_msg = format!("Thread {} not found", thread_id);
             let error = ProgressError::TaskOperation(error_msg).into_context(ctx);
-            return Err(anyhow::Error::from(error));
+            Err(anyhow::Error::from(error))
         }
     }
 

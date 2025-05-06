@@ -123,6 +123,82 @@ where
     }
 }
 
+/// Common error context builders for frequently used components
+///
+/// This module provides pre-configured error context builders for
+/// the most commonly used components, reducing boilerplate code.
+pub mod context {
+    use super::ErrorContext;
+    
+    /// Context builder for ProgressDisplay operations
+    pub fn display(operation: impl Into<String>) -> ErrorContext {
+        ErrorContext::new(operation, "ProgressDisplay")
+    }
+    
+    /// Context builder for TaskHandle operations
+    pub fn task(operation: impl Into<String>, thread_id: usize) -> ErrorContext {
+        ErrorContext::new(operation, "TaskHandle").with_thread_id(thread_id)
+    }
+    
+    /// Context builder for ThreadLogger operations
+    pub fn logger(operation: impl Into<String>, thread_id: usize) -> ErrorContext {
+        ErrorContext::new(operation, "ThreadLogger").with_thread_id(thread_id)
+    }
+    
+    /// Context builder for Config operations
+    pub fn config(operation: impl Into<String>) -> ErrorContext {
+        ErrorContext::new(operation, "Config")
+    }
+    
+    /// Context builder for Template operations
+    pub fn template(operation: impl Into<String>) -> ErrorContext {
+        ErrorContext::new(operation, "ProgressTemplate")
+    }
+}
+
+/// Extension trait to add context to result types with pre-defined components
+pub trait CommonContextExt<T, E> {
+    /// Add ProgressDisplay context
+    fn display_context(self, operation: impl Into<String>) -> Result<T, ProgressError>;
+    
+    /// Add TaskHandle context
+    fn task_context(self, operation: impl Into<String>, thread_id: usize) -> Result<T, ProgressError>;
+    
+    /// Add ThreadLogger context
+    fn logger_context(self, operation: impl Into<String>, thread_id: usize) -> Result<T, ProgressError>;
+    
+    /// Add Config context
+    fn config_context(self, operation: impl Into<String>) -> Result<T, ProgressError>;
+    
+    /// Add ProgressTemplate context
+    fn template_context(self, operation: impl Into<String>) -> Result<T, ProgressError>;
+}
+
+impl<T, E> CommonContextExt<T, E> for Result<T, E>
+where
+    E: Into<ProgressError>,
+{
+    fn display_context(self, operation: impl Into<String>) -> Result<T, ProgressError> {
+        self.context(context::display(operation))
+    }
+    
+    fn task_context(self, operation: impl Into<String>, thread_id: usize) -> Result<T, ProgressError> {
+        self.context(context::task(operation, thread_id))
+    }
+    
+    fn logger_context(self, operation: impl Into<String>, thread_id: usize) -> Result<T, ProgressError> {
+        self.context(context::logger(operation, thread_id))
+    }
+    
+    fn config_context(self, operation: impl Into<String>) -> Result<T, ProgressError> {
+        self.context(context::config(operation))
+    }
+    
+    fn template_context(self, operation: impl Into<String>) -> Result<T, ProgressError> {
+        self.context(context::template(operation))
+    }
+}
+
 /// Errors that can occur when creating or configuring a display mode
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ModeCreationError {

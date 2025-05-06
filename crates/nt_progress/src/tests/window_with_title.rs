@@ -236,9 +236,9 @@ async fn test_window_with_title_set_title_error() {
     let result = handle.set_title("New Title".to_string()).await;
     assert!(result.is_err());
     
-    // The error should mention that the thread is not in WindowWithTitle mode
+    // The error should mention that the thread is not in a mode that supports titles
     let error = result.unwrap_err().to_string();
-    assert!(error.contains("not in WindowWithTitle mode"));
+    assert!(error.contains("not in a mode that supports titles"));
     
     display.stop().await.unwrap();
 } 

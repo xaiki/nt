@@ -4,6 +4,7 @@ use std::fmt::Debug;
 use std::collections::VecDeque;
 use std::any::Any;
 use crate::errors::ModeCreationError;
+use std::any::TypeId;
 
 mod limited;
 mod capturing;
@@ -139,6 +140,117 @@ pub trait HasBaseConfig {
     /// A mutable reference to the BaseConfig
     fn base_config_mut(&mut self) -> &mut BaseConfig;
 }
+
+/// Trait for types that can have a title.
+///
+/// This capability is implemented by modes that support setting and retrieving a title,
+/// such as WindowWithTitle mode.
+pub trait WithTitle: Send + Sync {
+    /// Set the title for this config.
+    fn set_title(&mut self, title: String);
+    
+    /// Get the current title.
+    fn get_title(&self) -> &str;
+}
+
+/// Trait for types that can have a custom size.
+///
+/// This capability is implemented by modes that support custom sizes,
+/// such as Window and WindowWithTitle.
+pub trait WithCustomSize: Send + Sync {
+    /// Set the maximum number of lines to display.
+    fn set_max_lines(&mut self, max_lines: usize) -> Result<(), ModeCreationError>;
+    
+    /// Get the maximum number of lines that can be displayed.
+    fn get_max_lines(&self) -> usize;
+}
+
+/// Trait for types that support emoji display.
+///
+/// This capability is implemented by modes that can display emoji characters.
+pub trait WithEmoji: Send + Sync {
+    /// Add an emoji to the display.
+    fn add_emoji(&mut self, emoji: &str);
+    
+    /// Get the current emojis.
+    fn get_emojis(&self) -> Vec<String>;
+}
+
+/// Extension methods for ThreadConfig to access capabilities.
+pub trait ThreadConfigExt: ThreadConfig {
+    /// Check if this config supports the WithTitle capability.
+    fn supports_title(&self) -> bool {
+        self.as_any().type_id() == TypeId::of::<WindowWithTitle>()
+    }
+    
+    /// Try to get this config as a WithTitle.
+    fn as_title(&self) -> Option<&dyn WithTitle> {
+        // WindowWithTitle is currently the only implementation of WithTitle
+        self.as_any().downcast_ref::<WindowWithTitle>().map(|w| w as &dyn WithTitle)
+    }
+    
+    /// Try to get this config as a mutable WithTitle.
+    fn as_title_mut(&mut self) -> Option<&mut dyn WithTitle> {
+        // WindowWithTitle is currently the only implementation of WithTitle
+        self.as_any_mut().downcast_mut::<WindowWithTitle>().map(|w| w as &mut dyn WithTitle)
+    }
+    
+    /// Check if this config supports the WithCustomSize capability.
+    fn supports_custom_size(&self) -> bool {
+        let type_id = self.as_any().type_id();
+        type_id == TypeId::of::<Window>() || type_id == TypeId::of::<WindowWithTitle>()
+    }
+    
+    /// Try to get this config as a WithCustomSize.
+    fn as_custom_size(&self) -> Option<&dyn WithCustomSize> {
+        if let Some(w) = self.as_any().downcast_ref::<Window>() {
+            Some(w as &dyn WithCustomSize)
+        } else if let Some(w) = self.as_any().downcast_ref::<WindowWithTitle>() {
+            Some(w as &dyn WithCustomSize)
+        } else {
+            None
+        }
+    }
+    
+    /// Try to get this config as a mutable WithCustomSize.
+    fn as_custom_size_mut(&mut self) -> Option<&mut dyn WithCustomSize> {
+        let type_id = self.as_any().type_id();
+        
+        if type_id == TypeId::of::<Window>() {
+            // It's a Window, do the downcast
+            self.as_any_mut().downcast_mut::<Window>()
+                .map(|w| w as &mut dyn WithCustomSize)
+        } else if type_id == TypeId::of::<WindowWithTitle>() {
+            // It's a WindowWithTitle, do the downcast
+            self.as_any_mut().downcast_mut::<WindowWithTitle>()
+                .map(|w| w as &mut dyn WithCustomSize)
+        } else {
+            // Neither type matched
+            None
+        }
+    }
+    
+    /// Check if this config supports the WithEmoji capability.
+    fn supports_emoji(&self) -> bool {
+        // No implementations yet
+        false
+    }
+    
+    /// Try to get this config as a WithEmoji.
+    fn as_emoji(&self) -> Option<&dyn WithEmoji> {
+        // No implementations yet
+        None
+    }
+    
+    /// Try to get this config as a mutable WithEmoji.
+    fn as_emoji_mut(&mut self) -> Option<&mut dyn WithEmoji> {
+        // No implementations yet
+        None
+    }
+}
+
+// Implement ThreadConfigExt for all types that implement ThreadConfig
+impl<T: ThreadConfig + ?Sized> ThreadConfigExt for T {}
 
 /// Base implementation for window-based display modes.
 ///
@@ -394,6 +506,49 @@ impl Config {
         // If we get here, we couldn't update the total_jobs
         // Future implementations should add their types to the list above
         eprintln!("Warning: Could not update total_jobs. Unknown mode type that doesn't implement JobTracker.");
+    }
+
+    /// Check if this config supports setting a title
+    pub fn supports_title(&self) -> bool {
+        self.config.supports_title()
+    }
+    
+    /// Set the title for this config if it supports titles
+    pub fn set_title(&mut self, title: String) -> Result<(), ModeCreationError> {
+        if let Some(with_title) = self.config.as_title_mut() {
+            with_title.set_title(title);
+            Ok(())
+        } else {
+            Err(ModeCreationError::Implementation(
+                format!("Config does not support titles")
+            ))
+        }
+    }
+    
+    /// Get the title for this config if it supports titles
+    pub fn get_title(&self) -> Option<&str> {
+        self.config.as_title().map(|t| t.get_title())
+    }
+    
+    /// Check if this config supports custom size
+    pub fn supports_custom_size(&self) -> bool {
+        self.config.supports_custom_size()
+    }
+    
+    /// Set the maximum number of lines for this config if it supports custom size
+    pub fn set_max_lines(&mut self, max_lines: usize) -> Result<(), ModeCreationError> {
+        if let Some(with_size) = self.config.as_custom_size_mut() {
+            with_size.set_max_lines(max_lines)
+        } else {
+            Err(ModeCreationError::Implementation(
+                format!("Config does not support custom size")
+            ))
+        }
+    }
+    
+    /// Get the maximum number of lines for this config if it supports custom size
+    pub fn get_max_lines(&self) -> Option<usize> {
+        self.config.as_custom_size().map(|s| s.get_max_lines())
     }
 }
 

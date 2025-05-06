@@ -1,6 +1,7 @@
-use super::{ThreadConfig, WindowBase, HasBaseConfig};
+use super::{ThreadConfig, WindowBase, HasBaseConfig, WithCustomSize};
 use std::any::Any;
 use crate::errors::ModeCreationError;
+use std::fmt::Debug;
 
 /// Configuration for Window mode
 /// 
@@ -65,6 +66,32 @@ impl ThreadConfig for Window {
     
     fn as_any(&self) -> &dyn Any {
         self
+    }
+}
+
+impl WithCustomSize for Window {
+    fn set_max_lines(&mut self, max_lines: usize) -> Result<(), ModeCreationError> {
+        if max_lines < 1 {
+            return Err(ModeCreationError::InvalidWindowSize {
+                size: max_lines,
+                min_size: 1,
+                mode_name: "Window".to_string(),
+            });
+        }
+        
+        // We need to recreate the window base
+        let result = WindowBase::new(self.base_config().get_total_jobs(), max_lines);
+        match result {
+            Ok(new_base) => {
+                self.window_base = new_base;
+                Ok(())
+            },
+            Err(e) => Err(e),
+        }
+    }
+    
+    fn get_max_lines(&self) -> usize {
+        self.window_base.max_lines()
     }
 }
 

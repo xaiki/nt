@@ -39,7 +39,7 @@ impl TestEnv {
         let mut lines = Vec::new();
         
         // Get raw content from parser for debug purposes only
-        let raw_content: Vec<String> = (0..self.height)
+        let _raw_content: Vec<String> = (0..self.height)
             .flat_map(|row| {
                 let row_content: Vec<String> = self.parser.screen().rows(row, 1).collect();
                 row_content

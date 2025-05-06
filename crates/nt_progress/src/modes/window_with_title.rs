@@ -1,6 +1,7 @@
-use super::{ThreadConfig, WindowBase, HasBaseConfig};
+use super::{ThreadConfig, WindowBase, HasBaseConfig, WithTitle, WithCustomSize};
 use std::any::Any;
 use crate::errors::ModeCreationError;
+use std::fmt::Debug;
 
 /// Configuration for WindowWithTitle mode
 /// 
@@ -118,6 +119,42 @@ impl ThreadConfig for WindowWithTitle {
     
     fn as_any(&self) -> &dyn Any {
         self
+    }
+}
+
+impl WithTitle for WindowWithTitle {
+    fn set_title(&mut self, title: String) {
+        self.title = Some(title);
+    }
+    
+    fn get_title(&self) -> &str {
+        self.title.as_deref().unwrap_or("")
+    }
+}
+
+impl WithCustomSize for WindowWithTitle {
+    fn set_max_lines(&mut self, max_lines: usize) -> Result<(), ModeCreationError> {
+        if max_lines < 2 {
+            return Err(ModeCreationError::InvalidWindowSize {
+                size: max_lines,
+                min_size: 2,
+                mode_name: "WindowWithTitle".to_string(),
+            });
+        }
+        
+        // We need to resize the window base
+        let result = WindowBase::new(self.base_config().get_total_jobs(), max_lines - 1);
+        match result {
+            Ok(new_base) => {
+                self.window_base = new_base;
+                Ok(())
+            },
+            Err(e) => Err(e),
+        }
+    }
+    
+    fn get_max_lines(&self) -> usize {
+        self.window_base.max_lines() + 1  // +1 for the title
     }
 }
 
