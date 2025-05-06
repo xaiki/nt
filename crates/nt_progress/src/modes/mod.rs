@@ -413,7 +413,7 @@ impl JobTracker for BaseConfig {
 /// Factory function to create a ThreadConfig implementation from a ThreadMode.
 /// 
 /// This function provides a consistent way to create ThreadConfig instances
-/// with built-in error handling and fallback logic.
+/// with built-in error handling and graceful fallback logic.
 ///
 /// # Parameters
 /// * `mode` - The display mode to use
@@ -422,21 +422,52 @@ impl JobTracker for BaseConfig {
 /// # Returns
 /// A boxed ThreadConfig implementation
 ///
-/// # Note
-/// This function is provided for backward compatibility and will be
-/// deprecated in favor of Config::new in the future.
+/// # Error Recovery
+/// This function will never panic. If the requested mode cannot be created:
+/// 1. First tries with a reasonable default size for the requested mode
+/// 2. If that fails, falls back to a simpler mode (Window -> Limited)
+/// 3. Always guarantees a working mode will be returned
 pub fn create_thread_config(mode: ThreadMode, total_jobs: usize) -> Box<dyn ThreadConfig> {
     match mode {
         ThreadMode::Limited => Box::new(Limited::new(total_jobs)),
         ThreadMode::Capturing => Box::new(Capturing::new(total_jobs)),
-        ThreadMode::Window(max_lines) => Box::new(Window::new(total_jobs, max_lines).unwrap_or_else(|err| {
-            eprintln!("Error creating Window mode: {}", err);
-            Window::new(total_jobs, 3).expect("Fallback Window creation failed")
-        })),
-        ThreadMode::WindowWithTitle(max_lines) => Box::new(WindowWithTitle::new(total_jobs, max_lines).unwrap_or_else(|err| {
-            eprintln!("Error creating WindowWithTitle mode: {}", err);
-            // Fallback to a reasonable size if there was an error
-            WindowWithTitle::new(total_jobs, 3).expect("Fallback WindowWithTitle creation failed")
-        })),
+        ThreadMode::Window(max_lines) => {
+            // Try with the requested size
+            if let Ok(window) = Window::new(total_jobs, max_lines) {
+                return Box::new(window);
+            }
+            
+            // Try with a reasonable fallback size
+            if let Ok(window) = Window::new(total_jobs, 3) {
+                eprintln!("Warning: Requested window size {} was invalid, using size 3 instead", max_lines);
+                return Box::new(window);
+            }
+            
+            // Last resort: fall back to Limited mode
+            eprintln!("Warning: Could not create Window mode, falling back to Limited mode");
+            Box::new(Limited::new(total_jobs))
+        },
+        ThreadMode::WindowWithTitle(max_lines) => {
+            // Try with the requested size
+            if let Ok(window) = WindowWithTitle::new(total_jobs, max_lines) {
+                return Box::new(window);
+            }
+            
+            // Try with a reasonable fallback size
+            if let Ok(window) = WindowWithTitle::new(total_jobs, 3) {
+                eprintln!("Warning: Requested window size {} was invalid, using size 3 instead", max_lines);
+                return Box::new(window);
+            }
+            
+            // Try with Window mode as a fallback
+            if let Ok(window) = Window::new(total_jobs, 3) {
+                eprintln!("Warning: Could not create WindowWithTitle mode, falling back to Window mode");
+                return Box::new(window);
+            }
+            
+            // Last resort: fall back to Limited mode
+            eprintln!("Warning: Could not create any window mode, falling back to Limited mode");
+            Box::new(Limited::new(total_jobs))
+        },
     }
 } 

@@ -15,6 +15,61 @@ pub enum ProgressError {
     External(Box<dyn Error + Send + Sync>),
     /// IO error
     Io(io::Error),
+    /// Error with context information
+    WithContext(Box<ProgressError>, ErrorContext),
+}
+
+/// Context information for errors
+#[derive(Debug, Clone)]
+pub struct ErrorContext {
+    /// The operation that failed
+    pub operation: String,
+    /// The component where the error occurred
+    pub component: String,
+    /// Additional context information
+    pub details: Option<String>,
+    /// Thread ID if applicable
+    pub thread_id: Option<usize>,
+}
+
+impl ErrorContext {
+    /// Create a new error context
+    pub fn new(operation: impl Into<String>, component: impl Into<String>) -> Self {
+        Self {
+            operation: operation.into(),
+            component: component.into(),
+            details: None,
+            thread_id: None,
+        }
+    }
+
+    /// Add details to the context
+    pub fn with_details(mut self, details: impl Into<String>) -> Self {
+        self.details = Some(details.into());
+        self
+    }
+
+    /// Add thread ID to the context
+    pub fn with_thread_id(mut self, thread_id: usize) -> Self {
+        self.thread_id = Some(thread_id);
+        self
+    }
+}
+
+impl fmt::Display for ErrorContext {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "in {} during {}", self.component, self.operation)?;
+        
+        if let Some(thread_id) = self.thread_id {
+            write!(f, " (thread {})", thread_id)?;
+        }
+        
+        if let Some(details) = &self.details {
+            write!(f, ": {}", details)?;
+        }
+        
+        Ok(())
+    }
 }
 
 impl fmt::Display for ProgressError {
@@ -25,6 +80,7 @@ impl fmt::Display for ProgressError {
             ProgressError::DisplayOperation(msg) => write!(f, "Display operation error: {}", msg),
             ProgressError::External(err) => write!(f, "External error: {}", err),
             ProgressError::Io(err) => write!(f, "IO error: {}", err),
+            ProgressError::WithContext(err, ctx) => write!(f, "{} ({})", err, ctx),
         }
     }
 }
@@ -35,8 +91,35 @@ impl Error for ProgressError {
             ProgressError::ModeCreation(err) => Some(err),
             ProgressError::External(err) => Some(err.as_ref()),
             ProgressError::Io(err) => Some(err),
+            ProgressError::WithContext(err, _) => Some(err.as_ref()),
             _ => None,
         }
+    }
+}
+
+/// Extension trait to add context to errors
+pub trait ContextExt<T, E> {
+    /// Add context information to the error
+    fn context(self, ctx: ErrorContext) -> Result<T, ProgressError>;
+    
+    /// Add context with operation and component information
+    fn with_context(self, operation: impl Into<String>, component: impl Into<String>) -> Result<T, ProgressError>;
+}
+
+impl<T, E> ContextExt<T, E> for Result<T, E>
+where
+    E: Into<ProgressError>,
+{
+    fn context(self, ctx: ErrorContext) -> Result<T, ProgressError> {
+        self.map_err(|e| {
+            let err = e.into();
+            ProgressError::WithContext(Box::new(err), ctx)
+        })
+    }
+    
+    fn with_context(self, operation: impl Into<String>, component: impl Into<String>) -> Result<T, ProgressError> {
+        let ctx = ErrorContext::new(operation, component);
+        self.context(ctx)
     }
 }
 
@@ -113,5 +196,41 @@ impl From<io::Error> for ProgressError {
 impl From<&str> for ProgressError {
     fn from(msg: &str) -> Self {
         ProgressError::TaskOperation(msg.to_string())
+    }
+}
+
+/// Logging helper for error debugging
+pub fn log_error(error: &ProgressError) {
+    let mut current_error: Option<&dyn Error> = Some(error);
+    let mut depth = 0;
+    
+    eprintln!("Error chain:");
+    while let Some(error) = current_error {
+        eprintln!("  {}: {}", depth, error);
+        current_error = error.source();
+        depth += 1;
+    }
+}
+
+/// Creates a debug-friendly error description with full context
+pub fn format_error_debug(error: &ProgressError) -> String {
+    let mut result = String::new();
+    let mut current_error: Option<&dyn Error> = Some(error);
+    let mut depth = 0;
+    
+    result.push_str("Error chain:\n");
+    while let Some(error) = current_error {
+        result.push_str(&format!("  {}: {}\n", depth, error));
+        current_error = error.source();
+        depth += 1;
+    }
+    
+    result
+}
+
+impl ProgressError {
+    /// Add context to an existing ProgressError
+    pub fn into_context(self, ctx: ErrorContext) -> Self {
+        ProgressError::WithContext(Box::new(self), ctx)
     }
 } 

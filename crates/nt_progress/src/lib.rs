@@ -17,6 +17,7 @@ use tokio::{
 use anyhow::{Result, anyhow};
 use std::fmt::Debug;
 use std::cell::RefCell;
+use crate::errors::{ContextExt, ErrorContext};
 
 pub mod modes;
 pub mod test_utils;
@@ -132,7 +133,18 @@ impl ProgressDisplay {
         
         // Create the thread's config with specified mode
         let mut configs = self.thread_configs.lock().await;
-        let config = Config::new(mode, 1).map_err(|e| ProgressError::ModeCreation(e))?;
+        
+        // Use context-aware error handling
+        let config = Config::new(mode, 1)
+            .with_context("creating thread config", "ProgressDisplay::spawn_with_mode")
+            .map_err(|e: ProgressError| {
+                let ctx = ErrorContext::new("spawning task", "ProgressDisplay")
+                    .with_thread_id(thread_id)
+                    .with_details(format!("with mode {:?}", mode));
+                let err: anyhow::Error = ProgressError::WithContext(Box::new(e), ctx).into();
+                err
+            })?;
+            
         configs.insert(thread_id, config.clone());
         
         let handle = tokio::spawn(async move {
@@ -183,10 +195,22 @@ impl ProgressDisplay {
                 window_with_title.set_title(title);
                 return Ok(());
             } else {
-                return Err(ProgressError::TaskOperation(format!("Thread {} is not in WindowWithTitle mode", thread_id)).into());
+                let ctx = ErrorContext::new("setting title", "ProgressDisplay")
+                    .with_thread_id(thread_id)
+                    .with_details("Thread is not in WindowWithTitle mode");
+                
+                let error_msg = format!("Thread {} is not in WindowWithTitle mode", thread_id);
+                let error = ProgressError::TaskOperation(error_msg).into_context(ctx);
+                return Err(anyhow::Error::from(error));
             }
         } else {
-            return Err(ProgressError::TaskOperation(format!("Thread {} not found", thread_id)).into());
+            let ctx = ErrorContext::new("setting title", "ProgressDisplay")
+                .with_thread_id(thread_id)
+                .with_details("Thread not found");
+            
+            let error_msg = format!("Thread {} not found", thread_id);
+            let error = ProgressError::TaskOperation(error_msg).into_context(ctx);
+            return Err(anyhow::Error::from(error));
         }
     }
 
