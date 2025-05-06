@@ -18,8 +18,8 @@
 - [x] Standardize method signatures
 
 ### Test Utilities Refactoring
-- [ ] Create a TestBuilder utility to simplify test creation
-- [ ] Add standard testing utilities for common mode assertions
+- [x] Create a TestBuilder utility to simplify test creation
+- [x] Add standard testing utilities for common mode assertions
 
 ### Thread Configuration Interface
 - [ ] Standardize Thread Configuration implementation patterns
@@ -34,13 +34,23 @@
 - [ ] Reduce duplication in string handling
 - [ ] Consider memory usage optimizations in window handling
 
+### Unimplemented Features (Future Work)
+- [ ] Implement WindowWithTitle mode functionality (`set_title` method in ProgressDisplay)
+- [ ] Implement total jobs support (`set_total_jobs` method in ProgressDisplay)
+- [ ] Add emoji support (`add_emoji` method in ProgressDisplay)
+- [ ] Implement direct writer functionality for TaskHandle (currently unused `writer` field)
+- [ ] Implement output passthrough functionality (currently unused `passthrough` field and `has_passthrough` method in SingleLineBase)
+- [ ] Standardize thread config creation (replace Config::new with more robust `create_thread_config` function)
+- [ ] Add terminal size customization in TestBuilder (currently unused `width` and `height` fields)
+
 ## Implementation Strategy
 
 1. [x] First, refactor Window modes by creating WindowBase
 2. [x] Next, refactor SingleLine modes by creating SingleLineBase
 3. [x] Introduce JobTracker trait to standardize job tracking functions
 4. [x] Enhance BaseConfig with standardized methods
-5. [ ] Refactor test utilities
+5. [x] Refactor test utilities
 6. [ ] Standardize thread configuration interfaces
 7. [ ] Improve documentation
 8. [ ] Optimize for performance 
+9. [ ] Implement remaining features (WindowWithTitle, total jobs, emoji support, direct writer, passthrough mode) 

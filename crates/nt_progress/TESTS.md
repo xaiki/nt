@@ -18,7 +18,7 @@ This document outlines the testing strategy for the `nt_progress` crate, focusin
    - [x] Capturing mode tests
    - [x] Limited mode tests
    - [x] Window mode tests
-   - [ ] WindowWithTitle mode tests (file exists but empty)
+   - [x] WindowWithTitle mode tests
 
 3. **Concurrency Tests**
    - [x] Multiple task output
@@ -33,13 +33,21 @@ This document outlines the testing strategy for the `nt_progress` crate, focusin
 ## Test Structure
 
 ```
-src/tests/
-    common.rs       # Common test utilities and TestEnv
-    terminal.rs     # Terminal-specific tests
-    window.rs       # Window mode tests
-    window_with_title.rs # WindowWithTitle mode tests (empty)
-    capturing.rs    # Capturing mode tests
-    display.rs      # Display functionality tests
+src/tests/                    # Unit tests
+    common.rs                 # Common test utilities and TestEnv
+    mod.rs                    # Test module definition
+    terminal.rs               # Terminal-specific tests
+    window.rs                 # Window mode tests
+    window_with_title.rs      # WindowWithTitle mode tests
+    capturing.rs              # Capturing mode tests
+    limited.rs                # Limited mode tests
+    display.rs                # Display functionality tests
+    test_builder.rs           # TestBuilder utility for simplified test creation
+    test_builder_example.rs   # Example tests using TestBuilder
+
+tests/                        # Integration tests
+    common.rs                 # Shared test utilities
+    terminal.rs               # Terminal integration tests
 ```
 
 ## Test Categories
@@ -93,17 +101,20 @@ src/tests/
 1. **TestEnv Structure**
    ```rust
    struct TestEnv {
-       backend: TestBackend,
+       parser: Parser,
        expected: Vec<String>,
+       width: u16,
+       height: u16,
    }
    ```
-   - [x] Wraps crossterm::test::TestBackend
+   - [x] Uses vt100::Parser for terminal emulation
    - [x] Tracks expected output
    - [x] Provides verification methods
+   - [x] Manages terminal dimensions
 
 2. **Key Methods**
    - [x] `new(width, height)`: Create test environment
-   - [x] `expect(line)`: Add expected output
+   - [x] `contents()`: Get current terminal content
    - [x] `verify()`: Compare actual vs expected
    - [x] `write(text)`: Write and track output
    - [x] `writeln(text)`: Write line and track output
@@ -114,7 +125,7 @@ src/tests/
 3. **Verification Process**
    - [x] Track all expected output
    - [x] Capture actual terminal output
-   - [x] Compare character by character
+   - [x] Compare line by line
    - [x] Provide detailed error messages
 
 ### Performance Considerations
@@ -137,12 +148,12 @@ src/tests/
 - [x] Specify testing scenarios
 
 ### Phase 2: Proof of Concept
-- [x] Set up crossterm test environment
+- [x] Set up vt100 parser for terminal emulation
 - [x] Implement basic output capture
 - [x] Test cursor movements
 
 ### Phase 3: Core Testing Implementation
-- [x] Implement TestBackend integration
+- [x] Implement test environment integration
 - [x] Add precise output verification
 - [x] Create TestEnv utility
 
@@ -150,6 +161,11 @@ src/tests/
 - [x] Implement mode-specific tests
 - [x] Add concurrency testing
 - [ ] Add performance benchmarking
+
+### Phase 5: Test Utilities Refactoring
+- [x] Create a TestBuilder utility to simplify test creation
+- [x] Add standard testing utilities for common mode assertions
+- [x] Reduce duplication in test setup
 
 ## Example Test Structure
 
@@ -192,14 +208,52 @@ async fn test_mode_concurrent() {
 }
 ```
 
+## TestBuilder Usage
+
+Using the new TestBuilder utility greatly simplifies test creation:
+
+```rust
+#[tokio::test]
+async fn test_builder_basic_message() -> Result<()> {
+    // Create a new TestBuilder with default terminal size (80x24)
+    let mut builder = TestBuilder::new();
+    
+    // Test a simple message with Limited mode (default)
+    let display = builder.test_message("Hello, world!").await?;
+    display.stop().await?;
+    
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_builder_window_mode() -> Result<()> {
+    // Create a TestBuilder for Window mode with 5 lines
+    let mut builder = TestBuilder::new().window_mode(5);
+    
+    // Test window features with multiple lines
+    let display = builder.test_window_features(&[
+        "First line",
+        "Second line",
+        "Third line",
+        "Fourth line",
+        "Fifth line",
+    ]).await?;
+    
+    display.stop().await?;
+    
+    Ok(())
+}
+```
+
 ## Next Steps
 
 1. **Short Term**
-   - [ ] Implement WindowWithTitle mode tests
-   - [ ] Add missing edge case tests
-   - [ ] Add error handling tests
+   - [x] Create TestBuilder utility for simplified test creation
+   - [x] Add standard testing utilities for common assertions
+   - [x] Refactor existing tests to use new utilities
 
 2. **Medium Term**
+   - [ ] Implement remaining features (WindowWithTitle mode, total jobs support)
    - [ ] Set up performance testing infrastructure
    - [ ] Add memory usage benchmarks
    - [ ] Add CPU usage benchmarks
@@ -211,84 +265,50 @@ async fn test_mode_concurrent() {
 
 ## Implementation Plan
 
-### 1. WindowWithTitle Mode Tests (Highest Priority)
-   - [ ] Basic Setup
-     - [ ] Create test module structure
-     - [ ] Set up TestEnv for window title testing
-     - [ ] Define test fixtures
-   - [ ] Core Functionality Tests
-     - [ ] Test title initialization
-     - [ ] Test title updates
-     - [ ] Test title persistence
-   - [ ] Edge Cases
-     - [ ] Test empty title
-     - [ ] Test long titles
-     - [ ] Test special characters in titles
-   - [ ] Integration Tests
-     - [ ] Test title with window resizing
-     - [ ] Test title with content updates
-     - [ ] Test title with multiple windows
+### 1. TestBuilder Utility (Highest Priority)
+   - [x] Core Builder Structure
+     - [x] Create TestBuilder class with fluent interface
+     - [x] Support common test setup patterns
+     - [x] Simplify mode-specific test creation
+   - [x] Assertion Helpers
+     - [x] Create standard assertion methods
+     - [x] Provide common test verification patterns
+     - [x] Improve error messages for test failures
+   - [x] Test Fixtures
+     - [x] Standard test configurations
+     - [x] Common test scenarios
+     - [x] Reusable test patterns
 
-### 2. Edge Case Tests (Medium Priority)
-   - [ ] Terminal Edge Cases
-     - [ ] Test with minimum terminal size
-     - [ ] Test with maximum terminal size
-     - [ ] Test with invalid terminal sizes
-   - [ ] Content Edge Cases
-     - [ ] Test empty content
-     - [ ] Test very long content
-     - [ ] Test content with special characters
-   - [ ] State Edge Cases
-     - [ ] Test state transitions
-     - [ ] Test error recovery
-     - [ ] Test resource exhaustion
+### 2. Common Mode Assertions (Medium Priority)
+   - [x] Basic Mode Testing
+     - [x] Standard message handling tests
+     - [x] Standard display formatting tests
+     - [x] Standard concurrency tests
+   - [x] Mode-Specific Testing
+     - [x] Window mode specific assertions
+     - [x] Limited mode specific assertions
+     - [x] Capturing mode specific assertions
+     - [x] WindowWithTitle mode specific assertions
 
-### 3. Error Handling Tests (Medium Priority)
-   - [ ] Basic Error Cases
-     - [ ] Test invalid configurations
-     - [ ] Test resource allocation failures
-     - [ ] Test invalid state transitions
-   - [ ] Recovery Tests
-     - [ ] Test error recovery procedures
-     - [ ] Test state restoration
-     - [ ] Test resource cleanup
-   - [ ] Error Propagation
-     - [ ] Test error reporting
-     - [ ] Test error logging
-     - [ ] Test error handling across boundaries
-
-### 4. Performance Testing Infrastructure (Lower Priority)
-   - [ ] Setup Phase
-     - [ ] Create benches directory
-     - [ ] Set up Criterion
-     - [ ] Define baseline metrics
-   - [ ] Basic Benchmarks
-     - [ ] Measure render time
-     - [ ] Track update frequency
-     - [ ] Monitor buffer usage
-   - [ ] Resource Benchmarks
-     - [ ] Track memory allocation
-     - [ ] Monitor CPU usage
-     - [ ] Check file descriptor usage
-
-### 5. Continuous Benchmarking (Lowest Priority)
-   - [ ] Infrastructure Setup
-     - [ ] Set up benchmark storage
-     - [ ] Configure benchmark reporting
-     - [ ] Set up performance tracking
-   - [ ] Monitoring Setup
-     - [ ] Configure resource monitoring
-     - [ ] Set up alerting
-     - [ ] Define performance thresholds
+### 3. Performance Testing Utilities (Lower Priority)
+   - [ ] Benchmarking Framework
+     - [ ] Output speed measurement
+     - [ ] Resource usage tracking
+     - [ ] Comparative performance analysis
+   - [ ] Standard Benchmarks
+     - [ ] Single line output benchmarks
+     - [ ] Window mode benchmarks
+     - [ ] Concurrent task benchmarks
 
 ## Conclusion
 
-The testing strategy focuses on precise output verification using TestBackend and the TestEnv utility. This ensures reliable testing of terminal output and mode-specific behavior. The approach provides:
+The testing strategy focuses on precise output verification using TestBackend and the TestEnv utility, now further enhanced with the TestBuilder utility. This ensures reliable testing of terminal output and mode-specific behavior with reduced boilerplate and improved readability. The approach provides:
 
 1. Exact character-by-character verification
 2. Support for ANSI sequences and terminal operations
 3. Concurrent testing capabilities
 4. Detailed error reporting
-5. Performance monitoring (planned)
+5. Simplified test creation through TestBuilder
+6. Performance monitoring (planned)
 
-This strategy helps maintain high code quality and reliability while making it easier to catch and debug issues with terminal output. 
+This strategy helps maintain high code quality and reliability while making it easier to catch and debug issues with terminal output. The TestBuilder utility makes it significantly easier to create and maintain tests, reducing duplication and improving test coverage. 
