@@ -143,12 +143,12 @@ mod tests {
 
     #[tokio::test]
     async fn test_window_with_title_mode_concurrent() {
-        let mut display = ProgressDisplay::new().await;
+        let display = ProgressDisplay::new().await;
         let mut handles = vec![];
         
         // Spawn multiple tasks in WindowWithTitle mode
         for i in 0..3 {
-            let mut display = display.clone();
+            let display = display.clone();
             let mut env = TestEnv::new(80, 24);
             let i = i;
             handles.push(tokio::spawn(async move {
@@ -178,7 +178,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_window_with_title_mode_special_characters() {
-        let mut display = ProgressDisplay::new().await;
+        let display = ProgressDisplay::new().await;
         let mut env = TestEnv::new(80, 24);
         
         // Test with special characters
@@ -197,7 +197,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_window_with_title_mode_long_lines() {
-        let mut display = ProgressDisplay::new().await;
+        let display = ProgressDisplay::new().await;
         let mut env = TestEnv::new(80, 24);
         
         // Test with long lines
