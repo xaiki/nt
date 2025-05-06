@@ -214,8 +214,33 @@ impl ProgressDisplay {
         }
     }
 
-    pub async fn add_emoji(&self, _thread_id: usize, _emoji: &str) -> Result<()> {
-        Err(ProgressError::DisplayOperation("Emoji support not yet implemented".to_string()).into())
+    pub async fn add_emoji(&self, thread_id: usize, emoji: &str) -> Result<()> {
+        let mut configs = self.thread_configs.lock().await;
+        
+        // Check if the thread exists
+        if let Some(config) = configs.get_mut(&thread_id) {
+            // Try to add the emoji using the capability trait
+            match config.add_emoji(emoji) {
+                Ok(()) => Ok(()),
+                Err(_) => {
+                    let ctx = ErrorContext::new("adding emoji", "ProgressDisplay")
+                        .with_thread_id(thread_id)
+                        .with_details("Thread is not in a mode that supports emojis");
+                    
+                    let error_msg = format!("Thread {} is not in a mode that supports emojis", thread_id);
+                    let error = ProgressError::TaskOperation(error_msg).into_context(ctx);
+                    Err(anyhow::Error::from(error))
+                }
+            }
+        } else {
+            let ctx = ErrorContext::new("adding emoji", "ProgressDisplay")
+                .with_thread_id(thread_id)
+                .with_details("Thread not found");
+            
+            let error_msg = format!("Thread {} not found", thread_id);
+            let error = ProgressError::TaskOperation(error_msg).into_context(ctx);
+            Err(anyhow::Error::from(error))
+        }
     }
 
     pub async fn set_total_jobs(&self, thread_id: Option<usize>, total: usize) -> Result<()> {
@@ -575,6 +600,23 @@ impl TaskHandle {
     /// Returns a ProgressError::TaskOperation error if the task is not in WindowWithTitle mode
     pub async fn set_title(&self, title: String) -> Result<()> {
         self.progress.set_title(self.thread_id, title).await
+    }
+    
+    /// Add an emoji to the task's display when using WindowWithTitle mode.
+    ///
+    /// The emoji will be shown at the beginning of the title line.
+    /// Multiple emojis can be added and they will be displayed in the order they were added.
+    ///
+    /// # Parameters
+    /// * `emoji` - The emoji character or string to add
+    ///
+    /// # Returns
+    /// Ok(()) if the emoji was added successfully, or an error if the task doesn't support emojis
+    ///
+    /// # Errors
+    /// Returns a ProgressError::TaskOperation error if the task doesn't support emojis
+    pub async fn add_emoji(&self, emoji: &str) -> Result<()> {
+        self.progress.add_emoji(self.thread_id, emoji).await
     }
     
     /// Set the total number of jobs for this task.

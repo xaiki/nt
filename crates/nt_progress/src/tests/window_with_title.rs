@@ -50,17 +50,92 @@ async fn test_window_with_title_persistence() {
 
 #[tokio::test]
 async fn test_window_with_title_emoji() {
-    let display = ProgressDisplay::new_with_mode(ThreadMode::WindowWithTitle(3)).await;
+    let mut display = ProgressDisplay::new().await;
     let mut env = TestEnv::new(80, 24);
     
-    let _handle = display.spawn_with_mode(ThreadMode::WindowWithTitle(3), || "emoji-test").await.unwrap();
-    env.writeln("🚀 Starting task");
-    env.writeln("✨ Processing");
-    env.writeln("✅ Complete");
+    // Create a task in WindowWithTitle mode
+    let mut task = display.spawn_with_mode(ThreadMode::WindowWithTitle(3), || "Initial Title").await.unwrap();
+    
+    // Add some emojis
+    task.add_emoji("✨").await.unwrap();
+    env.writeln("✨ Initial Title");
+    env.verify();
+    
+    // Add another emoji
+    task.add_emoji("🚀").await.unwrap();
+    env.writeln("✨ 🚀 Initial Title");
+    env.verify();
+    
+    // Change the title and verify emojis remain
+    task.set_title("Updated Title".to_string()).await.unwrap();
+    env.writeln("✨ 🚀 Updated Title");
+    env.verify();
+    
+    // Add a message and verify title formatting
+    let result = task.capture_stdout("This is a test message".to_string()).await;
+    assert!(result.is_ok());
+    
+    // Verify the output
+    display.display().await.unwrap();
+    env.verify();
+    
+    // Clean up
+    display.stop().await.unwrap();
+}
+
+#[tokio::test]
+async fn test_window_with_title_emoji_errors() {
+    let display = ProgressDisplay::new().await;
+    
+    // Create a task in Limited mode (doesn't support emojis)
+    let limited_task = display.spawn_with_mode(ThreadMode::Limited, || "Limited Task").await.unwrap();
+    
+    // Trying to add an emoji should fail
+    let result = limited_task.add_emoji("🚀").await;
+    assert!(result.is_err());
+    let error = result.unwrap_err().to_string();
+    assert!(error.contains("not in a mode that supports emojis"), "Error message should mention emojis support: {}", error);
+    
+    // Create a task in Window mode (doesn't support emojis)
+    let window_task = display.spawn_with_mode(ThreadMode::Window(3), || "Window Task").await.unwrap();
+    
+    // Trying to add an emoji should fail
+    let result = window_task.add_emoji("🚀").await;
+    assert!(result.is_err());
+    let error = result.unwrap_err().to_string();
+    assert!(error.contains("not in a mode that supports emojis"), "Error message should mention emojis support: {}", error);
+    
+    // Clean up
+    display.stop().await.unwrap();
+}
+
+#[tokio::test]
+async fn test_window_with_title_multiple_emojis() {
+    let display = ProgressDisplay::new().await;
+    let mut env = TestEnv::new(80, 24);
+    
+    // Create a task in WindowWithTitle mode
+    let mut task = display.spawn_with_mode(ThreadMode::WindowWithTitle(3), || "Task With Emojis").await.unwrap();
+    
+    // Add multiple emojis of different types
+    task.add_emoji("🚀").await.unwrap();
+    task.add_emoji("✨").await.unwrap();
+    task.add_emoji("🔥").await.unwrap();
+    
+    // Add some messages
+    task.capture_stdout("First message".to_string()).await.unwrap();
+    task.capture_stdout("Second message".to_string()).await.unwrap();
+    
+    // Verify the output shows the title with emojis
+    env.writeln("🚀 ✨ 🔥 Task With Emojis");
+    env.writeln("First message");
+    env.writeln("Second message");
     
     display.display().await.unwrap();
-    display.stop().await.unwrap();
     env.verify();
+    
+    // Clean up
+    display.stop().await.unwrap();
 }
 
 #[tokio::test]

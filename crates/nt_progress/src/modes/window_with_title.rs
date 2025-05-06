@@ -1,4 +1,4 @@
-use super::{ThreadConfig, WindowBase, HasBaseConfig, WithTitle, WithCustomSize};
+use super::{ThreadConfig, WindowBase, HasBaseConfig, WithTitle, WithCustomSize, WithEmoji};
 use std::any::Any;
 use crate::errors::ModeCreationError;
 use std::fmt::Debug;
@@ -11,6 +11,7 @@ use std::fmt::Debug;
 pub struct WindowWithTitle {
     window_base: WindowBase,
     title: Option<String>,
+    emojis: Vec<String>,
 }
 
 impl WindowWithTitle {
@@ -37,6 +38,7 @@ impl WindowWithTitle {
         Ok(Self {
             window_base: WindowBase::new(total_jobs, max_lines)?,
             title: None,
+            emojis: Vec::new(),
         })
     }
     
@@ -49,6 +51,24 @@ impl WindowWithTitle {
     /// * `new_title` - The new title to set
     pub fn set_title(&mut self, new_title: String) {
         self.title = Some(new_title);
+    }
+    
+    /// Render the title with emojis if any are present.
+    ///
+    /// This method formats the title with any emoji characters that have been
+    /// added to the mode. The emojis are prepended to the title.
+    ///
+    /// # Returns
+    /// The formatted title string
+    fn render_title(&self) -> String {
+        let title = self.title.as_deref().unwrap_or("");
+        
+        if self.emojis.is_empty() {
+            title.to_string()
+        } else {
+            let emoji_part = self.emojis.join(" ");
+            format!("{} {}", emoji_part, title)
+        }
     }
 }
 
@@ -80,33 +100,35 @@ impl ThreadConfig for WindowWithTitle {
         let window_lines = self.window_base.get_lines();
         let display_lines = self.window_base.max_lines();
 
-        if let Some(title) = &self.title {
-            // Start with the title
-            let mut result = vec![title.clone()];
+        // If we have no title and no content, return an empty vector
+        if self.title.is_none() && window_lines.is_empty() {
+            return Vec::new();
+        }
 
-            // If we have more lines than just the title, add the most recent lines
-            // but leave out the oldest ones to make space for the title while 
-            // staying within max_lines
-            if window_lines.len() > 0 {
-                let remaining_lines = display_lines - 1;
-                let start_idx = if window_lines.len() > remaining_lines {
-                    window_lines.len() - remaining_lines
-                } else {
-                    0
-                };
+        // Start with the rendered title (including emojis)
+        let mut result = vec![self.render_title()];
 
-                for i in start_idx..window_lines.len() {
-                    // Skip the first message since it's already shown as title
-                    if window_lines[i] != *title {
-                        result.push(window_lines[i].clone());
-                    }
+        // If we have more lines than just the title, add the most recent lines
+        // but leave out the oldest ones to make space for the title while 
+        // staying within max_lines
+        if !window_lines.is_empty() {
+            let remaining_lines = display_lines - 1;
+            let start_idx = if window_lines.len() > remaining_lines {
+                window_lines.len() - remaining_lines
+            } else {
+                0
+            };
+
+            for i in start_idx..window_lines.len() {
+                // Skip the first message since it's already shown as title if it matches
+                let title = self.title.as_deref().unwrap_or("");
+                if window_lines[i] != title {
+                    result.push(window_lines[i].clone());
                 }
             }
-
-            result
-        } else {
-            window_lines
         }
+
+        result
     }
 
     fn clone_box(&self) -> Box<dyn ThreadConfig> {
@@ -155,6 +177,19 @@ impl WithCustomSize for WindowWithTitle {
     
     fn get_max_lines(&self) -> usize {
         self.window_base.max_lines() + 1  // +1 for the title
+    }
+}
+
+impl WithEmoji for WindowWithTitle {
+    fn add_emoji(&mut self, emoji: &str) {
+        // Validate that the emoji is not empty
+        if !emoji.trim().is_empty() {
+            self.emojis.push(emoji.to_string());
+        }
+    }
+    
+    fn get_emojis(&self) -> Vec<String> {
+        self.emojis.clone()
     }
 }
 

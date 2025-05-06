@@ -55,7 +55,7 @@ The `nt_progress` library provides a flexible and thread-safe progress display f
 ### Unimplemented Features
 - [x] Implement WindowWithTitle mode functionality (`set_title` method in ProgressDisplay)
 - [x] Implement total jobs support (`set_total_jobs` method in ProgressDisplay)
-- [ ] Add emoji support (`add_emoji` method in ProgressDisplay)
+- [x] Add emoji support (`add_emoji` method in ProgressDisplay)
 - [ ] Implement direct writer functionality for TaskHandle (currently unused `writer` field)
 - [ ] Implement output passthrough functionality (currently unused `passthrough` field and `has_passthrough` method in SingleLineBase)
 - [ ] Standardize thread config creation (replace Config::new with more robust `create_thread_config` function)
@@ -157,15 +157,22 @@ The `nt_progress` library provides a flexible and thread-safe progress display f
 
 ## Detailed Refactoring Roadmap
 
+### Phase 0: Immediate Warning Fixes
+- [ ] Fix the unused `writer` field in TaskHandle (src/lib.rs:487)
+- [ ] Address shared reference to mutable static in factory.rs (src/modes/factory.rs:245)
+- [ ] Fix unused `width` and `height` fields in TestBuilder (src/tests/test_builder.rs:14-16)
+- [ ] Clean up unused imports in terminal.rs tests (tests/terminal.rs:3-4)
+- [ ] Address unused mutable variable in terminal.rs (tests/terminal.rs:73)
+
 ### Phase 1: Capability System Improvements
-- [ ] Complete WithEmoji trait implementation for WindowWithTitle mode
-  - [ ] Add emoji container to WindowWithTitle
-  - [ ] Implement emoji rendering in display method
-  - [ ] Add emoji validation and normalization
-- [ ] Add unit tests for capability traits
-  - [ ] Test WithTitle functionality
-  - [ ] Test WithCustomSize functionality
-  - [ ] Test WithEmoji functionality
+- [x] Complete WithEmoji trait implementation for WindowWithTitle mode
+  - [x] Add emoji container to WindowWithTitle
+  - [x] Implement emoji rendering in display method
+  - [x] Add emoji validation and normalization
+- [x] Add unit tests for capability traits
+  - [x] Test WithTitle functionality
+  - [x] Test WithCustomSize functionality
+  - [x] Test WithEmoji functionality
 - [ ] Create composite capabilities
   - [ ] WithTitleAndEmoji trait for combined functionality
   - [ ] StandardWindow trait for common window operations

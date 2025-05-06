@@ -232,20 +232,20 @@ pub trait ThreadConfigExt: ThreadConfig {
     
     /// Check if this config supports the WithEmoji capability.
     fn supports_emoji(&self) -> bool {
-        // No implementations yet
-        false
+        // WindowWithTitle is currently the only implementation of WithEmoji
+        self.as_any().type_id() == TypeId::of::<WindowWithTitle>()
     }
     
     /// Try to get this config as a WithEmoji.
     fn as_emoji(&self) -> Option<&dyn WithEmoji> {
-        // No implementations yet
-        None
+        // WindowWithTitle is currently the only implementation of WithEmoji
+        self.as_any().downcast_ref::<WindowWithTitle>().map(|w| w as &dyn WithEmoji)
     }
     
     /// Try to get this config as a mutable WithEmoji.
     fn as_emoji_mut(&mut self) -> Option<&mut dyn WithEmoji> {
-        // No implementations yet
-        None
+        // WindowWithTitle is currently the only implementation of WithEmoji
+        self.as_any_mut().downcast_mut::<WindowWithTitle>().map(|w| w as &mut dyn WithEmoji)
     }
 }
 
@@ -549,6 +549,28 @@ impl Config {
     /// Get the maximum number of lines for this config if it supports custom size
     pub fn get_max_lines(&self) -> Option<usize> {
         self.config.as_custom_size().map(|s| s.get_max_lines())
+    }
+
+    /// Check if this config supports adding emojis
+    pub fn supports_emoji(&self) -> bool {
+        self.config.supports_emoji()
+    }
+    
+    /// Add an emoji to the display if the config supports emojis
+    pub fn add_emoji(&mut self, emoji: &str) -> Result<(), ModeCreationError> {
+        if let Some(with_emoji) = self.config.as_emoji_mut() {
+            with_emoji.add_emoji(emoji);
+            Ok(())
+        } else {
+            Err(ModeCreationError::Implementation(
+                format!("Config does not support emojis")
+            ))
+        }
+    }
+    
+    /// Get the emojis for this config if it supports emojis
+    pub fn get_emojis(&self) -> Option<Vec<String>> {
+        self.config.as_emoji().map(|e| e.get_emojis())
     }
 }
 
