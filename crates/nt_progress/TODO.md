@@ -155,6 +155,92 @@ The `nt_progress` library provides a flexible and thread-safe progress display f
 8. Enhance display features
 9. Update documentation
 
+## Detailed Refactoring Roadmap
+
+### Phase 1: Capability System Improvements
+- [ ] Complete WithEmoji trait implementation for WindowWithTitle mode
+  - [ ] Add emoji container to WindowWithTitle
+  - [ ] Implement emoji rendering in display method
+  - [ ] Add emoji validation and normalization
+- [ ] Add unit tests for capability traits
+  - [ ] Test WithTitle functionality
+  - [ ] Test WithCustomSize functionality
+  - [ ] Test WithEmoji functionality
+- [ ] Create composite capabilities
+  - [ ] WithTitleAndEmoji trait for combined functionality
+  - [ ] StandardWindow trait for common window operations
+- [ ] Add capability discovery API
+  - [ ] Create a capabilities() method returning HashSet of supported capabilities
+  - [ ] Add runtime capability checking
+
+### Phase 2: Terminal Module Refactoring
+- [ ] Create a dedicated terminal module
+  - [ ] Move terminal size detection to Terminal struct
+  - [ ] Implement terminal feature detection
+  - [ ] Add terminal style management
+- [ ] Implement cursor handling abstractions
+  - [ ] Create CursorPosition type
+  - [ ] Add movement operations
+  - [ ] Support relative and absolute positioning
+- [ ] Add terminal event system
+  - [ ] Implement resize event handling
+  - [ ] Add keyboard input handling (for interactive modes)
+  - [ ] Support terminal capability detection
+- [ ] Fix terminal integration tests
+  - [ ] Fix coordinate system in cursor positioning (x,y swapped in tests/terminal.rs:34)
+  - [ ] Fix text overwriting in basic terminal test (tests/terminal.rs:17)
+    - [ ] Investigate cursor movement before writing text
+    - [ ] Fix output buffer handling for moved cursor positions
+  - [ ] Fix cursor position tracking after write operations (tests/terminal.rs:68)
+    - [ ] Ensure cursor advances correctly after writing text
+    - [ ] Add proper cursor position calculation with ANSI sequences
+  - [ ] Add more robust TestEnv methods for validation
+    - [ ] Add screen buffer dumping for debugging
+    - [ ] Add string diff utility for test failures
+    - [ ] Implement expected vs actual comparison helper
+
+### Phase 3: Mode Factory Improvements
+- [ ] Replace static registry with dependency injection
+  - [ ] Create ModeFactory struct to replace static REGISTRY
+  - [ ] Add factory creation method to ProgressDisplay
+  - [ ] Implement factory cloning without static references
+- [ ] Improve mode creation error handling
+  - [ ] Add more detailed failure reasons
+  - [ ] Implement validation before creation attempts
+  - [ ] Add logging for creation failures
+- [ ] Standardize mode parameters
+  - [ ] Create ModeParameters type for consistent creation
+  - [ ] Add validation methods for parameters
+  - [ ] Support default parameter values
+
+### Phase 4: Thread Management Refactoring
+- [ ] Separate thread management from mode implementation
+  - [ ] Create ThreadManager struct for thread tracking
+  - [ ] Move thread ID generation to ThreadManager
+  - [ ] Implement thread resource cleanup
+- [ ] Implement thread context
+  - [ ] Add ThreadContext for storing thread-specific data
+  - [ ] Support context propagation between components
+  - [ ] Add context serialization for debugging
+- [ ] Add thread lifecycle management
+  - [ ] Support thread pausing/resuming
+  - [ ] Add thread completion notification
+  - [ ] Implement graceful thread termination
+
+### Phase 5: I/O Abstraction Layer
+- [ ] Create I/O abstraction for TaskHandle
+  - [ ] Implement trait-based writer interface
+  - [ ] Add buffer management
+  - [ ] Support async I/O operations
+- [ ] Add passthrough functionality to SingleLineBase
+  - [ ] Implement output tee functionality
+  - [ ] Support filtering of passed-through content
+  - [ ] Add optional formatting for passed-through text
+- [ ] Implement custom writer support
+  - [ ] Add pluggable writer system
+  - [ ] Support custom formatters
+  - [ ] Implement output redirection
+
 ## Development Guidelines
 
 - Avoid introducing new linter errors
