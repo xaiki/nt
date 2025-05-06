@@ -64,7 +64,7 @@ The `nt_progress` library provides a flexible and thread-safe progress display f
 ### Optimization Opportunities
 - [ ] Reduce duplication in string handling
 - [ ] Consider memory usage optimizations in window handling
-- [ ] Fix unused mutable variables in tests
+- [x] Fix unused mutable variables in tests
 - [ ] Implement message batching
 - [ ] Optimize buffer operations
 - [ ] Consider message compression for high-volume scenarios
