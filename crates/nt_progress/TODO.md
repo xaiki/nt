@@ -54,7 +54,7 @@ The `nt_progress` library provides a flexible and thread-safe progress display f
 
 ### Unimplemented Features
 - [x] Implement WindowWithTitle mode functionality (`set_title` method in ProgressDisplay)
-- [ ] Implement total jobs support (`set_total_jobs` method in ProgressDisplay)
+- [x] Implement total jobs support (`set_total_jobs` method in ProgressDisplay)
 - [ ] Add emoji support (`add_emoji` method in ProgressDisplay)
 - [ ] Implement direct writer functionality for TaskHandle (currently unused `writer` field)
 - [ ] Implement output passthrough functionality (currently unused `passthrough` field and `has_passthrough` method in SingleLineBase)
@@ -87,7 +87,7 @@ The `nt_progress` library provides a flexible and thread-safe progress display f
 - [ ] Add integration tests for mode switching
 - [ ] Improve tests for terminal size changes
 - [ ] Add stress tests for concurrent usage
-- [ ] Add tests for error handling and recovery
+- [x] Add tests for error handling and recovery
 
 ### Documentation Improvements
 - [ ] Add examples for typical use cases
@@ -96,15 +96,41 @@ The `nt_progress` library provides a flexible and thread-safe progress display f
 - [ ] Add examples for mode switching
 - [ ] Update documentation to reflect latest features
 
+### Code Duplication Reduction
+- [x] Create a `HasBaseConfig` trait with blanket implementations for `JobTracker`
+- [ ] Implement generic downcast methods for Config instead of type-specific ones
+- [ ] Create trait-based pattern for common ThreadConfig implementations
+- [ ] Refactor error context addition to reduce boilerplate
+- [ ] Standardize access patterns for mode-specific features
+- [ ] Implement a factory pattern with registry for mode creation
+- [ ] Extract common terminal size adjustment logic to a shared module
+- [ ] Create composable components for message formatting and rendering
+- [ ] Implement templating pattern for task progress reporting
+
+### Job Tracking Enhancements
+- [x] Update `Config::set_total_jobs` method to use the trait system instead of manual downcasting
+- [ ] Add percentage calculation and display for job progress
+- [ ] Implement progress bar visualization for job completion
+- [ ] Add support for nested/hierarchical job tracking
+- [ ] Implement pause/resume functionality for jobs
+- [ ] Add job priority and sorting capabilities
+- [ ] Create job dependencies system
+- [ ] Implement job failure handling and retry logic
+- [ ] Add estimated time remaining calculations
+- [ ] Support job cancellation
+- [ ] Implement job statistics and reporting
+- [ ] Add job persistence for long-running operations
+
 ## Implementation Priority
 
 1. Fix warnings and linter issues
 2. Implement remaining features
-3. Add better error handling
-4. Improve terminal handling
-5. Add optimization techniques
-6. Enhance display features
-7. Update documentation
+3. Reduce code duplication through refactoring patterns
+4. Add job tracking enhancements
+5. Improve terminal handling
+6. Add optimization techniques
+7. Enhance display features
+8. Update documentation
 
 ## Development Guidelines
 

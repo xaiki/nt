@@ -349,16 +349,28 @@ impl Config {
     /// # Parameters
     /// * `total` - The new total number of jobs
     pub fn set_total_jobs(&mut self, total: usize) {
-        // Try to downcast to each known implementation that implements JobTracker
-        if let Some(window) = self.config.as_any_mut().downcast_mut::<Window>() {
-            window.set_total_jobs(total);
-        } else if let Some(window_with_title) = self.config.as_any_mut().downcast_mut::<WindowWithTitle>() {
-            window_with_title.set_total_jobs(total);
-        } else if let Some(limited) = self.config.as_any_mut().downcast_mut::<Limited>() {
-            limited.set_total_jobs(total);
-        } else if let Some(capturing) = self.config.as_any_mut().downcast_mut::<Capturing>() {
-            capturing.set_total_jobs(total);
+        // Use HasBaseConfig trait which all our mode types implement
+        let config_any_mut = self.config.as_any_mut();
+        
+        // Try to use any type that implements HasBaseConfig
+        macro_rules! try_as_has_base_config {
+            ($type:ty) => {
+                if let Some(config) = config_any_mut.downcast_mut::<$type>() {
+                    config.set_total_jobs(total);
+                    return;
+                }
+            };
         }
+        
+        // Try each known implementation
+        try_as_has_base_config!(Window);
+        try_as_has_base_config!(WindowWithTitle);
+        try_as_has_base_config!(Limited);
+        try_as_has_base_config!(Capturing);
+        
+        // If we get here, we couldn't update the total_jobs
+        // Future implementations should add their types to the list above
+        eprintln!("Warning: Could not update total_jobs. Unknown mode type that doesn't implement JobTracker.");
     }
 }
 
