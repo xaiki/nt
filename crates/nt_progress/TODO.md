@@ -120,6 +120,12 @@ The `nt_progress` library provides a flexible and thread-safe progress display f
 - [ ] Implement a proper dependency injection system for mode creation instead of static registry
 - [ ] Separate configuration from implementations to follow the Dependency Inversion Principle
 - [ ] Replace static, mutable state (like REGISTRY) with a more testable and maintainable design
+- [ ] Fix layering violations in modes/mod.rs:
+  - [ ] Replace direct type checking in ThreadConfigExt with capability registration system
+  - [ ] Implement a capability provider pattern instead of hard-coded type checks
+  - [ ] Create a dynamic dispatch system for capability resolution
+  - [ ] Remove explicit dependencies on concrete types in trait extension methods
+  - [ ] Use trait objects instead of specific implementation types in downcast operations
 
 ### Job Tracking Enhancements
 - [x] Update `Config::set_total_jobs` method to use the trait system instead of manual downcasting
@@ -211,6 +217,7 @@ The `nt_progress` library provides a flexible and thread-safe progress display f
   - [ ] Create ModeFactory struct to replace static REGISTRY
   - [ ] Add factory creation method to ProgressDisplay
   - [ ] Implement factory cloning without static references
+  - [ ] Replace direct type checking with capability-based registration
 - [ ] Improve mode creation error handling
   - [ ] Add more detailed failure reasons
   - [ ] Implement validation before creation attempts
@@ -247,6 +254,208 @@ The `nt_progress` library provides a flexible and thread-safe progress display f
   - [ ] Add pluggable writer system
   - [ ] Support custom formatters
   - [ ] Implement output redirection
+
+### Phase 6: Layering Violation Fixes
+- [ ] Implement capability registration system
+  - [ ] Create a CapabilityRegistry to track which types implement which capabilities
+  - [ ] Add runtime capability registration during type creation
+  - [ ] Replace direct type checking with registry lookups
+- [ ] Refactor ThreadConfigExt trait
+  - [ ] Remove direct type references (Window, WindowWithTitle)
+  - [ ] Implement capability resolution through type-erased registry
+  - [ ] Add dynamic capability discovery without hardcoded types
+- [ ] Fix Config::set_total_jobs implementation
+  - [ ] Replace explicit type list with dynamic capability lookup
+  - [ ] Use HasBaseConfig trait directly without type checking
+  - [ ] Add a generic mechanism for capability-based dispatch
+- [ ] Implement proper layering between traits and implementations
+  - [ ] Move type-specific code out of shared traits
+  - [ ] Create proper abstraction boundaries between layers
+  - [ ] Ensure high-level modules don't depend on low-level implementations
+
+### Specific Layering Issues to Address
+
+#### ThreadConfigExt Implementation
+
+Current problematic code in ThreadConfigExt:
+```rust
+fn supports_title(&self) -> bool {
+    self.as_any().type_id() == TypeId::of::<WindowWithTitle>()
+}
+
+fn as_title(&self) -> Option<&dyn WithTitle> {
+    // WindowWithTitle is currently the only implementation of WithTitle
+    self.as_any().downcast_ref::<WindowWithTitle>().map(|w| w as &dyn WithTitle)
+}
+```
+
+Proposed solution:
+```rust
+fn supports_title(&self) -> bool {
+    // Check if this type is registered as supporting WithTitle capability
+    CAPABILITY_REGISTRY.has_capability::<dyn WithTitle>(self.type_id())
+}
+
+fn as_title(&self) -> Option<&dyn WithTitle> {
+    // Get as trait object without knowing concrete type
+    self.as_any().as_capability::<dyn WithTitle>()
+}
+```
+
+#### Config::set_total_jobs Implementation
+
+Current problematic code:
+```rust
+// Try each known implementation
+try_as_has_base_config!(Window);
+try_as_has_base_config!(WindowWithTitle);
+try_as_has_base_config!(Limited);
+try_as_has_base_config!(Capturing);
+```
+
+Proposed solution:
+```rust
+// Direct dynamic dispatch without knowing concrete types
+if let Some(has_base) = self.config.as_any_mut().as_capability::<dyn HasBaseConfig>() {
+    has_base.set_total_jobs(total);
+}
+```
+
+#### Capability Checking in Factory Module
+
+Current problematic pattern:
+```rust
+// Each method must know about all concrete types
+match mode {
+    ThreadMode::Limited => self.create("limited", total_jobs, &[]),
+    ThreadMode::Capturing => self.create("capturing", total_jobs, &[]),
+    ThreadMode::Window(max_lines) => self.create("window", total_jobs, &[max_lines]),
+    ThreadMode::WindowWithTitle(max_lines) => self.create("window_with_title", total_jobs, &[max_lines]),
+}
+```
+
+Proposed solution:
+```rust
+// Mode registration that's extensible
+fn register_mode<T: ThreadConfig + 'static>(&mut self, name: &str, creator: Box<dyn ModeCreator<T>>) {
+    self.creators.insert(name.to_string(), creator);
+}
+
+// Mode lookup without explicit dependencies on specific types
+fn create_from_mode_type(&self, mode_type: &str, params: &[usize]) -> Result<Box<dyn ThreadConfig>, ModeCreationError> {
+    self.creators.get(mode_type)
+        .ok_or_else(|| ModeCreationError::UnknownMode(mode_type.to_string()))
+        .and_then(|creator| creator.create(params))
+}
+```
+
+#### Static Registry Issue
+
+Current problematic code:
+```rust
+// Unsafe static mutable state with singleton pattern
+static mut REGISTRY: Option<Arc<Mutex<ModeRegistry>>> = None;
+static REGISTRY_INIT: Once = Once::new();
+
+pub fn get_registry() -> Arc<Mutex<ModeRegistry>> {
+    unsafe {
+        REGISTRY_INIT.call_once(|| {
+            // Initialize registry...
+            REGISTRY = Some(Arc::new(Mutex::new(registry)));
+        });
+        
+        REGISTRY.clone().unwrap()
+    }
+}
+```
+
+Proposed solution:
+```rust
+// Factory that's passed explicitly to components that need it
+struct ModeFactory {
+    registry: Arc<RwLock<ModeRegistry>>,
+}
+
+impl ModeFactory {
+    fn new() -> Self {
+        let mut registry = ModeRegistry::new();
+        // Register standard modes...
+        Self { registry: Arc::new(RwLock::new(registry)) }
+    }
+    
+    fn create_config(&self, mode: ThreadMode, total_jobs: usize) -> Result<Box<dyn ThreadConfig>, ModeCreationError> {
+        // Create config without static state
+    }
+}
+
+// Pass factory explicitly to ProgressDisplay
+impl ProgressDisplay {
+    pub fn new_with_factory(factory: Arc<ModeFactory>) -> Self {
+        // Use provided factory
+    }
+}
+```
+
+### Comprehensive Architectural Solution
+
+To properly address the layering violations, a more holistic architectural refactoring is needed:
+
+1. **Create a Proper Capability System**:
+   - Define a CapabilityId type that uniquely identifies capabilities (could use TypeId)
+   - Implement a CapabilityProvider trait that any type can implement to provide capabilities
+   - Create a CapabilityRegistry that tracks which types implement which capabilities
+   - Implement registration methods for types to declare their capabilities
+
+2. **Implement Type-Erased Capability Resolution**:
+   ```rust
+   trait AnyExt {
+       // Get a capability from this object without knowing its concrete type
+       fn as_capability<C: ?Sized + 'static>(&self) -> Option<&C>;
+       fn as_capability_mut<C: ?Sized + 'static>(&mut self) -> Option<&mut C>;
+   }
+   
+   impl<T: 'static> AnyExt for T {
+       fn as_capability<C: ?Sized + 'static>(&self) -> Option<&C> {
+           // First check if T directly implements C
+           if let Some(cap) = (self as &dyn Any).downcast_ref::<C>() {
+               return Some(cap);
+           }
+           
+           // Then check if T provides C through CapabilityProvider
+           if let Some(provider) = (self as &dyn Any).downcast_ref::<dyn CapabilityProvider>() {
+               return provider.get_capability::<C>();
+           }
+           
+           None
+       }
+       
+       // Similar implementation for as_capability_mut
+   }
+   ```
+
+3. **Replace Static Registry with Dependency Injection**:
+   - Create a proper ModeFactory that is instantiated and passed to components
+   - Implement builder pattern for ProgressDisplay to configure with different factories
+   - Remove all static state from the factory implementation
+   - Allow for factory customization and extension
+
+4. **Refactor ThreadConfig and ThreadConfigExt**:
+   - Remove all direct references to concrete types
+   - Replace type checking with capability checking
+   - Make trait extensions use the type-erased capability system
+   - Ensure no trait method needs to know about concrete implementations
+
+5. **Implement Proper Plugin System for Modes**:
+   - Allow registering new modes without modifying existing code
+   - Modes register their capabilities during registration
+   - Factory creates modes based on capabilities, not types
+   - Enable composition of capabilities without hard dependencies
+
+This approach would provide:
+- Proper separation of concerns between capability definition and implementation
+- Elimination of layering violations where high-level modules depend on low-level ones
+- A more extensible and maintainable architecture
+- Better testability by removing static state and dependencies on concrete types
 
 ## Development Guidelines
 
