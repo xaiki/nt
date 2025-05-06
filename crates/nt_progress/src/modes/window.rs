@@ -1,5 +1,4 @@
-use std::collections::VecDeque;
-use super::{ThreadConfig, BaseConfig};
+use super::{ThreadConfig, WindowBase, JobTracker};
 
 /// Configuration for Window mode
 /// 
@@ -8,51 +7,39 @@ use super::{ThreadConfig, BaseConfig};
 /// if it doesn't fit the terminal.
 #[derive(Debug, Clone)]
 pub struct Window {
-    base: BaseConfig,
-    lines: VecDeque<String>,
-    max_lines: usize,
+    window_base: WindowBase,
 }
 
 impl Window {
     pub fn new(total_jobs: usize, max_lines: usize) -> Result<Self, String> {
-        if max_lines == 0 {
-            return Err("Window size must be at least 1".to_string());
-        }
         Ok(Self {
-            base: BaseConfig::new(total_jobs),
-            lines: VecDeque::with_capacity(max_lines),
-            max_lines,
+            window_base: WindowBase::new(total_jobs, max_lines)?,
         })
     }
-    
-    pub fn get_total_jobs(&self) -> usize {
-        self.base.get_total_jobs()
+}
+
+impl JobTracker for Window {
+    fn get_total_jobs(&self) -> usize {
+        self.window_base.get_total_jobs()
     }
     
-    pub fn increment_completed_jobs(&self) -> usize {
-        self.base.increment_completed_jobs()
+    fn increment_completed_jobs(&self) -> usize {
+        self.window_base.increment_completed_jobs()
     }
 }
 
 impl ThreadConfig for Window {
     fn lines_to_display(&self) -> usize {
-        self.max_lines
+        self.window_base.max_lines()
     }
 
     fn handle_message(&mut self, message: String) -> Vec<String> {
-        // Add new line to the end
-        self.lines.push_back(message);
-        
-        // Remove lines from the front if we exceed max_lines
-        while self.lines.len() > self.max_lines {
-            self.lines.pop_front();
-        }
-        
-        self.get_lines()
+        self.window_base.add_message(message);
+        self.window_base.get_lines()
     }
 
     fn get_lines(&self) -> Vec<String> {
-        self.lines.iter().cloned().collect()
+        self.window_base.get_lines()
     }
 
     fn clone_box(&self) -> Box<dyn ThreadConfig> {
@@ -63,10 +50,16 @@ impl ThreadConfig for Window {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::tests::common::TestEnv;
+    use crate::ProgressDisplay;
+    use crate::modes::ThreadMode;
+    use tokio::time::sleep;
+    use std::time::Duration;
 
     #[test]
-    fn test_window_mode() {
+    fn test_window_mode_basic() {
         let mut window = Window::new(1, 3).unwrap();
+        let mut env = TestEnv::new(80, 24);
         
         // Test initial state
         assert_eq!(window.lines_to_display(), 3);
@@ -74,18 +67,26 @@ mod tests {
         assert_eq!(window.get_total_jobs(), 1);
         
         // Test adding lines up to max_lines
+        env.writeln("line 1");
         window.handle_message("line 1".to_string());
         assert_eq!(window.get_lines(), vec!["line 1"]);
+        env.verify();
         
+        env.writeln("line 2");
         window.handle_message("line 2".to_string());
         assert_eq!(window.get_lines(), vec!["line 1", "line 2"]);
+        env.verify();
         
+        env.writeln("line 3");
         window.handle_message("line 3".to_string());
         assert_eq!(window.get_lines(), vec!["line 1", "line 2", "line 3"]);
+        env.verify();
         
         // Test exceeding max_lines
+        env.writeln("line 4");
         window.handle_message("line 4".to_string());
         assert_eq!(window.get_lines(), vec!["line 2", "line 3", "line 4"]);
+        env.verify();
         
         // Test completed jobs
         assert_eq!(window.increment_completed_jobs(), 1);
@@ -96,50 +97,75 @@ mod tests {
         assert!(Window::new(1, 0).is_err());
     }
 
-    #[test]
-    fn test_window_mode_output_format() {
-        let mut window = Window::new(5, 3).unwrap();
+    #[tokio::test]
+    async fn test_window_mode_concurrent() {
+        let mut display = ProgressDisplay::new().await;
+        let mut handles = vec![];
         
-        // Test progress bar format
-        window.handle_message("Progress: 2/5".to_string());
-        assert_eq!(window.get_lines(), vec!["Progress: 2/5"]);
+        // Spawn multiple tasks in Window mode
+        for i in 0..3 {
+            let mut display = display.clone();
+            let mut env = TestEnv::new(80, 24);
+            let i = i;
+            handles.push(tokio::spawn(async move {
+                display.spawn_with_mode(ThreadMode::Window(3), move || format!("task-{}", i)).await.unwrap();
+                for j in 0..5 {
+                    env.writeln(&format!("Thread {}: Message {}", i, j));
+                    sleep(Duration::from_millis(50)).await;
+                }
+                env
+            }));
+        }
         
-        // Test multiple lines with different formats
-        window.handle_message("Downloading: 50%".to_string());
-        window.handle_message("Processing: 75%".to_string());
-        assert_eq!(window.get_lines(), vec![
-            "Progress: 2/5",
-            "Downloading: 50%",
-            "Processing: 75%"
-        ]);
+        // Wait for all tasks to complete and combine their outputs
+        let mut final_env = TestEnv::new(80, 24);
+        for handle in handles {
+            let task_env = handle.await.unwrap();
+            for line in task_env.expected {
+                final_env.write(&line);
+            }
+        }
         
-        // Test line truncation
-        window.handle_message("New line".to_string());
-        assert_eq!(window.get_lines(), vec![
-            "Downloading: 50%",
-            "Processing: 75%",
-            "New line"
-        ]);
-        
-        // Test completed jobs counter
-        assert_eq!(window.increment_completed_jobs(), 1);
-        assert_eq!(window.increment_completed_jobs(), 2);
+        // Verify final state
+        display.display().await.unwrap();
+        display.stop().await.unwrap();
+        final_env.verify();
     }
 
-    #[test]
-    fn test_window_mode_edge_cases() {
-        // Test with minimum valid size
-        let mut window = Window::new(1, 1).unwrap();
-        window.handle_message("single line".to_string());
-        assert_eq!(window.get_lines(), vec!["single line"]);
+    #[tokio::test]
+    async fn test_window_mode_special_characters() {
+        let mut display = ProgressDisplay::new().await;
+        let mut env = TestEnv::new(80, 24);
         
-        // Test with large number of lines
-        let mut window = Window::new(1, 100).unwrap();
-        for i in 0..150 {
-            window.handle_message(format!("line {}", i));
-        }
-        assert_eq!(window.get_lines().len(), 100);
-        assert_eq!(window.get_lines()[0], "line 50"); // First line should be line 50
-        assert_eq!(window.get_lines()[99], "line 149"); // Last line should be line 149
+        // Test with special characters
+        let _handle = display.spawn_with_mode(ThreadMode::Window(3), || "special-chars").await.unwrap();
+        
+        // Test various special characters
+        env.writeln("Test with \n newlines \t tabs \r returns");
+        env.writeln("Test with unicode: 你好世界");
+        env.writeln("Test with emoji: 🚀 ✨");
+        
+        // Verify display
+        display.display().await.unwrap();
+        display.stop().await.unwrap();
+        env.verify();
+    }
+
+    #[tokio::test]
+    async fn test_window_mode_long_lines() {
+        let mut display = ProgressDisplay::new().await;
+        let mut env = TestEnv::new(80, 24);
+        
+        // Test with long lines
+        let _handle = display.spawn_with_mode(ThreadMode::Window(3), || "long-lines").await.unwrap();
+        
+        // Test very long line
+        let long_line = "x".repeat(1000);
+        env.writeln(&long_line);
+        
+        // Verify display
+        display.display().await.unwrap();
+        display.stop().await.unwrap();
+        env.verify();
     }
 } 

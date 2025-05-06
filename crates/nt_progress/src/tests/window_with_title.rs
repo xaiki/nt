@@ -65,7 +65,7 @@ async fn test_window_with_title_emoji() {
 
 #[tokio::test]
 async fn test_window_with_title_size() {
-    for size in [1, 3, 5, 10] {
+    for size in [2, 3, 5, 10] {
         let mut display = ProgressDisplay::new_with_mode(ThreadMode::WindowWithTitle(size)).await;
         let mut env = TestEnv::new(80, 24);
         
@@ -120,9 +120,9 @@ async fn test_window_with_title_edge_cases() {
     let mut display = ProgressDisplay::new().await;
     let mut env = TestEnv::new(80, 24);
     
-    // Test with empty window
-    let _handle = display.spawn_with_mode(ThreadMode::WindowWithTitle(0), || "empty-window").await.unwrap();
-    env.writeln("Empty window test");
+    // Test with minimum size window (2 lines)
+    let _handle = display.spawn_with_mode(ThreadMode::WindowWithTitle(2), || "min-window").await.unwrap();
+    env.writeln("Minimum window test");
     
     display.display().await.unwrap();
     display.stop().await.unwrap();
@@ -140,6 +140,12 @@ async fn test_window_with_title_edge_cases() {
     display.display().await.unwrap();
     display.stop().await.unwrap();
     env.verify();
+    
+    // Test trying to create a window with less than 2 lines (should fail)
+    assert!(ProgressDisplay::new_with_mode(ThreadMode::WindowWithTitle(1)).await
+        .spawn_with_mode(ThreadMode::WindowWithTitle(1), || "too-small")
+        .await
+        .is_err());
 }
 
 #[tokio::test]

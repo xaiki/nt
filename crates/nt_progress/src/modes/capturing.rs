@@ -1,4 +1,4 @@
-use super::{ThreadConfig, BaseConfig};
+use super::{ThreadConfig, SingleLineBase, JobTracker};
 
 /// Configuration for Capturing mode
 /// 
@@ -7,24 +7,24 @@ use super::{ThreadConfig, BaseConfig};
 /// Unlike Limited mode, it does not send output to stdout/stderr.
 #[derive(Debug, Clone)]
 pub struct Capturing {
-    pub base: BaseConfig,
-    current_line: String,
+    single_line_base: SingleLineBase,
 }
 
 impl Capturing {
     pub fn new(total_jobs: usize) -> Self {
         Self {
-            base: BaseConfig::new(total_jobs),
-            current_line: String::new(),
+            single_line_base: SingleLineBase::new(total_jobs, false), // false = no passthrough
         }
     }
-    
-    pub fn get_total_jobs(&self) -> usize {
-        self.base.total_jobs
+}
+
+impl JobTracker for Capturing {
+    fn get_total_jobs(&self) -> usize {
+        self.single_line_base.get_total_jobs()
     }
     
-    pub fn increment_completed_jobs(&self) -> usize {
-        self.base.completed_jobs.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1
+    fn increment_completed_jobs(&self) -> usize {
+        self.single_line_base.increment_completed_jobs()
     }
 }
 
@@ -35,12 +35,12 @@ impl ThreadConfig for Capturing {
 
     fn handle_message(&mut self, message: String) -> Vec<String> {
         // In Capturing mode, we just replace the current line, no stdout
-        self.current_line = message;
+        self.single_line_base.update_line(message);
         self.get_lines()
     }
 
     fn get_lines(&self) -> Vec<String> {
-        vec![self.current_line.clone()]
+        vec![self.single_line_base.get_line()]
     }
 
     fn clone_box(&self) -> Box<dyn ThreadConfig> {

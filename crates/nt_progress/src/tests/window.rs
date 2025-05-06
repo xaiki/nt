@@ -89,9 +89,9 @@ async fn test_window_edge_cases() {
     let mut display = ProgressDisplay::new().await;
     let mut env = TestEnv::new(80, 24);
     
-    // Test with empty window
-    let _handle = display.spawn_with_mode(ThreadMode::Window(0), || "empty-window").await.unwrap();
-    env.writeln("Empty window test");
+    // Test with minimal window (size 1 instead of 0)
+    let _handle = display.spawn_with_mode(ThreadMode::Window(1), || "minimal-window").await.unwrap();
+    env.writeln("Minimal window test");
     
     display.display().await.unwrap();
     display.stop().await.unwrap();

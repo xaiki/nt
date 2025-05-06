@@ -20,25 +20,18 @@ impl TestEnv {
         }
     }
 
-    /// Create a new test environment with the same dimensions as another
-    pub fn new_like(other: &TestEnv) -> Self {
-        Self::new(other.width, other.height)
-    }
-
-    /// Merge another test environment's output into this one
-    pub fn merge(&mut self, other: TestEnv) {
-        self.expected.extend(other.expected);
-    }
-
     /// Get the current terminal contents
     pub fn contents(&self) -> String {
         let mut result = String::new();
-        
-        // Just return the expected output directly for test assertions
-        for line in &self.expected {
-            result.push_str(line);
+        for row in 0..self.height {
+            let lines = self.parser.screen().rows(row, 1);
+            for line in lines {
+                if !line.trim().is_empty() {
+                    result.push_str(&line);
+                    result.push('\n');
+                }
+            }
         }
-        
         result.trim_end().to_string()
     }
 
@@ -62,8 +55,8 @@ impl TestEnv {
 
     /// Write a line to the terminal
     pub fn writeln(&mut self, text: &str) -> &mut Self {
-        self.expected.push(format!("{}\n", text));
-        self.parser.process(format!("{}\n", text).as_bytes());
+        self.write(text);
+        self.write("\n");
         self
     }
 
@@ -107,11 +100,7 @@ impl TestEnv {
     pub fn verify(&self) {
         let actual = self.contents();
         let expected = self.expected.join("");
-        
-        let actual_trimmed = actual.trim_end();
-        let expected_trimmed = expected.trim_end();
-        
-        assert_eq!(actual_trimmed, expected_trimmed, "\nExpected:\n{}\n\nActual:\n{}\n", expected, actual);
+        assert_eq!(actual, expected, "\nExpected:\n{}\n\nActual:\n{}\n", expected, actual);
     }
 }
 
