@@ -6,37 +6,23 @@ The `nt_progress` library provides a flexible and thread-safe progress display f
 
 ## Development Roadmap
 
-### Phase 0: Immediate Fixes (Completed) ✓
-- [x] Fix failing terminal integration tests
-  - [x] Fix coordinate system in cursor positioning (x,y swapped in tests/terminal.rs:34)
-  - [x] Fix text overwriting in basic terminal test (tests/terminal.rs:17)
-  - [x] Fix cursor position tracking after write operations (tests/terminal.rs:68)
-
-### Phase 1: Capability System Improvements (Completed) ✓
-- [x] Complete WithEmoji trait implementation for WindowWithTitle mode
-- [x] Add unit tests for capability traits
-- [x] Create composite capabilities
-  - [x] WithTitleAndEmoji trait for combined functionality
-  - [x] StandardWindow trait for common window operations
-- [x] Add capability discovery API with runtime capability checking
-
 ### Phase 2: Terminal Module Refactoring
-- [ ] Create a dedicated terminal module
-  - [ ] Move terminal size detection to Terminal struct
-  - [ ] Implement terminal feature detection
-  - [ ] Add terminal style management
-- [ ] Implement cursor handling abstractions
-  - [ ] Create CursorPosition type
-  - [ ] Add movement operations
-  - [ ] Support relative and absolute positioning
+- [x] Create a dedicated terminal module
+  - [x] Move terminal size detection to Terminal struct
+  - [x] Implement terminal feature detection
+  - [x] Add terminal style management
+- [x] Implement cursor handling abstractions
+  - [x] Create CursorPosition type
+  - [x] Add movement operations
+  - [x] Support relative and absolute positioning
 - [ ] Add terminal event system
   - [ ] Implement resize event handling
   - [ ] Add keyboard input handling for interactive modes
   - [ ] Support terminal capability detection
-- [ ] Improve TestEnv for terminal testing
-  - [ ] Add screen buffer dumping for debugging
-  - [ ] Add string diff utility for test failures
-  - [ ] Implement expected vs actual comparison helper
+- [x] Improve TestEnv for terminal testing
+  - [x] Add screen buffer dumping for debugging
+  - [x] Add string diff utility for test failures
+  - [x] Implement expected vs actual comparison helper
 
 ### Phase 3: Mode Factory and Dependency Injection
 - [ ] Replace static registry with dependency injection
@@ -223,70 +209,6 @@ try_as_has_base_config!(WindowWithTitle);
 try_as_has_base_config!(Limited);
 try_as_has_base_config!(Capturing);
 ```
-
-## Completed Tasks Archive
-
-### Base Structure Refactoring
-- [x] Create a `WindowBase` struct that serves as a base class for Window and WindowWithTitle
-- [x] Refactor `Window` to use WindowBase for shared functionality
-- [x] Refactor `WindowWithTitle` to use WindowBase for shared functionality
-- [x] Create a `SingleLineBase` struct that serves as a base for Limited and Capturing modes
-- [x] Refactor Limited mode to use SingleLineBase
-- [x] Refactor Capturing mode to use SingleLineBase
-
-### Core Architecture
-- [x] Create a `JobTracker` trait to handle job counting consistency across implementations
-- [x] Enhance BaseConfig for better reuse across different modes
-- [x] Standardize method signatures
-- [x] Create a TestBuilder utility to simplify test creation
-- [x] Add standard testing utilities for common mode assertions
-- [x] Standardize Thread Configuration implementation patterns
-- [x] Create consistent method documentation
-
-### Thread Configuration Interface
-- [x] Define minimal trait interface for ThreadConfig
-- [x] Create wrapper struct `Config` for mode implementations
-- [x] Implement Clone via `clone_box`
-- [x] Add delegation methods to underlying implementation
-
-### Mode Implementations
-- [x] Implement basic LimitedConfig with ThreadConfig trait
-- [x] Implement basic CapturingConfig with ThreadConfig trait
-- [x] Implement basic WindowConfig with ThreadConfig trait
-- [x] Implement basic WindowWithTitleConfig with ThreadConfig trait
-
-### Documentation
-- [x] Add documentation for existing modes
-- [x] Document common patterns for implementing new modes
-- [x] Create a README.md in the modes directory explaining the system design
-- [x] Document standard patterns for implementing new modes
-- [x] Provide example code for custom mode implementation
-- [x] Document feature sets for each mode
-- [x] Provide usage examples for each mode
-
-### Error Handling and Robustness
-- [x] Implement a better error handling mechanism for mode creation
-- [x] Add detailed error types
-- [x] Implement error recovery strategies
-- [x] Add context-aware logging for debugging
-
-### Features
-- [x] Implement WindowWithTitle mode functionality (`set_title` method in ProgressDisplay)
-- [x] Implement total jobs support (`set_total_jobs` method in ProgressDisplay)
-- [x] Add emoji support (`add_emoji` method in ProgressDisplay)
-
-### Code Improvements
-- [x] Create a `HasBaseConfig` trait with blanket implementations for `JobTracker`
-- [x] Implement generic downcast methods for Config instead of type-specific ones
-- [x] Refactor error context addition to reduce boilerplate
-- [x] Standardize access patterns for mode-specific features through capability traits
-- [x] Implement a factory pattern with registry for mode creation
-- [x] Fix factory-mode layering violation by moving fallback logic to mode creators
-- [x] Create composable components for message formatting and rendering
-- [x] Implement templating pattern for task progress reporting
-- [x] Fix unused mutable variables in tests
-- [x] Add tests for error handling and recovery
-- [x] Update `Config::set_total_jobs` method to use the trait system instead of manual downcasting
 
 ## Development Guidelines
 

@@ -20,9 +20,9 @@ use std::cell::RefCell;
 use crate::errors::{ContextExt, ErrorContext, ProgressError};
 
 pub mod modes;
-pub mod test_utils;
 pub mod errors;
 pub mod formatter;
+pub mod terminal;
 #[cfg(test)]
 pub mod tests;
 
@@ -30,6 +30,9 @@ pub use modes::{ThreadMode, ThreadConfig, Config, JobTracker, HasBaseConfig};
 pub use modes::{ModeRegistry, ModeCreator, get_registry, create_thread_config};
 pub use errors::ModeCreationError;
 pub use formatter::{ProgressTemplate, TemplateContext, TemplateVar, TemplatePreset};
+
+// Import the Terminal module components we need
+use crate::terminal::Terminal;
 
 thread_local! {
     static CURRENT_THREAD_ID: AtomicUsize = AtomicUsize::new(0);
@@ -47,7 +50,7 @@ pub struct ThreadMessage {
 pub struct ProgressDisplay {
     outputs: Arc<Mutex<HashMap<usize, Vec<String>>>>,
     spinner_index: Arc<AtomicUsize>,
-    terminal_size: Arc<Mutex<(u16, u16)>>,
+    pub terminal: Arc<Terminal>,
     processing_task: Arc<Mutex<Option<JoinHandle<()>>>>,
     thread_handles: Arc<Mutex<HashMap<usize, JoinHandle<()>>>>,
     next_thread_id: Arc<AtomicUsize>,
@@ -63,7 +66,7 @@ impl Debug for ProgressDisplay {
         f.debug_struct("ProgressDisplay")
             .field("outputs", &self.outputs)
             .field("spinner_index", &self.spinner_index)
-            .field("terminal_size", &self.terminal_size)
+            .field("terminal", &"Terminal")
             .field("processing_task", &self.processing_task)
             .field("thread_handles", &self.thread_handles)
             .field("next_thread_id", &self.next_thread_id)
@@ -86,10 +89,14 @@ impl ProgressDisplay {
 
     pub async fn new_with_mode_and_writer<W: Write + Send + 'static>(mode: ThreadMode, writer: W) -> Self {
         let (message_tx, message_rx) = mpsc::channel(100);
+        
+        // Create a new Terminal instance
+        let terminal = Arc::new(Terminal::new());
+        
         let display = Self {
             outputs: Arc::new(Mutex::new(HashMap::new())),
             spinner_index: Arc::new(AtomicUsize::new(0)),
-            terminal_size: Arc::new(Mutex::new((80, 24))),
+            terminal,
             processing_task: Arc::new(Mutex::new(None)),
             thread_handles: Arc::new(Mutex::new(HashMap::new())),
             next_thread_id: Arc::new(AtomicUsize::new(0)),
@@ -100,10 +107,10 @@ impl ProgressDisplay {
             writer: Arc::new(Mutex::new(Box::new(writer))),
         };
 
-        // Start the display thread
+        // Start the display thread with a reference to the terminal
         let processing_task = tokio::spawn(Self::start_display_thread(
             Arc::clone(&display.outputs),
-            Arc::clone(&display.terminal_size),
+            Arc::clone(&display.terminal),
             Arc::clone(&display.spinner_index),
             Arc::clone(&display.message_rx),
             Arc::clone(&display.running),
@@ -169,7 +176,7 @@ impl ProgressDisplay {
     pub async fn display(&self) -> std::io::Result<()> {
         Self::render_display(
             &self.outputs,
-            &self.terminal_size,
+            &self.terminal,
             &self.spinner_index,
             &self.writer,
         ).await
@@ -344,13 +351,18 @@ impl ProgressDisplay {
 
     async fn start_display_thread(
         outputs: Arc<Mutex<HashMap<usize, Vec<String>>>>,
-        terminal_size: Arc<Mutex<(u16, u16)>>,
+        terminal: Arc<Terminal>,
         spinner_index: Arc<AtomicUsize>,
         message_rx: Arc<Mutex<mpsc::Receiver<ThreadMessage>>>,
         running: Arc<AtomicBool>,
         _mode: ThreadMode,
         writer: Arc<Mutex<Box<dyn Write + Send + 'static>>>,
     ) {
+        // Detect the terminal size at startup
+        if let Err(e) = terminal.detect_size().await {
+            eprintln!("Warning: Failed to detect terminal size, using default: {}", e);
+        }
+        
         while running.load(Ordering::SeqCst) {
             // Process any pending messages
             let mut message_rx = message_rx.lock().await;
@@ -364,7 +376,7 @@ impl ProgressDisplay {
             // Update display
             let result = Self::render_display(
                 &outputs,
-                &terminal_size,
+                &terminal,
                 &spinner_index,
                 &writer,
             ).await;
@@ -381,18 +393,19 @@ impl ProgressDisplay {
     // Private method for rendering the display
     async fn render_display(
         outputs: &Arc<Mutex<HashMap<usize, Vec<String>>>>,
-        terminal_size: &Arc<Mutex<(u16, u16)>>,
-        spinner_index: &Arc<AtomicUsize>,
+        terminal: &Arc<Terminal>,
+        _spinner_index: &Arc<AtomicUsize>,
         writer: &Arc<Mutex<Box<dyn Write + Send + 'static>>>,
     ) -> std::io::Result<()> {
-        // Gather all data under their respective locks first
+        // Get all thread outputs and prepare for rendering
         let (thread_ids, lines_by_thread, line_count, terminal_height) = {
             let outputs_guard = outputs.lock().await;
             if outputs_guard.is_empty() {
                 return Ok(());
             }
             
-            let (_width, height) = *terminal_size.lock().await;
+            // Use terminal to get the height
+            let (_width, height) = terminal.size().await;
             
             // Get all thread IDs and sort them
             let mut thread_ids: Vec<usize> = outputs_guard.keys().copied().collect();
@@ -417,56 +430,68 @@ impl ProgressDisplay {
             (thread_ids, lines_by_thread, total_lines, height)
         };
         
-        if line_count == 0 {
-            return Ok(());
-        }
-
-        // Adjust line count if needed based on terminal height
+        // Get a clone of the writer to avoid holding a lock for too long
+        let mut writer_guard = writer.lock().await;
+        
+        // Clear the screen and format output
         let mut adjusted_lines_by_thread = lines_by_thread.clone();
+        
+        // Adjust line count if needed based on terminal height
         if line_count > terminal_height as usize && !adjusted_lines_by_thread.is_empty() {
             let available_lines = terminal_height as usize;
-            let lines_per_thread = available_lines / adjusted_lines_by_thread.len();
+            let mut used_lines = 0;
             
-            // Adjust each thread's window size
-            for (_, lines) in adjusted_lines_by_thread.iter_mut() {
-                if lines.len() > lines_per_thread {
-                    lines.drain(0..lines.len() - lines_per_thread);
+            // Allocate at least one line per thread
+            for thread_id in thread_ids.iter() {
+                if let Some(lines) = adjusted_lines_by_thread.get_mut(thread_id) {
+                    if !lines.is_empty() {
+                        lines.truncate(1);
+                        used_lines += 1;
+                    }
+                    
+                    if used_lines >= available_lines {
+                        break;
+                    }
+                }
+            }
+            
+            // Allocate remaining lines proportionally
+            if used_lines < available_lines {
+                let remaining_lines = available_lines - used_lines;
+                let lines_per_thread = remaining_lines / thread_ids.len();
+                
+                if lines_per_thread > 0 {
+                    for thread_id in thread_ids.iter() {
+                        if let Some(original_lines) = lines_by_thread.get(thread_id) {
+                            if let Some(adjusted_lines) = adjusted_lines_by_thread.get_mut(thread_id) {
+                                let original_count = original_lines.len();
+                                
+                                if original_count > 1 {
+                                    let additional_lines = (lines_per_thread).min(original_count - 1);
+                                    adjusted_lines.extend(original_lines.iter().skip(1).take(additional_lines).cloned());
+                                    used_lines += additional_lines;
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }
         
-        // Get the spinner index
-        let spinner_chars = ["▏▎▍", "▎▍▌", "▍▌▋", "▌▋▊", "▋▊▉", "▊▉█", "▉█▉", "█▉▊", "▉▊▋", "▊▋▌", "▋▌▍", "▌▍▎", "▍▎▏"];
-        let spinner_index_value = {
-            let idx = spinner_index.fetch_add(1, Ordering::SeqCst);
-            (idx + 1) % spinner_chars.len()
-        };
+        // Clear previous output
+        write!(writer_guard, "\x1B[2J\x1B[1;1H")?;
         
-        // Prepare all lines first
-        let mut output = String::new();
-        output.push_str(&format!("\x1B[{}A", line_count));
-        
-        // Collect all formatted lines first
-        let mut all_lines = Vec::new();
+        // Format and display each thread's output
         for thread_id in thread_ids {
             if let Some(lines) = adjusted_lines_by_thread.get(&thread_id) {
                 for line in lines {
-                    all_lines.push(format!("{} {}", spinner_chars[spinner_index_value], line));
+                    writeln!(writer_guard, "{}", line)?;
                 }
             }
         }
         
-        // Join all lines with newlines and write in one operation
-        let complete_output = all_lines.join("\n");
-        if !complete_output.is_empty() {
-            output.push_str(&complete_output);
-            output.push('\n');
-        }
+        writer_guard.flush()?;
         
-        // Now do all the writing at once without any await points in between
-        let mut writer = writer.lock().await;
-        write!(writer, "{}", output)?;
-        writer.flush()?;
         Ok(())
     }
 }

@@ -1,6 +1,6 @@
 use crate::modes::ThreadMode;
 use crate::ProgressDisplay;
-use super::common::TestEnv;
+use crate::terminal::TestEnv;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use anyhow::Result;

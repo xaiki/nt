@@ -2,7 +2,7 @@ use std::time::Duration;
 use tokio::time::sleep;
 use crate::ProgressDisplay;
 use crate::modes::{ThreadMode, Window};
-use crate::tests::common::TestEnv;
+use crate::terminal::TestEnv;
 use crate::modes::JobTracker;
 
 #[tokio::test]
@@ -312,7 +312,7 @@ async fn test_terminal_size_handling() {
     let display = ProgressDisplay::new().await;
     
     // Set a small terminal size
-    *display.terminal_size.lock().await = (80, 2);
+    display.terminal.set_size(80, 2).await.expect("Failed to set terminal size");
     
     // Add more lines than terminal height
     display.spawn_with_mode(ThreadMode::Limited, || "size-test").await.unwrap();

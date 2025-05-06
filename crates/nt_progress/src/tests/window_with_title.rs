@@ -1,5 +1,5 @@
 use crate::modes::{ThreadMode, WindowWithTitle, Window, WithTitle, WithEmoji, WithTitleAndEmoji, StandardWindow, Capability};
-use crate::tests::common::TestEnv;
+use crate::terminal::TestEnv;
 use crate::ProgressDisplay;
 use tokio::time::sleep;
 use std::time::Duration;
@@ -179,8 +179,9 @@ async fn test_window_with_title_concurrent() {
     let mut final_env = TestEnv::new(80, 24);
     for handle in handles {
         let task_env = handle.await.unwrap();
-        for line in task_env.expected {
-            final_env.write(&line);
+        let content = task_env.contents();
+        if !content.is_empty() {
+            final_env.write(&content);
         }
     }
     
@@ -259,7 +260,7 @@ async fn test_window_with_title_terminal_size() {
     let mut env = TestEnv::new(80, 24);
     
     // Set a small terminal size
-    *display.terminal_size.lock().await = (80, 2);
+    display.terminal.set_size(80, 2).await.expect("Failed to set terminal size");
     
     // Add more lines than terminal height
     display.spawn_with_mode(ThreadMode::WindowWithTitle(3), || "size-test").await.unwrap();

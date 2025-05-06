@@ -1,6 +1,6 @@
 use crate::ProgressDisplay;
 use crate::modes::ThreadMode;
-use crate::tests::common::TestEnv;
+use crate::terminal::TestEnv;
 
 #[tokio::test]
 async fn test_terminal_basic() {
@@ -23,11 +23,11 @@ async fn test_terminal_resize() {
     let display = ProgressDisplay::new().await;
     
     // Test terminal resize handling
-    display.spawn_with_mode(ThreadMode::Limited, || "resize-test").await.unwrap();
-    env.writeln("Initial size");
+    let thread = display.spawn(|| "resize-test").await.unwrap();
     
-    // Simulate resize
-    *display.terminal_size.lock().await = (40, 12);
+    display.terminal.set_size(40, 12).await.expect("Failed to set terminal size");
+    
+    env.writeln("Initial size");
     env.writeln("After resize");
     
     display.display().await.unwrap();

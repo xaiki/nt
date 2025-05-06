@@ -85,7 +85,7 @@ mod tests {
     use std::time::Duration;
     use crate::ProgressDisplay;
     use crate::modes::{ThreadMode, JobTracker};
-    use crate::test_utils::TestEnv;
+    use crate::terminal::TestEnv;
 
     #[test]
     fn test_limited_mode_basic() {

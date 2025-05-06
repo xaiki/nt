@@ -125,7 +125,7 @@ impl StandardWindow for Window {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::tests::common::TestEnv;
+    use crate::terminal::TestEnv;
     use crate::ProgressDisplay;
     use crate::modes::{ThreadMode, JobTracker};
     use tokio::time::sleep;
@@ -198,8 +198,9 @@ mod tests {
         let mut final_env = TestEnv::new(80, 24);
         for handle in handles {
             let task_env = handle.await.unwrap();
-            for line in task_env.expected {
-                final_env.write(&line);
+            let content = task_env.contents();
+            if !content.is_empty() {
+                final_env.write(&content);
             }
         }
         

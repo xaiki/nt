@@ -1,4 +1,4 @@
-use nt_progress::test_utils::TestEnv;
+use nt_progress::terminal::TestEnv;
 use nt_progress::{ProgressDisplay, ThreadMode};
 use crossterm::style::Color;
 

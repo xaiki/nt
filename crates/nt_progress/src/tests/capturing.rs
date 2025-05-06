@@ -1,6 +1,6 @@
 use crate::ProgressDisplay;
 use crate::modes::ThreadMode;
-use crate::test_utils::TestEnv;
+use crate::terminal::TestEnv;
 use tokio::time::sleep;
 use std::time::Duration;
 

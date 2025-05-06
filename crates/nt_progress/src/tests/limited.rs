@@ -1,6 +1,6 @@
 use crate::ProgressDisplay;
 use crate::modes::ThreadMode;
-use crate::tests::common::TestEnv;
+use crate::terminal::TestEnv;
 use tokio::time::sleep;
 use std::time::Duration;
 
@@ -42,8 +42,9 @@ async fn test_limited_concurrent() {
     let mut final_env = TestEnv::new(80, 24);
     for handle in handles {
         let task_env = handle.await.unwrap();
-        for line in task_env.expected {
-            final_env.write(&line);
+        let content = task_env.contents();
+        if !content.is_empty() {
+            final_env.write(&content);
         }
     }
     
