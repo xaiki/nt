@@ -5,7 +5,7 @@ use crate::tests::common::TestEnv;
 #[tokio::test]
 async fn test_terminal_basic() {
     let mut env = TestEnv::new(80, 24);
-    let mut display = ProgressDisplay::new().await;
+    let display = ProgressDisplay::new().await;
     
     // Test basic terminal operations
     display.spawn_with_mode(ThreadMode::Limited, || "basic-test").await.unwrap();
@@ -20,7 +20,7 @@ async fn test_terminal_basic() {
 #[tokio::test]
 async fn test_terminal_resize() {
     let mut env = TestEnv::new(80, 24);
-    let mut display = ProgressDisplay::new().await;
+    let display = ProgressDisplay::new().await;
     
     // Test terminal resize handling
     display.spawn_with_mode(ThreadMode::Limited, || "resize-test").await.unwrap();
@@ -38,7 +38,7 @@ async fn test_terminal_resize() {
 #[tokio::test]
 async fn test_terminal_clear() {
     let mut env = TestEnv::new(80, 24);
-    let mut display = ProgressDisplay::new().await;
+    let display = ProgressDisplay::new().await;
     
     // Test terminal clear
     display.spawn_with_mode(ThreadMode::Limited, || "clear-test").await.unwrap();
@@ -55,7 +55,7 @@ async fn test_terminal_clear() {
 #[tokio::test]
 async fn test_terminal_cursor() {
     let mut env = TestEnv::new(80, 24);
-    let mut display = ProgressDisplay::new().await;
+    let display = ProgressDisplay::new().await;
     
     // Test cursor movement
     display.spawn_with_mode(ThreadMode::Limited, || "cursor-test").await.unwrap();
@@ -71,7 +71,7 @@ async fn test_terminal_cursor() {
 #[tokio::test]
 async fn test_terminal_colors() {
     let mut env = TestEnv::new(80, 24);
-    let mut display = ProgressDisplay::new().await;
+    let display = ProgressDisplay::new().await;
     
     // Test color handling
     display.spawn_with_mode(ThreadMode::Limited, || "color-test").await.unwrap();

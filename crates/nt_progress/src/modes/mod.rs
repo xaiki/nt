@@ -76,6 +76,15 @@ pub trait ThreadConfig: Send + Sync + Debug {
     /// # Returns
     /// A mutable reference to self as a mutable Any
     fn as_any_mut(&mut self) -> &mut dyn Any;
+    
+    /// Returns this config as an Any reference for downcasting.
+    ///
+    /// This method is used to downcast the config to a specific implementation
+    /// type when you need to access implementation-specific methods.
+    ///
+    /// # Returns
+    /// A reference to self as an Any
+    fn as_any(&self) -> &dyn Any;
 }
 
 /// Trait for tracking job progress across different display modes.
@@ -323,24 +332,35 @@ impl Config {
         self.config.get_lines()
     }
 
-    /// Returns a mutable reference to the WindowWithTitle implementation if available
+    /// Returns a reference to a specific implementation type.
+    ///
+    /// This is a generic method that can be used to access any implementation
+    /// type that is stored in this Config.
+    ///
+    /// # Type Parameters
+    /// * `T` - The implementation type to downcast to
     ///
     /// # Returns
-    /// `Some(&mut WindowWithTitle)` if the config is in WindowWithTitle mode, 
-    /// `None` otherwise
-    pub fn as_window_with_title_mut(&mut self) -> Option<&mut WindowWithTitle> {
-        self.config.as_any_mut().downcast_mut::<WindowWithTitle>()
+    /// `Some(&T)` if the config is of type T, `None` otherwise
+    pub fn as_type<T: 'static>(&self) -> Option<&T> {
+        self.config.as_any().downcast_ref::<T>()
     }
-    
-    /// Returns a mutable reference to the Window implementation if available
+
+    /// Returns a mutable reference to a specific implementation type.
+    ///
+    /// This is a generic method that can be used to access any implementation
+    /// type that is stored in this Config. It replaces the type-specific
+    /// methods like `as_window_mut` and `as_window_with_title_mut`.
+    ///
+    /// # Type Parameters
+    /// * `T` - The implementation type to downcast to
     ///
     /// # Returns
-    /// `Some(&mut Window)` if the config is in Window mode, 
-    /// `None` otherwise
-    pub fn as_window_mut(&mut self) -> Option<&mut Window> {
-        self.config.as_any_mut().downcast_mut::<Window>()
+    /// `Some(&mut T)` if the config is of type T, `None` otherwise
+    pub fn as_type_mut<T: 'static>(&mut self) -> Option<&mut T> {
+        self.config.as_any_mut().downcast_mut::<T>()
     }
-    
+
     /// Set the total number of jobs for this configuration.
     ///
     /// This method updates the total number of jobs in the underlying

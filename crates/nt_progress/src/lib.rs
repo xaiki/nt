@@ -17,7 +17,8 @@ use tokio::{
 use anyhow::{Result, anyhow};
 use std::fmt::Debug;
 use std::cell::RefCell;
-use crate::errors::{ContextExt, ErrorContext};
+use crate::errors::{ContextExt, ErrorContext, ProgressError};
+use crate::modes::WindowWithTitle;
 
 pub mod modes;
 pub mod test_utils;
@@ -25,12 +26,8 @@ pub mod errors;
 #[cfg(test)]
 pub mod tests;
 
-pub use modes::ThreadMode;
-pub use modes::ThreadConfig;
-pub use modes::Config;
-pub use modes::JobTracker;
-pub use modes::HasBaseConfig;
-pub use errors::{ProgressError, ModeCreationError};
+pub use modes::{ThreadMode, ThreadConfig, Config, JobTracker, HasBaseConfig};
+pub use errors::ModeCreationError;
 
 thread_local! {
     static CURRENT_THREAD_ID: AtomicUsize = AtomicUsize::new(0);
@@ -192,7 +189,7 @@ impl ProgressDisplay {
         // Check if the thread exists
         if let Some(config) = configs.get_mut(&thread_id) {
             // Check if the config is for WindowWithTitle mode
-            if let Some(window_with_title) = config.as_window_with_title_mut() {
+            if let Some(window_with_title) = config.as_type_mut::<WindowWithTitle>() {
                 // Set the title
                 window_with_title.set_title(title);
                 return Ok(());

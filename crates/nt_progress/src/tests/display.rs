@@ -1,8 +1,9 @@
 use std::time::Duration;
 use tokio::time::sleep;
 use crate::ProgressDisplay;
-use crate::modes::ThreadMode;
+use crate::modes::{ThreadMode, Window};
 use crate::tests::common::TestEnv;
+use crate::modes::JobTracker;
 
 #[tokio::test]
 async fn test_progress_display_all_modes() {
@@ -129,7 +130,7 @@ async fn test_progress_display_mode_specific() {
     let mut env = TestEnv::new(80, 24);
     
     // Test Limited mode
-    let mut display = ProgressDisplay::new().await;
+    let display = ProgressDisplay::new().await;
     display.spawn_with_mode(ThreadMode::Limited, || "limited".to_string()).await.unwrap();
     for i in 0..10 {
         env.writeln(&format!("Line {}", i));
@@ -139,7 +140,7 @@ async fn test_progress_display_mode_specific() {
     env.verify();
     
     // Test Capturing mode
-    let mut display = ProgressDisplay::new().await;
+    let display = ProgressDisplay::new().await;
     display.spawn_with_mode(ThreadMode::Capturing, || "capturing".to_string()).await.unwrap();
     for i in 0..10 {
         env.writeln(&format!("Line {}", i));
@@ -149,7 +150,7 @@ async fn test_progress_display_mode_specific() {
     env.verify();
     
     // Test Window mode
-    let mut display = ProgressDisplay::new().await;
+    let display = ProgressDisplay::new().await;
     display.spawn_with_mode(ThreadMode::Window(3), || "window".to_string()).await.unwrap();
     for i in 0..10 {
         env.writeln(&format!("Line {}", i));
@@ -159,7 +160,7 @@ async fn test_progress_display_mode_specific() {
     env.verify();
     
     // Test WindowWithTitle mode
-    let mut display = ProgressDisplay::new().await;
+    let display = ProgressDisplay::new().await;
     display.spawn_with_mode(ThreadMode::WindowWithTitle(3), || "title".to_string()).await.unwrap();
     env.writeln("Test with emoji 🚀");
     env.writeln("Another line 📝");
@@ -173,7 +174,7 @@ async fn test_progress_display_edge_cases() {
     let mut env = TestEnv::new(80, 24);
     
     // Test empty output
-    let mut display = ProgressDisplay::new().await;
+    let display = ProgressDisplay::new().await;
     display.spawn_with_mode(ThreadMode::Limited, || "empty".to_string()).await.unwrap();
     env.writeln("");
     display.display().await.unwrap();
@@ -181,7 +182,7 @@ async fn test_progress_display_edge_cases() {
     env.verify();
     
     // Test very long lines
-    let mut display = ProgressDisplay::new().await;
+    let display = ProgressDisplay::new().await;
     let long_line = "x".repeat(1000);
     display.spawn_with_mode(ThreadMode::Limited, || "long".to_string()).await.unwrap();
     env.writeln(&long_line);
@@ -190,7 +191,7 @@ async fn test_progress_display_edge_cases() {
     env.verify();
     
     // Test special characters
-    let mut display = ProgressDisplay::new().await;
+    let display = ProgressDisplay::new().await;
     display.spawn_with_mode(ThreadMode::Limited, || "special".to_string()).await.unwrap();
     env.writeln("Test with \n newlines \t tabs \r returns");
     env.writeln("Test with unicode: 你好世界");
@@ -267,7 +268,7 @@ async fn test_display_formatting() {
     let mut env = TestEnv::new(80, 24);
     
     // Test basic output formatting
-    let mut display = ProgressDisplay::new().await;
+    let display = ProgressDisplay::new().await;
     
     // Add some test output
     display.spawn_with_mode(ThreadMode::Limited, || "test-task").await.unwrap();
@@ -284,7 +285,7 @@ async fn test_display_formatting() {
 async fn test_window_mode_display() {
     let mut env = TestEnv::new(80, 24);
     
-    let mut display = ProgressDisplay::new_with_mode(ThreadMode::Window(2)).await;
+    let display = ProgressDisplay::new_with_mode(ThreadMode::Window(2)).await;
     
     // Add more lines than the window size
     display.spawn_with_mode(ThreadMode::Window(2), || "window-task").await.unwrap();
@@ -302,7 +303,7 @@ async fn test_window_mode_display() {
 async fn test_terminal_size_handling() {
     let mut env = TestEnv::new(80, 24);
     
-    let mut display = ProgressDisplay::new().await;
+    let display = ProgressDisplay::new().await;
     
     // Set a small terminal size
     *display.terminal_size.lock().await = (80, 2);
@@ -338,4 +339,70 @@ async fn test_progress_display_burst() {
     
     // Wait for burst to complete
     handle.await.unwrap();
+}
+
+#[tokio::test]
+async fn test_set_total_jobs() {
+    // Test setting total jobs for a single thread
+    let display = ProgressDisplay::new().await;
+    let mut env = TestEnv::new(80, 24);
+    
+    // Create a task
+    let handle = display.spawn_with_mode(ThreadMode::Limited, || "total-jobs-test").await.unwrap();
+    let thread_id = handle.thread_id();
+    
+    // Update total jobs for the thread
+    handle.set_total_jobs(20).await.unwrap();
+    
+    // No need to verify the total jobs here since we're testing the functionality
+    
+    env.writeln("Before update");
+    
+    // Get progress updates
+    for i in 0..5 {
+        display.update_progress(thread_id, i + 1, 20, "Progress").await.unwrap();
+        env.writeln(&format!("Progress {}/20", i + 1));
+    }
+    
+    display.display().await.unwrap();
+    display.stop().await.unwrap();
+    env.verify();
+    
+    // Test setting total jobs for all threads
+    let display = ProgressDisplay::new().await;
+    let mut env = TestEnv::new(80, 24);
+    
+    // Create multiple tasks
+    let mut handles = Vec::new();
+    for i in 0..3 {
+        let handle = display.spawn_with_mode(ThreadMode::Window(3), move || format!("task-{}", i)).await.unwrap();
+        handles.push(handle);
+    }
+    
+    // Set total jobs for all threads
+    display.set_total_jobs(None, 30).await.unwrap();
+    
+    // Verify all threads have the new total
+    let mut configs = display.thread_configs.lock().await;
+    for (_, config) in configs.iter_mut() {
+        // Use JobTracker trait to get the total jobs
+        if let Some(window) = config.as_type_mut::<Window>() {
+            assert_eq!(window.get_total_jobs(), 30);
+        }
+    }
+    
+    env.writeln("Updated all threads to 30 jobs");
+    display.display().await.unwrap();
+    display.stop().await.unwrap();
+    env.verify();
+    
+    // Test error handling: Setting total jobs to zero
+    let display = ProgressDisplay::new().await;
+    let result = display.set_total_jobs(None, 0).await;
+    assert!(result.is_err());
+    
+    // Test error handling: Setting total jobs for a non-existent thread
+    let display = ProgressDisplay::new().await;
+    let result = display.set_total_jobs(Some(999), 10).await;
+    assert!(result.is_err());
 } 

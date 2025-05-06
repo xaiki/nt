@@ -98,7 +98,7 @@ The `nt_progress` library provides a flexible and thread-safe progress display f
 
 ### Code Duplication Reduction
 - [x] Create a `HasBaseConfig` trait with blanket implementations for `JobTracker`
-- [ ] Implement generic downcast methods for Config instead of type-specific ones
+- [x] Implement generic downcast methods for Config instead of type-specific ones
 - [ ] Create trait-based pattern for common ThreadConfig implementations
 - [ ] Refactor error context addition to reduce boilerplate
 - [ ] Standardize access patterns for mode-specific features

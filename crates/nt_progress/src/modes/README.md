@@ -327,6 +327,14 @@ impl ThreadConfig for Rotating {
     fn clone_box(&self) -> Box<dyn ThreadConfig> {
         Box::new(self.clone())
     }
+    
+    fn as_any_mut(&mut self) -> &mut dyn Any {
+        self
+    }
+    
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
 }
 
 // Then update ThreadMode and Config::new as described above
@@ -340,3 +348,25 @@ impl ThreadConfig for Rotating {
 4. **Comprehensive Testing**: Test all aspects of your mode's behavior
 5. **Performance Considerations**: Be mindful of memory usage and string allocations
 6. **Thread Safety**: Ensure your implementation is thread-safe 
+
+## Accessing Mode-Specific Features
+
+Some display modes have special features that aren't part of the core `ThreadConfig` trait. 
+To access these features, you need to downcast the config to the specific implementation type:
+
+```rust
+// Get a reference to the window with title implementation
+if let Some(window_with_title) = config.as_type::<WindowWithTitle>() {
+    // Use the mode-specific features
+    println!("Current title: {}", window_with_title.get_title());
+}
+
+// Get a mutable reference to modify a window implementation
+if let Some(window) = config.as_type_mut::<Window>() {
+    // Use the mode-specific mutable features
+    window.set_message("New message");
+}
+```
+
+This approach allows you to work with the generic `ThreadConfig` trait most of the time,
+but still access mode-specific features when needed. ```

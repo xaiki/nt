@@ -182,6 +182,25 @@ progress.set_title(thread_id, "Another Title".to_string()).await?;
 
 Note that attempting to set a title for a task that is not in WindowWithTitle mode will result in an error.
 
+### Setting Total Jobs
+
+You can update the total number of jobs for a task at any time:
+
+```rust
+// Using a task handle to update a specific task
+let task = progress.spawn_with_mode(ThreadMode::Window(3), || "Task").await?;
+task.set_total_jobs(100).await?; // Set to 100 total jobs
+
+// Using the progress display to update a specific task
+let thread_id = task.thread_id();
+progress.set_total_jobs(Some(thread_id), 100).await?;
+
+// Using the progress display to update all tasks
+progress.set_total_jobs(None, 100).await?; // Set 100 jobs for all tasks
+```
+
+This is useful when you don't know the total count of jobs initially, or when the job count changes dynamically during execution.
+
 ## Error Handling
 
 The library provides robust error handling with detailed context and graceful recovery:

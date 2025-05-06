@@ -322,11 +322,12 @@ impl TestBuilder {
     /// Test progress updating (for all modes)
     pub async fn test_progress_update(&mut self, total_jobs: usize, messages_per_job: usize) -> Result<ProgressDisplay> {
         let display = self.build_display().await;
+        
         let mut task = display.spawn(|| {}).await?;
         let thread_id = task.thread_id();
         
         // Set total jobs in the display
-        display.set_total_jobs(total_jobs).await?;
+        display.set_total_jobs(None, total_jobs).await?;
         
         // Send messages and increment completed jobs
         for job in 0..total_jobs {
