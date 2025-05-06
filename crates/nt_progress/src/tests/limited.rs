@@ -6,7 +6,7 @@ use std::time::Duration;
 
 #[tokio::test]
 async fn test_limited_basic() {
-    let mut display = ProgressDisplay::new_with_mode(ThreadMode::Limited).await;
+    let display = ProgressDisplay::new_with_mode(ThreadMode::Limited).await;
     let mut env = TestEnv::new(80, 24);
     
     let _handle = display.spawn_with_mode(ThreadMode::Limited, || "limited-test").await.unwrap();
@@ -19,13 +19,13 @@ async fn test_limited_basic() {
 
 #[tokio::test]
 async fn test_limited_concurrent() {
-    let mut display = ProgressDisplay::new().await;
+    let display = ProgressDisplay::new().await;
     let total_jobs = 5;
     
     // Spawn multiple tasks in Limited mode
     let mut handles = vec![];
     for i in 0..total_jobs {
-        let mut display = display.clone();
+        let display = display.clone();
         let mut env = TestEnv::new(80, 24);
         let i = i;
         handles.push(tokio::spawn(async move {
