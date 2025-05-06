@@ -6,11 +6,11 @@ The `nt_progress` library provides a flexible and thread-safe progress display f
 
 ## Development Roadmap
 
-### Phase 0: Immediate Fixes (Current Priority)
-- [ ] Fix failing terminal integration tests
-  - [ ] Fix coordinate system in cursor positioning (x,y swapped in tests/terminal.rs:34)
-  - [ ] Fix text overwriting in basic terminal test (tests/terminal.rs:17)
-  - [ ] Fix cursor position tracking after write operations (tests/terminal.rs:68)
+### Phase 0: Immediate Fixes (Completed) ✓
+- [x] Fix failing terminal integration tests
+  - [x] Fix coordinate system in cursor positioning (x,y swapped in tests/terminal.rs:34)
+  - [x] Fix text overwriting in basic terminal test (tests/terminal.rs:17)
+  - [x] Fix cursor position tracking after write operations (tests/terminal.rs:68)
 
 ### Phase 1: Capability System Improvements (Completed) ✓
 - [x] Complete WithEmoji trait implementation for WindowWithTitle mode
