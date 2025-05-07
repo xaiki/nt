@@ -15,10 +15,10 @@ The `nt_progress` library provides a flexible and thread-safe progress display f
   - [x] Create CursorPosition type
   - [x] Add movement operations
   - [x] Support relative and absolute positioning
-- [ ] Add terminal event system
-  - [ ] Implement resize event handling
-  - [ ] Add keyboard input handling for interactive modes
-  - [ ] Support terminal capability detection
+- [x] Add terminal event system
+  - [x] Implement resize event handling
+  - [x] Add keyboard input handling for interactive modes
+  - [x] Support terminal capability detection
 - [x] Improve TestEnv for terminal testing
   - [x] Add screen buffer dumping for debugging
   - [x] Add string diff utility for test failures
