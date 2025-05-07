@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use super::{ThreadConfig, ThreadMode, Limited, Capturing, Window, WindowWithTitle};
+use super::{ThreadConfig, ThreadMode, Limited, Capturing, Window, WindowWithTitle, ModeParameters};
 use crate::errors::ModeCreationError;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -27,16 +27,13 @@ pub trait ModeCreator: Send + Sync + Debug {
     /// Get the name of the mode this creator creates
     fn mode_name(&self) -> &'static str;
     
-    /// Get the minimum number of parameters required
-    fn min_params(&self) -> usize;
-    
     /// Create a new mode instance
-    fn create(&self, total_jobs: usize, params: &[usize]) -> Result<Box<dyn ThreadConfig>, ModeCreationError>;
+    fn create(&self, params: &ModeParameters) -> Result<Box<dyn ThreadConfig>, ModeCreationError>;
     
     /// Create a ThreadConfig with fallback options if the primary creation fails
-    fn create_with_fallback(&self, total_jobs: usize, params: &[usize]) -> Result<Box<dyn ThreadConfig>, ModeCreationError> {
+    fn create_with_fallback(&self, params: &ModeParameters) -> Result<Box<dyn ThreadConfig>, ModeCreationError> {
         // By default, just try the regular create method
-        self.create(total_jobs, params)
+        self.create(params)
     }
 }
 
@@ -61,56 +58,10 @@ impl ModeRegistry {
     }
     
     /// Validate parameters before mode creation
-    fn validate_params(&self, mode_name: &str, total_jobs: usize, params: &[usize]) -> Result<(), ModeCreationError> {
+    fn validate_params(&self, mode_name: &str, params: &ModeParameters) -> Result<(), ModeCreationError> {
         if let Some(creator) = self.creators.get(mode_name) {
-            // Validate total_jobs
-            if total_jobs == 0 {
-                return Err(ModeCreationError::ValidationError {
-                    mode_name: mode_name.to_string(),
-                    rule: "total_jobs".to_string(),
-                    value: "0".to_string(),
-                    reason: Some("Total jobs must be greater than 0".to_string()),
-                });
-            }
-
-            // Validate parameter count
-            if params.len() < creator.min_params() {
-                return Err(ModeCreationError::MissingParameter {
-                    param_name: format!("parameter {}", creator.min_params()),
-                    mode_name: mode_name.to_string(),
-                    reason: Some(format!("Mode '{}' requires {} parameters", mode_name, creator.min_params())),
-                });
-            }
-
-            // Validate window sizes
-            if mode_name == "window" || mode_name == "window_with_title" {
-                let min_size = if mode_name == "window" { 1 } else { 2 };
-                if params[0] < min_size {
-                    return Err(ModeCreationError::InvalidWindowSize {
-                        size: params[0],
-                        min_size,
-                        mode_name: mode_name.to_string(),
-                        reason: Some(format!("{} mode requires at least {} lines", mode_name, min_size)),
-                    });
-                }
-            }
-        }
-        Ok(())
-    }
-    
-    /// Create a ThreadConfig instance using the specified mode and parameters
-    pub fn create(&self, mode_name: &str, total_jobs: usize, params: &[usize]) 
-        -> Result<Box<dyn ThreadConfig>, ModeCreationError> 
-    {
-        // First validate the parameters
-        self.validate_params(mode_name, total_jobs, params)?;
-
-        if let Some(creator) = self.creators.get(mode_name) {
-            let result = creator.create(total_jobs, params);
-            match result {
-                Ok(config) => Ok(config),
-                Err(err) => Err(err), // Since the error type is already ModeCreationError
-            }
+            params.validate(mode_name)?;
+            Ok(())
         } else {
             let available_modes: Vec<String> = self.creators.keys().cloned().collect();
             Err(ModeCreationError::ModeNotRegistered {
@@ -120,15 +71,32 @@ impl ModeRegistry {
         }
     }
     
+    /// Create a ThreadConfig instance using the specified mode and parameters
+    pub fn create(&self, mode_name: &str, params: &ModeParameters) 
+        -> Result<Box<dyn ThreadConfig>, ModeCreationError> 
+    {
+        self.validate_params(mode_name, params)?;
+
+        if let Some(creator) = self.creators.get(mode_name) {
+            let result = creator.create(params);
+            match result {
+                Ok(config) => Ok(config),
+                Err(err) => Err(err), // Since the error type is already ModeCreationError
+            }
+        } else {
+            unreachable!()
+        }
+    }
+    
     /// Create a ThreadConfig instance from a ThreadMode enum
     pub fn create_from_mode(&self, mode: ThreadMode, total_jobs: usize) 
         -> Result<Box<dyn ThreadConfig>, ModeCreationError> 
     {
         match mode {
-            ThreadMode::Limited => self.create("limited", total_jobs, &[]),
-            ThreadMode::Capturing => self.create("capturing", total_jobs, &[]),
-            ThreadMode::Window(max_lines) => self.create("window", total_jobs, &[max_lines]),
-            ThreadMode::WindowWithTitle(max_lines) => self.create("window_with_title", total_jobs, &[max_lines]),
+            ThreadMode::Limited => self.create("limited", &ModeParameters::limited(total_jobs)),
+            ThreadMode::Capturing => self.create("capturing", &ModeParameters::capturing(total_jobs)),
+            ThreadMode::Window(max_lines) => self.create("window", &ModeParameters::window(total_jobs, max_lines)),
+            ThreadMode::WindowWithTitle(max_lines) => self.create("window_with_title", &ModeParameters::window_with_title(total_jobs, max_lines, "Progress".to_string())),
         }
     }
 }
@@ -140,16 +108,13 @@ impl ModeRegistry {
 pub struct LimitedCreator;
 
 impl ModeCreator for LimitedCreator {
-    fn create(&self, total_jobs: usize, _params: &[usize]) -> Result<Box<dyn ThreadConfig>, ModeCreationError> {
-        Ok(Box::new(Limited::new(total_jobs)))
+    fn create(&self, params: &ModeParameters) -> Result<Box<dyn ThreadConfig>, ModeCreationError> {
+        params.validate(self.mode_name())?;
+        Ok(Box::new(Limited::new(params.total_jobs())))
     }
     
     fn mode_name(&self) -> &'static str {
         "limited"
-    }
-    
-    fn min_params(&self) -> usize {
-        0
     }
 }
 
@@ -158,16 +123,13 @@ impl ModeCreator for LimitedCreator {
 pub struct CapturingCreator;
 
 impl ModeCreator for CapturingCreator {
-    fn create(&self, total_jobs: usize, _params: &[usize]) -> Result<Box<dyn ThreadConfig>, ModeCreationError> {
-        Ok(Box::new(Capturing::new(total_jobs)))
+    fn create(&self, params: &ModeParameters) -> Result<Box<dyn ThreadConfig>, ModeCreationError> {
+        params.validate(self.mode_name())?;
+        Ok(Box::new(Capturing::new(params.total_jobs())))
     }
     
     fn mode_name(&self) -> &'static str {
         "capturing"
-    }
-    
-    fn min_params(&self) -> usize {
-        0
     }
 }
 
@@ -176,35 +138,30 @@ impl ModeCreator for CapturingCreator {
 pub struct WindowCreator;
 
 impl ModeCreator for WindowCreator {
-    fn create(&self, total_jobs: usize, params: &[usize]) -> Result<Box<dyn ThreadConfig>, ModeCreationError> {
-        let max_lines = params[0];
-        if max_lines < 1 {
-            return Err(ModeCreationError::InvalidWindowSize {
-                size: max_lines,
-                min_size: 1,
-                mode_name: "Window".to_string(),
-                reason: Some("Window mode requires at least 1 line to display content".to_string()),
-            });
-        }
-        Window::new(total_jobs, max_lines).map(|w| Box::new(w) as Box<dyn ThreadConfig>)
+    fn create(&self, params: &ModeParameters) -> Result<Box<dyn ThreadConfig>, ModeCreationError> {
+        params.validate(self.mode_name())?;
+        let max_lines = params.max_lines().unwrap();
+        Window::new(params.total_jobs(), max_lines).map(|w| Box::new(w) as Box<dyn ThreadConfig>)
     }
     
-    fn create_with_fallback(&self, total_jobs: usize, params: &[usize]) -> Result<Box<dyn ThreadConfig>, ModeCreationError> {
-        let result = self.create(total_jobs, params);
+    fn create_with_fallback(&self, params: &ModeParameters) -> Result<Box<dyn ThreadConfig>, ModeCreationError> {
+        let result = self.create(params);
         
         // If creation fails, try with a reasonable fallback size
         if result.is_err() {
-            let max_lines = if params.is_empty() { 0 } else { params[0] };
+            let max_lines = params.max_lines().unwrap_or(0);
             eprintln!("Warning: Requested window size {} was invalid, using size 3 instead", max_lines);
             
             // Try with a reasonable fallback size
-            if let Ok(window) = Window::new(total_jobs, 3) {
+            let mut fallback_params = params.clone();
+            fallback_params.max_lines = Some(3);
+            if let Ok(window) = Window::new(params.total_jobs(), 3) {
                 return Ok(Box::new(window));
             }
             
             // Last resort: fall back to Limited mode
             eprintln!("Warning: Could not create Window mode, falling back to Limited mode");
-            return Ok(Box::new(Limited::new(total_jobs)));
+            return Ok(Box::new(Limited::new(params.total_jobs())));
         }
         
         result
@@ -213,10 +170,6 @@ impl ModeCreator for WindowCreator {
     fn mode_name(&self) -> &'static str {
         "window"
     }
-    
-    fn min_params(&self) -> usize {
-        1
-    }
 }
 
 /// Creator for WindowWithTitle mode
@@ -224,44 +177,48 @@ impl ModeCreator for WindowCreator {
 pub struct WindowWithTitleCreator;
 
 impl ModeCreator for WindowWithTitleCreator {
-    fn create(&self, total_jobs: usize, params: &[usize]) -> Result<Box<dyn ThreadConfig>, ModeCreationError> {
-        let max_lines = params[0];
-        if max_lines < 2 {
-            return Err(ModeCreationError::InvalidWindowSize {
-                size: max_lines,
-                min_size: 2,
-                mode_name: "WindowWithTitle".to_string(),
-                reason: Some("WindowWithTitle requires at least 2 lines: 1 for title and 1 for content".to_string()),
-            });
-        }
-        let mut mode = WindowWithTitle::new(total_jobs, max_lines, "Progress".to_string())?;
+    fn create(&self, params: &ModeParameters) -> Result<Box<dyn ThreadConfig>, ModeCreationError> {
+        params.validate(self.mode_name())?;
+        let max_lines = params.max_lines().unwrap();
+        let title = params.title().unwrap_or("Progress").to_string();
+        let mut mode = WindowWithTitle::new(params.total_jobs(), max_lines, title)?;
         
-        // Explicitly enable emoji and title support
-        mode.set_emoji_support(true);
-        mode.set_title_support(true);
+        // Set support flags if provided
+        if let Some(emoji_support) = params.emoji_support() {
+            mode.set_emoji_support(emoji_support);
+        }
+        if let Some(title_support) = params.title_support() {
+            mode.set_title_support(title_support);
+        }
         
         Ok(Box::new(mode) as Box<dyn ThreadConfig>)
     }
     
-    fn create_with_fallback(&self, total_jobs: usize, params: &[usize]) -> Result<Box<dyn ThreadConfig>, ModeCreationError> {
-        let result = self.create(total_jobs, params);
+    fn create_with_fallback(&self, params: &ModeParameters) -> Result<Box<dyn ThreadConfig>, ModeCreationError> {
+        let result = self.create(params);
         
         // If creation fails, try with a reasonable fallback size
         if result.is_err() {
-            let max_lines = if params.is_empty() { 0 } else { params[0] };
+            let max_lines = params.max_lines().unwrap_or(0);
             eprintln!("Warning: Requested window size {} was invalid, using size 3 instead", max_lines);
             
             // Try with a reasonable fallback size
-            if let Ok(mut window) = WindowWithTitle::new(total_jobs, 3, "Progress".to_string()) {
-                // Explicitly enable emoji and title support
-                window.set_emoji_support(true);
-                window.set_title_support(true);
+            let mut fallback_params = params.clone();
+            fallback_params.max_lines = Some(3);
+            if let Ok(mut window) = WindowWithTitle::new(params.total_jobs(), 3, params.title().unwrap_or("Progress").to_string()) {
+                // Set support flags if provided
+                if let Some(emoji_support) = params.emoji_support() {
+                    window.set_emoji_support(emoji_support);
+                }
+                if let Some(title_support) = params.title_support() {
+                    window.set_title_support(title_support);
+                }
                 return Ok(Box::new(window));
             }
             
             // Last resort: fall back to Limited mode
             eprintln!("Warning: Could not create WindowWithTitle mode, falling back to Limited mode");
-            return Ok(Box::new(Limited::new(total_jobs)));
+            return Ok(Box::new(Limited::new(params.total_jobs())));
         }
         
         result
@@ -269,10 +226,6 @@ impl ModeCreator for WindowWithTitleCreator {
     
     fn mode_name(&self) -> &'static str {
         "window_with_title"
-    }
-    
-    fn min_params(&self) -> usize {
-        1
     }
 }
 
@@ -341,40 +294,40 @@ impl ModeFactory {
         if should_propagate_errors() {
             // If error propagation is enabled, use direct creation without fallbacks
             match mode {
-                ThreadMode::Limited => self.registry.create("limited", total_jobs, &[]),
-                ThreadMode::Capturing => self.registry.create("capturing", total_jobs, &[]),
-                ThreadMode::Window(size) => self.registry.create("window", total_jobs, &[size]),
-                ThreadMode::WindowWithTitle(size) => self.registry.create("window_with_title", total_jobs, &[size]),
+                ThreadMode::Limited => self.registry.create("limited", &ModeParameters::limited(total_jobs)),
+                ThreadMode::Capturing => self.registry.create("capturing", &ModeParameters::capturing(total_jobs)),
+                ThreadMode::Window(size) => self.registry.create("window", &ModeParameters::window(total_jobs, size)),
+                ThreadMode::WindowWithTitle(size) => self.registry.create("window_with_title", &ModeParameters::window_with_title(total_jobs, size, "Progress".to_string())),
             }
         } else {
             // With error propagation disabled, provide fallbacks
             match mode {
-                ThreadMode::Limited => self.registry.create("limited", total_jobs, &[]),
-                ThreadMode::Capturing => self.registry.create("capturing", total_jobs, &[]),
+                ThreadMode::Limited => self.registry.create("limited", &ModeParameters::limited(total_jobs)),
+                ThreadMode::Capturing => self.registry.create("capturing", &ModeParameters::capturing(total_jobs)),
                 ThreadMode::Window(size) => {
-                    let result = self.registry.create("window", total_jobs, &[size]);
+                    let result = self.registry.create("window", &ModeParameters::window(total_jobs, size));
                     if result.is_err() {
                         // Try with a reasonable fallback size
                         eprintln!("Warning: Requested window size {} was invalid, using size 3 instead", size);
-                        self.registry.create("window", total_jobs, &[3])
+                        self.registry.create("window", &ModeParameters::window(total_jobs, 3))
                     } else {
                         result
                     }
                 },
                 ThreadMode::WindowWithTitle(size) => {
-                    let result = self.registry.create("window_with_title", total_jobs, &[size]);
+                    let result = self.registry.create("window_with_title", &ModeParameters::window_with_title(total_jobs, size, "Progress".to_string()));
                     if result.is_err() {
                         // Try with a reasonable fallback size
                         eprintln!("Warning: Requested window size {} was invalid, using size 3 instead", size);
-                        let fallback = self.registry.create("window_with_title", total_jobs, &[3]);
+                        let fallback = self.registry.create("window_with_title", &ModeParameters::window_with_title(total_jobs, 3, "Progress".to_string()));
                         if fallback.is_err() {
                             // Try with Window mode as a fallback
                             eprintln!("Warning: Could not create WindowWithTitle mode, falling back to Window mode");
-                            let window = self.registry.create("window", total_jobs, &[3]);
+                            let window = self.registry.create("window", &ModeParameters::window(total_jobs, 3));
                             if window.is_err() {
                                 // Last resort: fall back to Limited mode
                                 eprintln!("Warning: Could not create any window mode, falling back to Limited mode");
-                                self.registry.create("limited", total_jobs, &[])
+                                self.registry.create("limited", &ModeParameters::limited(total_jobs))
                             } else {
                                 window
                             }
@@ -423,11 +376,11 @@ mod tests {
         registry.register(WindowCreator);
         
         // Create a Limited mode
-        let config = registry.create("limited", 10, &[]).unwrap();
+        let config = registry.create("limited", &ModeParameters::limited(10)).unwrap();
         assert_eq!(config.lines_to_display(), 1);
         
         // Create a Window mode
-        let config = registry.create("window", 10, &[3]).unwrap();
+        let config = registry.create("window", &ModeParameters::window(10, 3)).unwrap();
         assert_eq!(config.lines_to_display(), 3);
     }
     
@@ -437,14 +390,14 @@ mod tests {
         registry.register(WindowCreator);
         
         // Try to create a Window mode without required params
-        let result = registry.create("window", 10, &[]);
+        let result = registry.create("window", &ModeParameters::limited(10));
         assert!(result.is_err());
         
         // Verify the error type
         match result {
             Err(ModeCreationError::MissingParameter { param_name, mode_name, reason }) => {
                 assert_eq!(mode_name, "window");
-                assert_eq!(param_name, "parameter 1");
+                assert_eq!(param_name, "max_lines");
                 assert!(reason.is_some());
                 assert!(reason.unwrap().contains("requires"));
             },
@@ -610,7 +563,7 @@ mod tests {
         registry.register(WindowWithTitleCreator);
         
         // Test zero total_jobs
-        let result = registry.create("limited", 0, &[]);
+        let result = registry.create("limited", &ModeParameters::limited(0));
         assert!(result.is_err());
         match result {
             Err(ModeCreationError::ValidationError { mode_name, rule, value, reason }) => {
@@ -624,7 +577,7 @@ mod tests {
         }
         
         // Test invalid window size
-        let result = registry.create("window", 1, &[0]);
+        let result = registry.create("window", &ModeParameters::window(10, 0));
         assert!(result.is_err());
         match result {
             Err(ModeCreationError::InvalidWindowSize { size, min_size, mode_name, reason }) => {
@@ -638,7 +591,7 @@ mod tests {
         }
         
         // Test invalid window with title size
-        let result = registry.create("window_with_title", 1, &[1]);
+        let result = registry.create("window_with_title", &ModeParameters::window_with_title(10, 1, "Test".to_string()));
         assert!(result.is_err());
         match result {
             Err(ModeCreationError::InvalidWindowSize { size, min_size, mode_name, reason }) => {
@@ -660,15 +613,15 @@ mod tests {
         registry.register(WindowWithTitleCreator);
         
         // Test valid limited mode
-        let result = registry.create("limited", 1, &[]);
+        let result = registry.create("limited", &ModeParameters::limited(1));
         assert!(result.is_ok());
         
         // Test valid window mode
-        let result = registry.create("window", 1, &[3]);
+        let result = registry.create("window", &ModeParameters::window(10, 3));
         assert!(result.is_ok());
         
         // Test valid window with title mode
-        let result = registry.create("window_with_title", 1, &[3]);
+        let result = registry.create("window_with_title", &ModeParameters::window_with_title(10, 3, "Test".to_string()));
         assert!(result.is_ok());
     }
 } 

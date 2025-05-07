@@ -2,9 +2,8 @@ use std::sync::Arc;
 use std::sync::atomic::AtomicUsize;
 use std::fmt::Debug;
 use std::collections::{VecDeque, HashSet, HashMap};
-use std::any::Any;
+use std::any::{Any, TypeId};
 use crate::errors::ModeCreationError;
-use std::any::TypeId;
 
 pub mod limited;
 pub mod capturing;
@@ -141,111 +140,147 @@ pub trait HasBaseConfig {
     fn base_config_mut(&mut self) -> &mut BaseConfig;
 }
 
-/// Trait for types that can have a title.
-///
-/// This capability is implemented by modes that support setting and retrieving a title,
-/// such as WindowWithTitle mode.
-pub trait WithTitle: Send + Sync {
-    /// Set the title for this config.
-    fn set_title(&mut self, title: String) -> Result<(), ModeCreationError>;
-    
-    /// Get the current title.
-    fn get_title(&self) -> &str;
-}
+/// Core capabilities for display modes.
+/// 
+/// This module groups the core capabilities that display modes can implement.
+/// Each capability is represented by a trait that defines a specific set of
+/// functionality a mode can provide.
+pub mod capabilities {
+    use super::*;
 
-/// Trait for types that can have a custom size.
-///
-/// This capability is implemented by modes that support custom sizes,
-/// such as Window and WindowWithTitle.
-pub trait WithCustomSize: Send + Sync {
-    /// Set the maximum number of lines to display.
-    fn set_max_lines(&mut self, max_lines: usize) -> Result<(), ModeCreationError>;
-    
-    /// Get the maximum number of lines that can be displayed.
-    fn get_max_lines(&self) -> usize;
-}
-
-/// Trait for types that support emoji display.
-///
-/// This capability is implemented by modes that can display emoji characters.
-pub trait WithEmoji: Send + Sync {
-    /// Add an emoji to the display.
-    fn add_emoji(&mut self, emoji: &str) -> Result<(), ModeCreationError>;
-    
-    /// Get the current emojis.
-    fn get_emojis(&self) -> Vec<String>;
-}
-
-/// Composite trait for types that support both title and emoji functionality.
-///
-/// This capability combines WithTitle and WithEmoji to provide a unified
-/// interface for modes that support both capabilities, reducing the need
-/// for multiple capability checks and casts.
-pub trait WithTitleAndEmoji: WithTitle + WithEmoji {
-    /// Set the title and add an emoji in a single operation.
+    /// Capability for modes that can have a title.
     ///
-    /// This is a convenience method that sets the title and adds an emoji
-    /// in a single call, which can be more efficient than separate calls.
-    ///
-    /// # Parameters
-    /// * `title` - The new title to set
-    /// * `emoji` - The emoji to add
-    fn set_title_with_emoji(&mut self, title: String, emoji: &str) -> Result<(), ModeCreationError> {
-        self.set_title(title)?;
-        self.add_emoji(emoji)
+    /// # Examples
+    /// ```rust
+    /// # use nt_progress::modes::{WindowWithTitle, WithTitle};
+    /// let mut mode = WindowWithTitle::new(10, 5, "Initial Title".to_string())?;
+    /// mode.set_title("New Title".to_string())?;
+    /// assert_eq!(mode.get_title(), "New Title");
+    /// # Ok::<(), ModeCreationError>(())
+    /// ```
+    pub trait WithTitle: Send + Sync {
+        /// Set the title for this config.
+        ///
+        /// # Errors
+        /// Returns `ModeCreationError` if the title is invalid or cannot be set.
+        fn set_title(&mut self, title: String) -> Result<(), ModeCreationError>;
+        
+        /// Get the current title.
+        ///
+        /// # Returns
+        /// A reference to the current title string.
+        fn get_title(&self) -> &str;
     }
-    
-    /// Clear all emojis and set a new title.
+
+    /// Capability for modes that can have a custom display size.
     ///
-    /// This method resets the emoji state and sets a new title.
+    /// # Examples
+    /// ```rust
+    /// # use nt_progress::modes::{Window, WithCustomSize};
+    /// let mut mode = Window::new(10, 5)?;
+    /// mode.set_max_lines(8)?;
+    /// assert_eq!(mode.get_max_lines(), 8);
+    /// # Ok::<(), ModeCreationError>(())
+    /// ```
+    pub trait WithCustomSize: Send + Sync {
+        /// Set the maximum number of lines to display.
+        ///
+        /// # Errors
+        /// Returns `ModeCreationError` if the size is invalid.
+        fn set_max_lines(&mut self, max_lines: usize) -> Result<(), ModeCreationError>;
+        
+        /// Get the maximum number of lines that can be displayed.
+        fn get_max_lines(&self) -> usize;
+    }
+
+    /// Capability for modes that support emoji display.
     ///
-    /// # Parameters
-    /// * `title` - The new title to set
-    fn reset_with_title(&mut self, title: String) -> Result<(), ModeCreationError>;
-    
-    /// Get the fully formatted title with emojis.
+    /// # Examples
+    /// ```rust
+    /// # use nt_progress::modes::{WindowWithTitle, WithEmoji};
+    /// let mut mode = WindowWithTitle::new(10, 5, "Title".to_string())?;
+    /// mode.add_emoji("✨")?;
+    /// assert_eq!(mode.get_emojis(), vec!["✨".to_string()]);
+    /// # Ok::<(), ModeCreationError>(())
+    /// ```
+    pub trait WithEmoji: Send + Sync {
+        /// Add an emoji to the display.
+        ///
+        /// # Errors
+        /// Returns `ModeCreationError` if the emoji is invalid or cannot be added.
+        fn add_emoji(&mut self, emoji: &str) -> Result<(), ModeCreationError>;
+        
+        /// Get the current emojis.
+        fn get_emojis(&self) -> Vec<String>;
+    }
+
+    /// Composite capability for modes that support both title and emoji.
     ///
-    /// This method returns the complete title string including any emoji
-    /// characters that have been added.
+    /// This trait provides convenience methods for modes that implement both
+    /// `WithTitle` and `WithEmoji` capabilities.
     ///
-    /// # Returns
-    /// The formatted title string
-    fn get_formatted_title(&self) -> String;
+    /// # Examples
+    /// ```rust
+    /// # use nt_progress::modes::{WindowWithTitle, WithTitleAndEmoji};
+    /// let mut mode = WindowWithTitle::new(10, 5, "Title".to_string())?;
+    /// mode.set_title_with_emoji("New Title".to_string(), "✨")?;
+    /// assert_eq!(mode.get_formatted_title(), "✨ New Title");
+    /// # Ok::<(), ModeCreationError>(())
+    /// ```
+    pub trait WithTitleAndEmoji: WithTitle + WithEmoji {
+        /// Set the title and add an emoji in a single operation.
+        ///
+        /// # Errors
+        /// Returns `ModeCreationError` if either operation fails.
+        fn set_title_with_emoji(&mut self, title: String, emoji: &str) -> Result<(), ModeCreationError> {
+            self.set_title(title)?;
+            self.add_emoji(emoji)
+        }
+        
+        /// Clear all emojis and set a new title.
+        ///
+        /// # Errors
+        /// Returns `ModeCreationError` if the title cannot be set.
+        fn reset_with_title(&mut self, title: String) -> Result<(), ModeCreationError>;
+        
+        /// Get the fully formatted title with emojis.
+        fn get_formatted_title(&self) -> String;
+    }
+
+    /// Capability for standard window operations.
+    ///
+    /// This trait defines the core operations that all window-based modes
+    /// should support.
+    ///
+    /// # Examples
+    /// ```rust
+    /// # use nt_progress::modes::{Window, StandardWindow};
+    /// let mut mode = Window::new(10, 5)?;
+    /// mode.add_line("Line 1".to_string());
+    /// assert_eq!(mode.line_count(), 1);
+    /// mode.clear();
+    /// assert!(mode.is_empty());
+    /// # Ok::<(), ModeCreationError>(())
+    /// ```
+    pub trait StandardWindow: WithCustomSize {
+        /// Clear all content from the window.
+        fn clear(&mut self);
+        
+        /// Get the current content as a vector of strings.
+        fn get_content(&self) -> Vec<String>;
+        
+        /// Add a single line to the window.
+        fn add_line(&mut self, line: String);
+        
+        /// Check if the window is empty.
+        fn is_empty(&self) -> bool;
+        
+        /// Get the number of lines currently displayed.
+        fn line_count(&self) -> usize;
+    }
 }
 
-/// Trait for common window operations across different window-based modes.
-///
-/// This capability provides a standard interface for operations that all
-/// window-based display modes support, such as scrolling, clearing,
-/// and managing displayed lines.
-pub trait StandardWindow: WithCustomSize {
-    /// Clear all content from the window.
-    fn clear(&mut self);
-    
-    /// Get the current content as a vector of strings.
-    ///
-    /// # Returns
-    /// A vector containing all visible lines
-    fn get_content(&self) -> Vec<String>;
-    
-    /// Add a single line to the window.
-    ///
-    /// # Parameters
-    /// * `line` - The line to add
-    fn add_line(&mut self, line: String);
-    
-    /// Check if the window is empty.
-    ///
-    /// # Returns
-    /// true if the window has no content, false otherwise
-    fn is_empty(&self) -> bool;
-    
-    /// Get the number of lines currently displayed.
-    ///
-    /// # Returns
-    /// The current line count
-    fn line_count(&self) -> usize;
-}
+pub use capabilities::*;
 
 /// Enum representing the capabilities supported by different modes.
 ///
@@ -269,130 +304,155 @@ pub enum Capability {
     StandardWindow,
 }
 
-/// Extension methods for ThreadConfig to access capabilities.
+/// Extension trait providing capability checks and conversions.
+///
+/// This trait is automatically implemented for all types that implement
+/// `ThreadConfig`. It provides methods to check for supported capabilities
+/// and safely convert to capability trait objects.
 pub trait ThreadConfigExt: ThreadConfig {
     /// Check if this config supports the WithTitle capability.
+    ///
+    /// # Returns
+    /// `true` if the config supports setting and getting a title.
     fn supports_title(&self) -> bool {
-        self.as_any().type_id() == TypeId::of::<WindowWithTitle>()
+        self.as_any().is::<WindowWithTitle>()
     }
     
     /// Try to get this config as a WithTitle.
+    ///
+    /// # Returns
+    /// Some(&dyn WithTitle) if the config supports titles, None otherwise.
     fn as_title(&self) -> Option<&dyn WithTitle> {
-        // WindowWithTitle is currently the only implementation of WithTitle
         self.as_any().downcast_ref::<WindowWithTitle>().map(|w| w as &dyn WithTitle)
     }
     
     /// Try to get this config as a mutable WithTitle.
+    ///
+    /// # Returns
+    /// Some(&mut dyn WithTitle) if the config supports titles, None otherwise.
     fn as_title_mut(&mut self) -> Option<&mut dyn WithTitle> {
-        // WindowWithTitle is currently the only implementation of WithTitle
         self.as_any_mut().downcast_mut::<WindowWithTitle>().map(|w| w as &mut dyn WithTitle)
     }
     
     /// Check if this config supports the WithCustomSize capability.
+    ///
+    /// # Returns
+    /// `true` if the config supports custom window sizes.
     fn supports_custom_size(&self) -> bool {
         let type_id = self.as_any().type_id();
-        type_id == TypeId::of::<Window>() || type_id == TypeId::of::<WindowWithTitle>()
+        matches!(type_id, t if t == TypeId::of::<Window>() || t == TypeId::of::<WindowWithTitle>())
     }
     
     /// Try to get this config as a WithCustomSize.
+    ///
+    /// # Returns
+    /// Some(&dyn WithCustomSize) if the config supports custom sizes, None otherwise.
     fn as_custom_size(&self) -> Option<&dyn WithCustomSize> {
-        if let Some(w) = self.as_any().downcast_ref::<Window>() {
-            Some(w as &dyn WithCustomSize)
-        } else if let Some(w) = self.as_any().downcast_ref::<WindowWithTitle>() {
+        let any = self.as_any();
+        if let Some(w) = any.downcast_ref::<Window>() {
             Some(w as &dyn WithCustomSize)
         } else {
-            None
+            any.downcast_ref::<WindowWithTitle>().map(|w| w as &dyn WithCustomSize)
         }
     }
     
     /// Try to get this config as a mutable WithCustomSize.
+    ///
+    /// # Returns
+    /// Some(&mut dyn WithCustomSize) if the config supports custom sizes, None otherwise.
     fn as_custom_size_mut(&mut self) -> Option<&mut dyn WithCustomSize> {
         let type_id = self.as_any().type_id();
-        
+        let any = self.as_any_mut();
         if type_id == TypeId::of::<Window>() {
-            // It's a Window, do the downcast
-            self.as_any_mut().downcast_mut::<Window>()
-                .map(|w| w as &mut dyn WithCustomSize)
+            any.downcast_mut::<Window>().map(|w| w as &mut dyn WithCustomSize)
         } else if type_id == TypeId::of::<WindowWithTitle>() {
-            // It's a WindowWithTitle, do the downcast
-            self.as_any_mut().downcast_mut::<WindowWithTitle>()
-                .map(|w| w as &mut dyn WithCustomSize)
+            any.downcast_mut::<WindowWithTitle>().map(|w| w as &mut dyn WithCustomSize)
         } else {
-            // Neither type matched
             None
         }
     }
     
     /// Check if this config supports the WithEmoji capability.
+    ///
+    /// # Returns
+    /// `true` if the config supports emoji display.
     fn supports_emoji(&self) -> bool {
-        // WindowWithTitle is currently the only implementation of WithEmoji
-        self.as_any().type_id() == TypeId::of::<WindowWithTitle>()
+        self.as_any().is::<WindowWithTitle>()
     }
     
     /// Try to get this config as a WithEmoji.
+    ///
+    /// # Returns
+    /// Some(&dyn WithEmoji) if the config supports emojis, None otherwise.
     fn as_emoji(&self) -> Option<&dyn WithEmoji> {
-        // WindowWithTitle is currently the only implementation of WithEmoji
         self.as_any().downcast_ref::<WindowWithTitle>().map(|w| w as &dyn WithEmoji)
     }
     
     /// Try to get this config as a mutable WithEmoji.
+    ///
+    /// # Returns
+    /// Some(&mut dyn WithEmoji) if the config supports emojis, None otherwise.
     fn as_emoji_mut(&mut self) -> Option<&mut dyn WithEmoji> {
-        // WindowWithTitle is currently the only implementation of WithEmoji
         self.as_any_mut().downcast_mut::<WindowWithTitle>().map(|w| w as &mut dyn WithEmoji)
     }
     
     /// Check if this config supports the WithTitleAndEmoji capability.
+    ///
+    /// # Returns
+    /// `true` if the config supports both titles and emojis.
     fn supports_title_and_emoji(&self) -> bool {
-        // WindowWithTitle is currently the only implementation of WithTitleAndEmoji
-        self.as_any().type_id() == TypeId::of::<WindowWithTitle>()
+        self.as_any().is::<WindowWithTitle>()
     }
     
     /// Try to get this config as a WithTitleAndEmoji.
+    ///
+    /// # Returns
+    /// Some(&dyn WithTitleAndEmoji) if the config supports both titles and emojis, None otherwise.
     fn as_title_and_emoji(&self) -> Option<&dyn WithTitleAndEmoji> {
-        // WindowWithTitle is currently the only implementation of WithTitleAndEmoji
         self.as_any().downcast_ref::<WindowWithTitle>().map(|w| w as &dyn WithTitleAndEmoji)
     }
     
     /// Try to get this config as a mutable WithTitleAndEmoji.
+    ///
+    /// # Returns
+    /// Some(&mut dyn WithTitleAndEmoji) if the config supports both titles and emojis, None otherwise.
     fn as_title_and_emoji_mut(&mut self) -> Option<&mut dyn WithTitleAndEmoji> {
-        // WindowWithTitle is currently the only implementation of WithTitleAndEmoji
         self.as_any_mut().downcast_mut::<WindowWithTitle>().map(|w| w as &mut dyn WithTitleAndEmoji)
     }
     
     /// Check if this config supports the StandardWindow capability.
+    ///
+    /// # Returns
+    /// `true` if the config supports standard window operations.
     fn supports_standard_window(&self) -> bool {
-        // Both Window and WindowWithTitle will implement StandardWindow
         let type_id = self.as_any().type_id();
-        type_id == TypeId::of::<Window>() || type_id == TypeId::of::<WindowWithTitle>()
+        matches!(type_id, t if t == TypeId::of::<Window>() || t == TypeId::of::<WindowWithTitle>())
     }
     
     /// Try to get this config as a StandardWindow.
+    ///
+    /// # Returns
+    /// Some(&dyn StandardWindow) if the config supports standard window operations, None otherwise.
     fn as_standard_window(&self) -> Option<&dyn StandardWindow> {
-        // Check both Window and WindowWithTitle types
-        let type_id = self.as_any().type_id();
-        
-        if type_id == TypeId::of::<Window>() {
-            self.as_any().downcast_ref::<Window>()
-                .map(|w| w as &dyn StandardWindow)
-        } else if type_id == TypeId::of::<WindowWithTitle>() {
-            self.as_any().downcast_ref::<WindowWithTitle>()
-                .map(|w| w as &dyn StandardWindow)
+        let any = self.as_any();
+        if let Some(w) = any.downcast_ref::<Window>() {
+            Some(w as &dyn StandardWindow)
         } else {
-            None
+            any.downcast_ref::<WindowWithTitle>().map(|w| w as &dyn StandardWindow)
         }
     }
     
     /// Try to get this config as a mutable StandardWindow.
+    ///
+    /// # Returns
+    /// Some(&mut dyn StandardWindow) if the config supports standard window operations, None otherwise.
     fn as_standard_window_mut(&mut self) -> Option<&mut dyn StandardWindow> {
-        // Check both Window and WindowWithTitle types
         let type_id = self.as_any().type_id();
-        
+        let any = self.as_any_mut();
         if type_id == TypeId::of::<Window>() {
-            self.as_any_mut().downcast_mut::<Window>()
-                .map(|w| w as &mut dyn StandardWindow)
+            any.downcast_mut::<Window>().map(|w| w as &mut dyn StandardWindow)
         } else if type_id == TypeId::of::<WindowWithTitle>() {
-            self.as_any_mut().downcast_mut::<WindowWithTitle>()
-                .map(|w| w as &mut dyn StandardWindow)
+            any.downcast_mut::<WindowWithTitle>().map(|w| w as &mut dyn StandardWindow)
         } else {
             None
         }
@@ -400,49 +460,33 @@ pub trait ThreadConfigExt: ThreadConfig {
 
     /// Get a set of all capabilities supported by this config.
     ///
-    /// This method returns a HashSet containing all the capabilities
-    /// that this mode supports. It can be used for runtime capability
-    /// discovery.
-    ///
     /// # Returns
-    /// A HashSet of supported Capability values
+    /// A HashSet containing all supported capabilities.
     fn capabilities(&self) -> HashSet<Capability> {
         let mut caps = HashSet::new();
         
-        if self.supports_title() {
-            caps.insert(Capability::Title);
+        // Use a macro to reduce repetition
+        macro_rules! add_if_supported {
+            ($cap:expr, $check:expr) => {
+                if $check {
+                    caps.insert($cap);
+                }
+            };
         }
         
-        if self.supports_custom_size() {
-            caps.insert(Capability::CustomSize);
-        }
-        
-        if self.supports_emoji() {
-            caps.insert(Capability::Emoji);
-        }
-        
-        if self.supports_title_and_emoji() {
-            caps.insert(Capability::TitleAndEmoji);
-        }
-        
-        if self.supports_standard_window() {
-            caps.insert(Capability::StandardWindow);
-        }
+        add_if_supported!(Capability::Title, self.supports_title());
+        add_if_supported!(Capability::CustomSize, self.supports_custom_size());
+        add_if_supported!(Capability::Emoji, self.supports_emoji());
+        add_if_supported!(Capability::TitleAndEmoji, self.supports_title_and_emoji());
+        add_if_supported!(Capability::StandardWindow, self.supports_standard_window());
         
         caps
     }
     
     /// Check if this config supports a specific capability.
     ///
-    /// This method provides a convenient way to check if the mode
-    /// supports a specific capability without having to call
-    /// individual support methods.
-    ///
-    /// # Parameters
-    /// * `capability` - The capability to check for
-    ///
     /// # Returns
-    /// true if the capability is supported, false otherwise
+    /// `true` if the config supports the specified capability.
     fn supports_capability(&self, capability: Capability) -> bool {
         match capability {
             Capability::Title => self.supports_title(),
@@ -909,6 +953,151 @@ pub enum ThreadMode {
     WindowWithTitle(usize),
 }
 
+/// Standardized parameters for mode creation
+///
+/// This struct provides a consistent way to pass parameters to mode creators
+/// and includes validation methods to ensure parameters are valid.
+#[derive(Debug, Clone)]
+pub struct ModeParameters {
+    /// The total number of jobs to track
+    pub total_jobs: usize,
+    /// The maximum number of lines to display (if applicable)
+    pub max_lines: Option<usize>,
+    /// The title to display (if applicable)
+    pub title: Option<String>,
+    /// Whether to enable emoji support (if applicable)
+    pub emoji_support: Option<bool>,
+    /// Whether to enable title support (if applicable)
+    pub title_support: Option<bool>,
+    /// Whether to enable passthrough (if applicable)
+    pub passthrough: Option<bool>,
+}
+
+impl ModeParameters {
+    /// Create a new ModeParameters with required parameters
+    pub fn new(total_jobs: usize) -> Self {
+        Self {
+            total_jobs,
+            max_lines: None,
+            title: None,
+            emoji_support: None,
+            title_support: None,
+            passthrough: None,
+        }
+    }
+
+    /// Create parameters for Limited mode
+    pub fn limited(total_jobs: usize) -> Self {
+        Self::new(total_jobs)
+    }
+
+    /// Create parameters for Capturing mode
+    pub fn capturing(total_jobs: usize) -> Self {
+        Self::new(total_jobs)
+    }
+
+    /// Create parameters for Window mode
+    pub fn window(total_jobs: usize, max_lines: usize) -> Self {
+        Self {
+            total_jobs,
+            max_lines: Some(max_lines),
+            title: None,
+            emoji_support: None,
+            title_support: None,
+            passthrough: None,
+        }
+    }
+
+    /// Create parameters for WindowWithTitle mode
+    pub fn window_with_title(total_jobs: usize, max_lines: usize, title: String) -> Self {
+        Self {
+            total_jobs,
+            max_lines: Some(max_lines),
+            title: Some(title),
+            emoji_support: Some(true),
+            title_support: Some(true),
+            passthrough: None,
+        }
+    }
+
+    /// Validate parameters for a specific mode
+    pub fn validate(&self, mode_name: &str) -> Result<(), ModeCreationError> {
+        // Validate total_jobs
+        if self.total_jobs == 0 {
+            return Err(ModeCreationError::ValidationError {
+                mode_name: mode_name.to_string(),
+                rule: "total_jobs".to_string(),
+                value: "0".to_string(),
+                reason: Some("Total jobs must be greater than 0".to_string()),
+            });
+        }
+
+        // Validate max_lines for window modes
+        if mode_name == "window" || mode_name == "window_with_title" {
+            if let Some(max_lines) = self.max_lines {
+                let min_size = if mode_name == "window" { 1 } else { 2 };
+                if max_lines < min_size {
+                    return Err(ModeCreationError::InvalidWindowSize {
+                        size: max_lines,
+                        min_size,
+                        mode_name: mode_name.to_string(),
+                        reason: Some(format!("{} mode requires at least {} lines", mode_name, min_size)),
+                    });
+                }
+            } else {
+                return Err(ModeCreationError::MissingParameter {
+                    param_name: "max_lines".to_string(),
+                    mode_name: mode_name.to_string(),
+                    reason: Some(format!("{} mode requires max_lines parameter", mode_name)),
+                });
+            }
+        }
+
+        // Validate title for WindowWithTitle mode
+        if mode_name == "window_with_title" {
+            if self.title.is_none() {
+                return Err(ModeCreationError::MissingParameter {
+                    param_name: "title".to_string(),
+                    mode_name: mode_name.to_string(),
+                    reason: Some("WindowWithTitle mode requires a title".to_string()),
+                });
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Get the total jobs parameter
+    pub fn total_jobs(&self) -> usize {
+        self.total_jobs
+    }
+
+    /// Get the max lines parameter
+    pub fn max_lines(&self) -> Option<usize> {
+        self.max_lines
+    }
+
+    /// Get the title parameter
+    pub fn title(&self) -> Option<&str> {
+        self.title.as_deref()
+    }
+
+    /// Get the emoji support parameter
+    pub fn emoji_support(&self) -> Option<bool> {
+        self.emoji_support
+    }
+
+    /// Get the title support parameter
+    pub fn title_support(&self) -> Option<bool> {
+        self.title_support
+    }
+
+    /// Get the passthrough parameter
+    pub fn passthrough(&self) -> Option<bool> {
+        self.passthrough
+    }
+}
+
 /// Common configuration shared across all modes.
 ///
 /// BaseConfig provides basic job tracking functionality that
@@ -1005,4 +1194,202 @@ impl<T: HasBaseConfig + Send + Sync + Debug> JobTracker for T {
     fn set_total_jobs(&mut self, total: usize) {
         self.base_config_mut().set_total_jobs(total);
     }
-} 
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_window_with_title_capabilities() {
+        let mut mode = WindowWithTitle::new(10, 5, "Test Title".to_string()).unwrap();
+        let mut config = Config::from(Box::new(mode) as Box<dyn ThreadConfig>);
+
+        // Test title capability
+        {
+            let title_config = config.as_type_mut::<WindowWithTitle>().unwrap();
+            assert!(title_config.supports_title());
+            assert!(title_config.set_title("New Title".to_string()).is_ok());
+            assert_eq!(title_config.get_title(), "New Title");
+        }
+
+        // Test emoji capability
+        {
+            let title_config = config.as_type_mut::<WindowWithTitle>().unwrap();
+            assert!(title_config.supports_emoji());
+            assert!(title_config.add_emoji("✨").is_ok());
+            assert_eq!(title_config.get_emojis(), vec!["✨".to_string()]);
+        }
+
+        // Test title and emoji capability
+        {
+            let title_config = config.as_type::<WindowWithTitle>().unwrap();
+            assert!(title_config.supports_title_and_emoji());
+            assert_eq!(title_config.get_formatted_title(), "✨ New Title");
+        }
+
+        // Test custom size capability
+        {
+            let title_config = config.as_type_mut::<WindowWithTitle>().unwrap();
+            assert!(title_config.supports_custom_size());
+            assert!(title_config.set_max_lines(8).is_ok());
+            assert_eq!(title_config.get_max_lines(), 8);
+        }
+
+        // Test standard window capability
+        {
+            let title_config = config.as_type_mut::<WindowWithTitle>().unwrap();
+            assert!(title_config.supports_standard_window());
+            title_config.add_line("Test Line".to_string());
+            assert_eq!(title_config.line_count(), 1);
+            assert!(!title_config.is_empty());
+            title_config.clear();
+            assert!(title_config.is_empty());
+        }
+
+        // Test capability set
+        {
+            let title_config = config.as_type::<WindowWithTitle>().unwrap();
+            let caps = title_config.capabilities();
+            assert!(caps.contains(&Capability::Title));
+            assert!(caps.contains(&Capability::Emoji));
+            assert!(caps.contains(&Capability::TitleAndEmoji));
+            assert!(caps.contains(&Capability::CustomSize));
+            assert!(caps.contains(&Capability::StandardWindow));
+        }
+    }
+
+    #[test]
+    fn test_window_capabilities() {
+        let mut mode = Window::new(10, 5).unwrap();
+        let mut config = Config::from(Box::new(mode) as Box<dyn ThreadConfig>);
+
+        // Test title capability (should not be supported)
+        {
+            let window_config = config.as_type::<Window>().unwrap();
+            assert!(!window_config.supports_title());
+        }
+
+        // Test emoji capability (should not be supported)
+        {
+            let window_config = config.as_type::<Window>().unwrap();
+            assert!(!window_config.supports_emoji());
+        }
+
+        // Test title and emoji capability (should not be supported)
+        {
+            let window_config = config.as_type::<Window>().unwrap();
+            assert!(!window_config.supports_title_and_emoji());
+        }
+
+        // Test custom size capability
+        {
+            let window_config = config.as_type_mut::<Window>().unwrap();
+            assert!(window_config.supports_custom_size());
+            assert!(window_config.set_max_lines(8).is_ok());
+            assert_eq!(window_config.get_max_lines(), 8);
+        }
+
+        // Test standard window capability
+        {
+            let window_config = config.as_type_mut::<Window>().unwrap();
+            assert!(window_config.supports_standard_window());
+            window_config.add_line("Test Line".to_string());
+            assert_eq!(window_config.line_count(), 1);
+            assert!(!window_config.is_empty());
+            window_config.clear();
+            assert!(window_config.is_empty());
+        }
+
+        // Test capability set
+        {
+            let window_config = config.as_type::<Window>().unwrap();
+            let caps = window_config.capabilities();
+            assert!(!caps.contains(&Capability::Title));
+            assert!(!caps.contains(&Capability::Emoji));
+            assert!(!caps.contains(&Capability::TitleAndEmoji));
+            assert!(caps.contains(&Capability::CustomSize));
+            assert!(caps.contains(&Capability::StandardWindow));
+        }
+    }
+
+    #[test]
+    fn test_limited_capabilities() {
+        let mode = Limited::new(10);
+        let mut config = Config::from(Box::new(mode) as Box<dyn ThreadConfig>);
+
+        // Test that no window capabilities are supported
+        {
+            let limited_config = config.as_type::<Limited>().unwrap();
+            assert!(!limited_config.supports_title());
+            assert!(!limited_config.supports_emoji());
+            assert!(!limited_config.supports_title_and_emoji());
+            assert!(!limited_config.supports_custom_size());
+            assert!(!limited_config.supports_standard_window());
+        }
+
+        // Test capability set
+        {
+            let limited_config = config.as_type::<Limited>().unwrap();
+            let caps = limited_config.capabilities();
+            assert!(caps.is_empty());
+        }
+    }
+
+    #[test]
+    fn test_capability_conversion() {
+        let mut mode = WindowWithTitle::new(10, 5, "Test".to_string()).unwrap();
+        let mut config = Config::from(Box::new(mode) as Box<dyn ThreadConfig>);
+
+        // Test successful conversions
+        assert!(config.as_type::<WindowWithTitle>().is_some());
+        assert!(config.as_type_mut::<WindowWithTitle>().is_some());
+
+        // Test failed conversions
+        assert!(config.as_type::<Window>().is_none());
+        assert!(config.as_type_mut::<Window>().is_none());
+        assert!(config.as_type::<Limited>().is_none());
+        assert!(config.as_type_mut::<Limited>().is_none());
+    }
+
+    #[test]
+    fn test_capability_error_handling() {
+        let mode = Limited::new(10);
+        let mut config = Config::from(Box::new(mode) as Box<dyn ThreadConfig>);
+
+        // Test error handling for unsupported capabilities
+        {
+            let limited_config = config.as_type_mut::<Limited>().unwrap();
+            assert!(!limited_config.supports_title());
+            assert!(!limited_config.supports_emoji());
+            assert!(!limited_config.supports_custom_size());
+        }
+    }
+
+    #[test]
+    fn test_capability_set() {
+        let window = Window::new(10, 3).unwrap();
+        let window_with_title = WindowWithTitle::new(10, 3, "Test".to_string()).unwrap();
+        let limited = Limited::new(10);
+        
+        // Check Window capabilities
+        let window_caps = window.capabilities();
+        assert!(window_caps.contains(&Capability::CustomSize));
+        assert!(window_caps.contains(&Capability::StandardWindow));
+        assert!(!window_caps.contains(&Capability::Title));
+        assert!(!window_caps.contains(&Capability::Emoji));
+        assert!(!window_caps.contains(&Capability::TitleAndEmoji));
+        
+        // Check WindowWithTitle capabilities
+        let window_with_title_caps = window_with_title.capabilities();
+        assert!(window_with_title_caps.contains(&Capability::CustomSize));
+        assert!(window_with_title_caps.contains(&Capability::StandardWindow));
+        assert!(window_with_title_caps.contains(&Capability::Title));
+        assert!(window_with_title_caps.contains(&Capability::Emoji));
+        assert!(window_with_title_caps.contains(&Capability::TitleAndEmoji));
+        
+        // Check Limited capabilities
+        let limited_caps = limited.capabilities();
+        assert!(limited_caps.is_empty());
+    }
+}
