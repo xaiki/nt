@@ -2,6 +2,38 @@
 
 This file contains completed tasks and improvements moved from the TODO.md file.
 
+## v0.1.11 (2024-05-07)
+
+### I/O Abstraction Layer
+- Added custom writer support
+  - Created `CustomWriter` trait for pluggable writers
+  - Added `WriterCapabilities` for writer feature detection  
+  - Implemented `WriterRegistry` for writer management
+  - Added comprehensive tests for custom writer functionality
+  - Improved writer integration with existing components
+
+### Changed
+- Refactored IO module structure for better organization
+- Enhanced modularity with pluggable writer system
+- Improved error handling in custom writers
+- Updated documentation for custom writer functionality
+- Added tests for filtering and specialized writer capabilities
+
+## v0.1.10 (2024-03-29)
+
+### I/O Abstraction Layer
+- Created I/O abstraction for TaskHandle
+  - Added `ProgressWriter` trait for handling both sync and async writes
+  - Implemented `OutputBuffer` for line-based buffering
+  - Added `TeeWriter` for writing to multiple destinations
+  - Updated TaskHandle to use new I/O abstractions
+  - Added comprehensive tests for I/O functionality
+
+### Changed
+- Improved TaskHandle I/O handling with buffered output
+- Enhanced error handling in I/O operations
+- Updated documentation for I/O abstractions
+
 ## v0.1.9 (2024-03-29)
 
 ### Thread Management Refactoring

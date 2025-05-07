@@ -22,6 +22,7 @@ use crate::terminal::Terminal;
 use crate::modes::Config;
 use crate::modes::factory::ModeFactory;
 use crate::thread::{ThreadManager, TaskHandle};
+pub mod io;
 
 pub mod modes;
 pub mod errors;
@@ -34,6 +35,8 @@ pub mod tests;
 pub use modes::{ModeRegistry, ModeCreator, ThreadMode};
 pub use errors::ModeCreationError;
 pub use formatter::{ProgressTemplate, TemplateContext, TemplateVar, TemplatePreset};
+pub use io::{ProgressWriter, OutputBuffer, TeeWriter};
+pub use io::custom::{CustomWriter, WriterCapabilities, WriterRegistry};
 
 thread_local! {
     static CURRENT_THREAD_ID: AtomicUsize = AtomicUsize::new(0);
