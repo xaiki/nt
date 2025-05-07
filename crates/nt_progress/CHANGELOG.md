@@ -2,6 +2,31 @@
 
 This file contains completed tasks and improvements moved from the TODO.md file.
 
+## v0.1.9 (2024-03-29)
+
+### Thread Management Refactoring
+- Completed thread management separation from mode implementation
+  - Created ThreadManager with comprehensive thread lifecycle management
+  - Implemented thread pool support with configurable limits
+  - Added thread state tracking (Running, Paused, Completed, Failed)
+  - Added thread context management for thread-specific data
+  - Improved thread resource cleanup and error handling
+  - Added comprehensive tests for thread management functionality
+
+### Added
+- New ThreadContext struct for managing thread-specific data
+- Thread state management with support for multiple states
+- Thread pool management with configurable thread limits
+- Comprehensive thread lifecycle management
+- Thread cleanup and resource management
+- Improved error handling for thread operations
+
+### Changed
+- Separated thread management from mode implementation
+- Enhanced thread safety in job tracking
+- Improved thread state transitions and notifications
+- Updated documentation for thread management features
+
 ## v0.1.7 (2024-03-28)
 
 ### Mode Factory and Dependency Injection
