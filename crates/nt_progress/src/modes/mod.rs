@@ -294,6 +294,21 @@ pub mod capabilities {
         /// Get the number of lines currently displayed.
         fn line_count(&self) -> usize;
     }
+
+    /// Trait for modes that support line wrapping.
+    pub trait WithWrappedText: Send + Sync {
+        /// Enable or disable line wrapping.
+        ///
+        /// # Parameters
+        /// * `enabled` - Whether to enable or disable line wrapping
+        fn set_line_wrapping(&mut self, enabled: bool);
+        
+        /// Check if line wrapping is enabled.
+        ///
+        /// # Returns
+        /// true if line wrapping is enabled, false otherwise
+        fn has_line_wrapping(&self) -> bool;
+    }
 }
 
 pub use capabilities::*;
@@ -318,6 +333,9 @@ pub enum Capability {
     
     /// The mode supports standard window operations.
     StandardWindow,
+
+    /// The mode supports line wrapping for long text.
+    WrappedText,
 }
 
 /// Extension trait providing capability checks and conversions.
@@ -474,6 +492,44 @@ pub trait ThreadConfigExt: ThreadConfig {
         }
     }
 
+    /// Check if this config supports the WithWrappedText capability.
+    ///
+    /// # Returns
+    /// `true` if the config supports line wrapping.
+    fn supports_wrapped_text(&self) -> bool {
+        let type_id = self.as_any().type_id();
+        matches!(type_id, t if t == TypeId::of::<Window>() || t == TypeId::of::<WindowWithTitle>())
+    }
+    
+    /// Try to get this config as a WithWrappedText.
+    ///
+    /// # Returns
+    /// Some(&dyn WithWrappedText) if the config supports line wrapping, None otherwise.
+    fn as_wrapped_text(&self) -> Option<&dyn WithWrappedText> {
+        let any = self.as_any();
+        if let Some(w) = any.downcast_ref::<Window>() {
+            Some(w as &dyn WithWrappedText)
+        } else {
+            any.downcast_ref::<WindowWithTitle>().map(|w| w as &dyn WithWrappedText)
+        }
+    }
+    
+    /// Try to get this config as a mutable WithWrappedText.
+    ///
+    /// # Returns
+    /// Some(&mut dyn WithWrappedText) if the config supports line wrapping, None otherwise.
+    fn as_wrapped_text_mut(&mut self) -> Option<&mut dyn WithWrappedText> {
+        let type_id = self.as_any().type_id();
+        let any = self.as_any_mut();
+        if type_id == TypeId::of::<Window>() {
+            any.downcast_mut::<Window>().map(|w| w as &mut dyn WithWrappedText)
+        } else if type_id == TypeId::of::<WindowWithTitle>() {
+            any.downcast_mut::<WindowWithTitle>().map(|w| w as &mut dyn WithWrappedText)
+        } else {
+            None
+        }
+    }
+
     /// Get a set of all capabilities supported by this config.
     ///
     /// # Returns
@@ -495,6 +551,7 @@ pub trait ThreadConfigExt: ThreadConfig {
         add_if_supported!(Capability::Emoji, self.supports_emoji());
         add_if_supported!(Capability::TitleAndEmoji, self.supports_title_and_emoji());
         add_if_supported!(Capability::StandardWindow, self.supports_standard_window());
+        add_if_supported!(Capability::WrappedText, self.supports_wrapped_text());
         
         caps
     }
@@ -510,6 +567,7 @@ pub trait ThreadConfigExt: ThreadConfig {
             Capability::Emoji => self.supports_emoji(),
             Capability::TitleAndEmoji => self.supports_title_and_emoji(),
             Capability::StandardWindow => self.supports_standard_window(),
+            Capability::WrappedText => self.supports_wrapped_text(),
         }
     }
 }
@@ -529,6 +587,7 @@ pub struct WindowBase {
     max_lines: usize,
     thread_buffers: HashMap<String, VecDeque<String>>,
     is_threaded_mode: bool,
+    line_wrapping: bool,
 }
 
 impl WindowBase {
@@ -559,45 +618,66 @@ impl WindowBase {
             max_lines,
             thread_buffers: HashMap::new(),
             is_threaded_mode: false,
+            line_wrapping: false,
         })
     }
     
     /// Add a message to the window.
     ///
-    /// Adds the message to the end of the window and removes lines from
-    /// the front if the number of lines exceeds max_lines.
+    /// # Parameters
+    /// * `message` - The message to add
+    pub fn add_message(&mut self, message: String) {
+        if self.line_wrapping {
+            // Use TextWrapper to wrap long lines
+            // Default to 80 columns if we can't detect terminal size
+            let terminal_width = 80;
+            
+            let wrapper = crate::terminal::TextWrapper::new(terminal_width);
+            let wrapped_lines = wrapper.wrap(&message);
+            
+            // Add each wrapped line to the window
+            for line in wrapped_lines {
+                self.add_single_line(line);
+            }
+        } else {
+            // No wrapping, add as a single line
+            self.add_single_line(message);
+        }
+    }
+    
+    /// Add a single line to the window without wrapping.
     ///
     /// # Parameters
-    /// * `message` - The message to add to the window
-    pub fn add_message(&mut self, message: String) {
-        // Check if the message is a thread message (Thread X: ...)
-        if let Some(thread_id) = message.split(':').next() {
-            if thread_id.starts_with("Thread ") {
-                // Enable threaded mode on first thread message
-                if !self.is_threaded_mode {
-                    self.is_threaded_mode = true;
-                    self.lines.clear();
+    /// * `line` - The line to add
+    fn add_single_line(&mut self, line: String) {
+        // If we're in threaded mode, add to thread buffer
+        if self.is_threaded_mode {
+            // Check if the message is a thread message (Thread X: ...)
+            if let Some(thread_id) = line.split(':').next() {
+                if thread_id.starts_with("Thread ") {
+                    // Get or create buffer for this thread
+                    let buffer = self.thread_buffers
+                        .entry(thread_id.to_string())
+                        .or_default();
+                    
+                    // Add message to thread buffer
+                    buffer.push_back(line);
+                    
+                    // Ensure buffer doesn't exceed max_lines
+                    while buffer.len() > self.max_lines {
+                        buffer.pop_front();
+                    }
+                    
+                    return;
                 }
-                
-                // Get or create buffer for this thread
-                let buffer = self.thread_buffers
-                    .entry(thread_id.to_string())
-                    .or_default();
-                
-                // Add message to thread buffer
-                buffer.push_back(message.clone());
-                
-                // Ensure buffer doesn't exceed max_lines
-                while buffer.len() > self.max_lines {
-                    buffer.pop_front();
-                }
-                
-                return;
             }
+            
+            // If not a thread message, revert to single-thread mode
+            self.is_threaded_mode = false;
         }
         
-        // For non-thread messages or if not in threaded mode
-        self.lines.push_back(message);
+        // Add to the single window buffer
+        self.lines.push_back(line);
         while self.lines.len() > self.max_lines {
             self.lines.pop_front();
         }
@@ -682,6 +762,22 @@ impl WindowBase {
     /// A mutable reference to the BaseConfig
     pub fn base_config_mut(&mut self) -> &mut BaseConfig {
         &mut self.base
+    }
+
+    /// Enable or disable line wrapping.
+    ///
+    /// # Parameters
+    /// * `enabled` - Whether to enable or disable line wrapping
+    pub fn set_line_wrapping(&mut self, enabled: bool) {
+        self.line_wrapping = enabled;
+    }
+    
+    /// Check if line wrapping is enabled.
+    ///
+    /// # Returns
+    /// true if line wrapping is enabled, false otherwise
+    pub fn has_line_wrapping(&self) -> bool {
+        self.line_wrapping
     }
 }
 

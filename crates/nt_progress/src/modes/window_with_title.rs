@@ -1,4 +1,5 @@
-use super::{ThreadConfig, WindowBase, HasBaseConfig, WithTitle, WithCustomSize, WithEmoji, WithTitleAndEmoji, StandardWindow};
+use super::{ThreadConfig, WindowBase, HasBaseConfig, WithCustomSize, StandardWindow};
+use super::capabilities::{WithTitle, WithEmoji, WithTitleAndEmoji, WithWrappedText};
 use std::any::Any;
 use crate::errors::ModeCreationError;
 use std::fmt::Debug;
@@ -326,6 +327,16 @@ impl StandardWindow for WindowWithTitle {
     
     fn line_count(&self) -> usize {
         self.window_base.line_count()
+    }
+}
+
+impl WithWrappedText for WindowWithTitle {
+    fn set_line_wrapping(&mut self, enabled: bool) {
+        self.window_base.set_line_wrapping(enabled);
+    }
+    
+    fn has_line_wrapping(&self) -> bool {
+        self.window_base.has_line_wrapping()
     }
 }
 

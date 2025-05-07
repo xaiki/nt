@@ -2,6 +2,16 @@
 
 This file contains completed tasks and improvements moved from the TODO.md file.
 
+## v0.1.19 (2024-05-14)
+
+### Feature Enhancements
+- Added line wrapping support for window display modes
+  - Implemented TextWrapper utility for wrapping long lines
+  - Added WithWrappedText capability trait for window modes
+  - Added line wrapping configuration methods to Window and WindowWithTitle modes
+  - Added comprehensive tests for line wrapping functionality
+  - Properly handles unicode and wide characters in wrapped text
+
 ## v0.1.18 (2024-05-14)
 
 ### Code Cleanup and Refactoring
