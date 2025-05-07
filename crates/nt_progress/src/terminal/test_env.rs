@@ -1,6 +1,7 @@
 use std::io::Write;
 use std::cmp::min;
 use vt100::Parser;
+use rand::{thread_rng, Rng};
 
 use super::CursorPosition;
 use super::Style;
@@ -21,7 +22,7 @@ pub struct TestEnv {
 
 impl TestEnv {
     /// Creates a new test environment with the specified terminal size
-    pub fn new(width: u16, height: u16) -> Self {
+    pub fn new_with_size(width: u16, height: u16) -> Self {
         Self {
             parser: Parser::new(height, width, 0),
             expected: Vec::new(),
@@ -33,7 +34,17 @@ impl TestEnv {
 
     /// Creates a new test environment with the same dimensions as another
     pub fn new_like(other: &TestEnv) -> Self {
-        Self::new(other.width, other.height)
+        Self::new_with_size(other.width, other.height)
+    }
+
+    /// Creates a new test environment with a random terminal size.
+    ///
+    /// Width is between 30 and 120 (inclusive), height between 10 and 80 (inclusive).
+    pub fn new() -> Self {
+        let mut rng = thread_rng();
+        let width = rng.gen_range(30..=120);
+        let height = rng.gen_range(10..=80);
+        Self::new_with_size(width, height)
     }
 
     /// Merges another test environment's output into this one
@@ -265,10 +276,6 @@ impl TestEnv {
             // Check that all expected thread messages are present somewhere in the output
             let mut missing_messages = Vec::new();
             
-            // Extract all basic message patterns to check for
-            let thread_pattern = "Thread ";
-            let message_pattern = "Message ";
-            
             // Different approach: extract all "Thread X: Message Y" parts from expected
             let mut patterns = Vec::new();
             
@@ -413,7 +420,7 @@ mod tests {
     
     #[test]
     fn test_testenv_basic_output() {
-        let mut env = TestEnv::new(80, 24);
+        let mut env = TestEnv::new_with_size(80, 24);
         
         env.write("Hello, World!");
         assert_eq!(env.contents(), "Hello, World!");
@@ -424,7 +431,7 @@ mod tests {
     
     #[test]
     fn test_testenv_cursor_position() {
-        let mut env = TestEnv::new(80, 24);
+        let mut env = TestEnv::new_with_size(80, 24);
         
         env.move_to(10, 5);
         assert_eq!(env.cursor_pos(), (10, 5));
@@ -436,7 +443,7 @@ mod tests {
     
     #[test]
     fn test_testenv_screen_dump() {
-        let mut env = TestEnv::new(80, 24);
+        let mut env = TestEnv::new_with_size(80, 24);
         
         env.write("Line 1\nLine 2\nLine 3");
         let dump = env.dump_screen();
@@ -449,7 +456,7 @@ mod tests {
     
     #[test]
     fn test_testenv_diff_generation() {
-        let env = TestEnv::new(80, 24);
+        let env = TestEnv::new_with_size(80, 24);
         
         let diff = env.generate_diff("Line 1\nLine 2\nLine 3", "Line 1\nLine X\nLine 3");
         
@@ -461,7 +468,7 @@ mod tests {
     
     #[test]
     fn test_testenv_color() {
-        let mut env = TestEnv::new(80, 24);
+        let mut env = TestEnv::new_with_size(80, 24);
         
         env.set_color(Color::Red)
            .write("Red text")

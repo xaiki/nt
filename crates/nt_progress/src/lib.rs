@@ -380,7 +380,7 @@ impl ProgressDisplay {
         };
         
         for (_, (_, task_handle)) in handles {
-            task_handle.await?;
+            task_handle.await??;
         }
         Ok(())
     }
@@ -562,7 +562,7 @@ impl TaskHandle {
     pub async fn join(self) -> Result<()> {
         let mut handles = self.progress.thread_handles.lock().await;
         if let Some((_, task_handle)) = handles.remove(&self.thread_id) {
-            task_handle.await?;
+            task_handle.await??;
         }
         Ok(())
     }
@@ -589,7 +589,7 @@ impl TaskHandle {
 
     pub async fn set_mode(&mut self, mode: ThreadMode) -> Result<()> {
         // Create a new config with the specified mode
-        let mut config = Config::new(mode, 1)?;
+        let config = Config::new(mode, 1)?;
         
         // Now that we have successfully created the config, update our thread_config
         *self.thread_config.lock().await = config;

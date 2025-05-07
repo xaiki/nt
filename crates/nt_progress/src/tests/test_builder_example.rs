@@ -144,7 +144,7 @@ async fn test_builder_edge_case_special_characters() -> Result<()> {
     
     // Run test logic INSIDE timeout
     let _result = with_timeout(async {
-        builder.test_edge_case_with_display(&display, EdgeCaseType::SpecialCharacters).await?;
+        builder.test_edge_case_with_display(&display, EdgeCaseType::SpecialChars).await?;
         Ok::<(), Error>(())
     }, 15).await?;
     

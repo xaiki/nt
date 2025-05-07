@@ -1,0 +1,69 @@
+---
+description: 
+globs: *.rs
+alwaysApply: false
+---
+# Testing Guidelines
+
+This rule outlines testing best practices for the `nt_progress` library.
+
+## Test Coverage Requirements
+
+- Create comprehensive tests for each feature
+- Test normal operation paths
+- Test error paths and recovery mechanisms
+- Test edge cases and boundary conditions
+- Include stress tests for concurrent operations
+
+## Test Organization
+
+- Group tests by functionality
+- Create specialized test modules for major features
+- Use test utilities to reduce code duplication
+- Ensure tests are isolated and do not depend on each other
+
+## Test Implementation
+
+- Use clear assertions with descriptive error messages
+- Test both public interfaces and internal implementation details
+- Verify behavior consistency across different modes
+
+## Example Test Structure
+
+```rust
+#[cfg(test)]
+mod tests {
+    use super::*;
+    
+    #[test]
+    fn test_normal_operation() {
+        // Setup
+        let mut component = Component::new();
+        
+        // Exercise
+        let result = component.operation();
+        
+        // Verify
+        assert_eq!(result, expected, "Operation should produce expected result");
+    }
+    
+    #[test]
+    fn test_error_handling() {
+        // Setup invalid state
+        let mut component = Component::with_invalid_state();
+        
+        // Exercise
+        let result = component.operation();
+        
+        // Verify proper error handling
+        assert!(result.is_err(), "Operation should fail with invalid state");
+        assert_eq!(result.unwrap_err().to_string(), "Expected error message");
+    }
+}
+```
+
+## Testing Examples
+
+For testing examples, see:
+- [terminal/test_env.rs](mdc:src/terminal/test_env.rs) - Test environment for terminal tests
+- [modes/window_with_title.rs](mdc:src/modes/window_with_title.rs) - Tests for window mode

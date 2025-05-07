@@ -1,0 +1,74 @@
+---
+description: 
+globs: *.rs
+alwaysApply: false
+---
+# Code Structure Patterns
+
+This rule outlines the coding patterns to follow in the `nt_progress` library.
+
+## Generic Trait Implementations
+
+Use trait-based abstractions with generic implementations to reduce duplication:
+
+```rust
+// PREFER this pattern for shared behavior:
+trait HasBaseConfig {
+    fn base_config(&self) -> &BaseConfig;
+    fn base_config_mut(&mut self) -> &mut BaseConfig;
+}
+
+impl<T: HasBaseConfig> JobTracker for T {
+    fn get_total_jobs(&self) -> usize {
+        self.base_config().get_total_jobs()
+    }
+    
+    // Shared implementation for all types
+}
+```
+
+## Generic Access Patterns
+
+Use generic methods instead of type-specific access:
+
+```rust
+// PREFER generic access methods:
+impl Config {
+    pub fn as_type_mut<T: 'static>(&mut self) -> Option<&mut T> {
+        self.config.as_any_mut().downcast_mut::<T>()
+    }
+}
+```
+
+## Component Composition
+
+Build functionality through composition rather than inheritance:
+
+```rust
+// PREFER composition of standard components:
+struct Mode<T> {
+    base: BaseConfig,
+    renderer: Renderer<T>,
+    formatter: Formatter,
+}
+```
+
+## Factory Pattern
+
+Use a factory registry pattern for creating mode instances:
+
+```rust
+// Register mode creators in the registry
+registry.register("window", WindowCreator);
+registry.register("limited", LimitedCreator);
+
+// Create modes through the registry
+let mode = registry.create("window", &config)?;
+```
+
+## Implementation Examples
+
+For implementation examples, check out:
+- [modes/mod.rs](mdc:src/modes/mod.rs) - Core trait definitions
+- [modes/window.rs](mdc:src/modes/window.rs) - Example window mode implementation
+- [modes/factory.rs](mdc:src/modes/factory.rs) - Mode factory implementation

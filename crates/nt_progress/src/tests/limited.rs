@@ -9,13 +9,13 @@ use crate::tests::common::with_timeout;
 async fn test_limited_basic() {
     with_timeout(async {
         let display = ProgressDisplay::new_with_mode(ThreadMode::Limited).await;
-        let mut env = TestEnv::new(80, 24);
+        let mut env = TestEnv::new_with_size(80, 24);
         
-        let _handle = display.spawn_with_mode(ThreadMode::Limited, || "limited-test").await.unwrap();
+        let _handle = display.as_ref().expect("Failed to get display").spawn_with_mode(ThreadMode::Limited, || "limited-test").await.unwrap();
         env.writeln("Test message");
         
-        display.display().await.unwrap();
-        display.stop().await.unwrap();
+        display.as_ref().expect("Failed to get display").display().await.unwrap();
+        display.as_ref().expect("Failed to get display").stop().await.unwrap();
         env.verify();
     }, 60).await.unwrap();
 }
@@ -29,8 +29,8 @@ async fn test_limited_concurrent() {
         // Spawn multiple tasks in Limited mode
         let mut handles = vec![];
         for i in 0..total_jobs {
-            let display = display.clone();
-            let mut env = TestEnv::new(80, 24);
+            let display = display.as_ref().expect("Failed to get display").clone();
+            let mut env = TestEnv::new_with_size(80, 24);
             let i = i;
             handles.push(tokio::spawn(async move {
                 display.spawn_with_mode(ThreadMode::Limited, move || format!("task-{}", i)).await.unwrap();
@@ -43,7 +43,7 @@ async fn test_limited_concurrent() {
         }
         
         // Wait for all tasks to complete and combine their outputs
-        let mut final_env = TestEnv::new(80, 24);
+        let mut final_env = TestEnv::new_with_size(80, 24);
         for handle in handles {
             let task_env = handle.await.unwrap();
             let content = task_env.contents();
@@ -53,8 +53,8 @@ async fn test_limited_concurrent() {
         }
         
         // Verify final state
-        display.display().await.unwrap();
-        display.stop().await.unwrap();
+        display.as_ref().expect("Failed to get display").display().await.unwrap();
+        display.as_ref().expect("Failed to get display").stop().await.unwrap();
         final_env.verify();
     }, 60).await.unwrap();
 } 

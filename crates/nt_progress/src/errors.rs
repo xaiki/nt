@@ -200,7 +200,7 @@ where
 }
 
 /// Errors that can occur when creating or configuring a display mode
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug)]
 pub enum ModeCreationError {
     /// Window size is invalid (e.g., zero or too small)
     InvalidWindowSize {
@@ -220,6 +220,10 @@ pub enum ModeCreationError {
     },
     /// An error occurred in the underlying mode implementation
     Implementation(String),
+    /// Operation attempted on a mode that does not support titles
+    TitleNotSupported,
+    /// Operation attempted on a mode that does not support emojis
+    EmojiNotSupported,
 }
 
 impl fmt::Display for ModeCreationError {
@@ -233,6 +237,12 @@ impl fmt::Display for ModeCreationError {
             },
             ModeCreationError::Implementation(msg) => {
                 write!(f, "Mode implementation error: {}", msg)
+            },
+            ModeCreationError::TitleNotSupported => {
+                write!(f, "Operation attempted on a mode that does not support titles")
+            },
+            ModeCreationError::EmojiNotSupported => {
+                write!(f, "Operation attempted on a mode that does not support emojis")
             }
         }
     }

@@ -1,0 +1,138 @@
+---
+description: 
+globs: 
+alwaysApply: true
+---
+# Mode Implementation Patterns
+
+This rule outlines the standard patterns for implementing display modes in the `nt_progress` library.
+
+## Mode Structure
+
+All modes should follow this standard implementation pattern:
+
+1. Create a struct that includes the appropriate base implementation:
+   ```rust
+   // Window-based mode
+   pub struct MyMode {
+       window_base: WindowBase,
+       // Mode-specific fields
+   }
+   
+   // Single-line mode
+   pub struct MyLimitedMode {
+       single_line_base: SingleLineBase,
+       // Mode-specific fields
+   }
+   ```
+
+2. Implement proper initialization with parameter validation:
+   ```rust
+   impl MyMode {
+       pub fn new(total_jobs: usize, max_lines: usize) -> Result<Self, ModeCreationError> {
+           // Validate parameters
+           if max_lines < MIN_REQUIRED_LINES {
+               return Err(ModeCreationError::InvalidWindowSize {
+                   size: max_lines,
+                   min_size: MIN_REQUIRED_LINES,
+                   mode_name: "MyMode".to_string(),
+               });
+           }
+           
+           // Create the mode
+           Ok(Self {
+               window_base: WindowBase::new(total_jobs, max_lines)?,
+               // Initialize other fields
+           })
+       }
+   }
+   ```
+
+## Required Trait Implementations
+
+Each mode should implement these traits:
+
+### 1. HasBaseConfig (for JobTracker functionality)
+
+```rust
+impl HasBaseConfig for MyMode {
+    fn base_config(&self) -> &BaseConfig {
+        self.window_base.base_config()
+    }
+    
+    fn base_config_mut(&mut self) -> &mut BaseConfig {
+        self.window_base.base_config_mut()
+    }
+}
+```
+
+### 2. ThreadConfig (core functionality)
+
+```rust
+impl ThreadConfig for MyMode {
+    fn lines_to_display(&self) -> usize {
+        // Return the number of lines needed by this mode
+        self.window_base.max_lines()
+    }
+
+    fn handle_message(&mut self, message: String) -> Vec<String> {
+        // Process the message and update state
+        self.window_base.add_message(message);
+        
+        // Return current lines to display
+        self.get_lines()
+    }
+
+    fn get_lines(&self) -> Vec<String> {
+        // Return the lines to display
+        self.window_base.get_lines()
+    }
+
+    fn clone_box(&self) -> Box<dyn ThreadConfig> {
+        Box::new(self.clone())
+    }
+    
+    fn as_any_mut(&mut self) -> &mut dyn Any {
+        self
+    }
+    
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+}
+```
+
+### 3. Optional Capability Traits
+
+Implement the appropriate capability traits as needed:
+
+```rust
+// For modes with title support
+impl WithTitle for MyMode {
+    fn set_title(&mut self, title: String) -> Result<(), ModeCreationError> {
+        // Implementation...
+    }
+    
+    fn get_title(&self) -> &str {
+        // Implementation...
+    }
+}
+
+// For modes that can add emoji
+impl WithEmoji for MyMode {
+    fn add_emoji(&mut self, emoji: &str) -> Result<(), ModeCreationError> {
+        // Implementation...
+    }
+    
+    fn get_emojis(&self) -> Vec<String> {
+        // Implementation...
+    }
+}
+```
+
+## Mode Examples
+
+For mode implementation examples, see:
+- [modes/window.rs](mdc:src/modes/window.rs) - Simple window mode
+- [modes/window_with_title.rs](mdc:src/modes/window_with_title.rs) - Mode with title support
+- [modes/limited.rs](mdc:src/modes/limited.rs) - Single-line mode

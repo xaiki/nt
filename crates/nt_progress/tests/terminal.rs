@@ -4,7 +4,7 @@ use crossterm::style::Color;
 
 #[test]
 fn test_basic_terminal_output() {
-    let mut env = TestEnv::new(80, 24);
+    let mut env = TestEnv::new();
     
     // Test basic text output
     env.write("Hello, World!");
@@ -37,7 +37,7 @@ fn test_basic_terminal_output() {
 
 #[test]
 fn test_terminal_state() {
-    let mut env = TestEnv::new(80, 24);
+    let mut env = TestEnv::new();
     
     // Test cursor position
     env.move_to(10, 5);
@@ -50,7 +50,8 @@ fn test_terminal_state() {
 
 #[test]
 fn test_terminal_size() {
-    let mut env = TestEnv::new(80, 24);
+    // Fixed size test: ensure TestEnv returns the specified dimensions
+    let mut env = TestEnv::new_with_size(80, 24);
     assert_eq!(env.size(), (80, 24));
     
     // Test writing beyond terminal width
@@ -64,7 +65,7 @@ fn test_terminal_size() {
 
 #[test]
 fn test_terminal_operations() {
-    let mut env = TestEnv::new(80, 24);
+    let mut env = TestEnv::new();
     
     // Test multiple operations in sequence
     env.write("First line\n")
@@ -87,8 +88,8 @@ fn test_terminal_operations() {
 
 #[tokio::test]
 async fn test_terminal_output() {
-    let display = ProgressDisplay::new().await;
-    let mut env = TestEnv::new(80, 24);
+    let display = ProgressDisplay::new().await.expect("Failed to create display");
+    let mut env = TestEnv::new();
     
     // Test basic output
     display.spawn_with_mode(ThreadMode::Limited, || "test-task".to_string()).await.unwrap();

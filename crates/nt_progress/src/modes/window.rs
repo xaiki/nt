@@ -134,7 +134,7 @@ mod tests {
     #[test]
     fn test_window_mode_basic() {
         let mut window = Window::new(1, 3).unwrap();
-        let mut env = TestEnv::new(80, 24);
+        let mut env = TestEnv::new_with_size(80, 24);
         
         // Test initial state
         assert_eq!(window.lines_to_display(), 3);
@@ -177,13 +177,13 @@ mod tests {
         let display = ProgressDisplay::new().await;
         let total_jobs = 3;
         let mut handles = vec![];
-        let (width, height) = TestEnv::new(80, 24).size();
+        let (width, height) = TestEnv::new_with_size(80, 24).size();
         
         // Spawn multiple tasks in Window mode
         for i in 0..total_jobs {
-            let display = display.clone();
+            let display = display.as_ref().expect("Failed to get display").clone();
             let i = i;
-            let mut task_env = TestEnv::new(width, height);
+            let mut task_env = TestEnv::new_with_size(width, height);
             handles.push(tokio::spawn(async move {
                 display.spawn_with_mode(ThreadMode::Window(3), move || format!("task-{}", i)).await.unwrap();
                 for j in 0..5 {
@@ -195,7 +195,7 @@ mod tests {
         }
         
         // Wait for all tasks to complete and combine their outputs
-        let mut final_env = TestEnv::new(80, 24);
+        let mut final_env = TestEnv::new_with_size(80, 24);
         for handle in handles {
             let task_env = handle.await.unwrap();
             let content = task_env.contents();
@@ -205,18 +205,18 @@ mod tests {
         }
         
         // Verify final state
-        display.display().await.unwrap();
-        display.stop().await.unwrap();
+        display.as_ref().expect("Failed to get display").display().await.unwrap();
+        display.as_ref().expect("Failed to get display").stop().await.unwrap();
         final_env.verify();
     }
 
     #[tokio::test]
     async fn test_window_mode_special_characters() {
         let display = ProgressDisplay::new().await;
-        let mut env = TestEnv::new(80, 24);
+        let mut env = TestEnv::new_with_size(80, 24);
         
         // Test with special characters
-        let _handle = display.spawn_with_mode(ThreadMode::Window(3), || "special-chars").await.unwrap();
+        let _handle = display.as_ref().expect("Failed to get display").spawn_with_mode(ThreadMode::Window(3), || "special-chars").await.unwrap();
         
         // Test various special characters
         env.writeln("Test with \n newlines \t tabs \r returns");
@@ -224,26 +224,26 @@ mod tests {
         env.writeln("Test with emoji: 🚀 ✨");
         
         // Verify display
-        display.display().await.unwrap();
-        display.stop().await.unwrap();
+        display.as_ref().expect("Failed to get display").display().await.unwrap();
+        display.as_ref().expect("Failed to get display").stop().await.unwrap();
         env.verify();
     }
 
     #[tokio::test]
     async fn test_window_mode_long_lines() {
         let display = ProgressDisplay::new().await;
-        let mut env = TestEnv::new(80, 24);
+        let mut env = TestEnv::new_with_size(80, 24);
         
         // Test with long lines
-        let _handle = display.spawn_with_mode(ThreadMode::Window(3), || "long-lines").await.unwrap();
+        let _handle = display.as_ref().expect("Failed to get display").spawn_with_mode(ThreadMode::Window(3), || "long-lines").await.unwrap();
         
         // Test very long line
         let long_line = "x".repeat(1000);
         env.writeln(&long_line);
         
         // Verify display
-        display.display().await.unwrap();
-        display.stop().await.unwrap();
+        display.as_ref().expect("Failed to get display").display().await.unwrap();
+        display.as_ref().expect("Failed to get display").stop().await.unwrap();
         env.verify();
     }
 } 

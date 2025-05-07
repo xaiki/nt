@@ -1,0 +1,55 @@
+---
+description: 
+globs: *.rs
+alwaysApply: false
+---
+# Error Handling Model
+
+This rule outlines the error handling strategies for the `nt_progress` library.
+
+## Error Type Hierarchy
+
+- Use a top-level error type (`ProgressError`) that encompasses all possible error cases
+- Create specialized error types for specific domains (e.g., `ModeCreationError`)
+- Error types should implement standard traits (`Error`, `Display`, etc.)
+- Use the `From` trait for error conversion
+
+```rust
+// Example error definition:
+#[derive(Debug, Error)]
+pub enum ModeCreationError {
+    #[error("Invalid window size {size}, minimum required is {min_size} for {mode_name} mode")]
+    InvalidWindowSize {
+        size: usize,
+        min_size: usize,
+        mode_name: String,
+    },
+    
+    #[error("Title not supported by this mode")]
+    TitleNotSupported,
+    
+    #[error("Implementation error: {0}")]
+    Implementation(String),
+}
+```
+
+## Context-Aware Errors
+
+Errors should capture and propagate context information:
+- Operation being performed
+- Component involved
+- Thread ID when relevant
+- Additional contextual details
+
+## Error Recovery Strategies
+
+- ALWAYS favor graceful degradation over panicking
+- Implement fallback mechanisms for configuration errors
+- Provide sensible defaults when invalid parameters are supplied
+- Make recovery strategies consistent across similar components
+
+## Error Examples
+
+For error handling examples, see:
+- [errors.rs](mdc:src/errors.rs) - Error type definitions
+- [modes/window_with_title.rs](mdc:src/modes/window_with_title.rs) - Error handling in mode implementations

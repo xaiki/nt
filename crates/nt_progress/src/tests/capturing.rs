@@ -9,7 +9,7 @@ use crate::tests::common::with_timeout;
 async fn test_capturing_basic() {
     // Create display outside timeout
     let display = ProgressDisplay::new().await.unwrap();
-    let mut env = TestEnv::new(80, 24);
+    let mut env = TestEnv::new_with_size(80, 24);
     
     // Run test within timeout
     with_timeout(async {
@@ -26,7 +26,7 @@ async fn test_capturing_basic() {
 async fn test_capturing_multi_line() {
     // Create display outside timeout
     let display = ProgressDisplay::new().await.unwrap();
-    let mut env = TestEnv::new(80, 24);
+    let mut env = TestEnv::new_with_size(80, 24);
     
     // Run test within timeout
     with_timeout(async {
@@ -54,7 +54,7 @@ async fn test_capturing_concurrent() {
         // Spawn multiple tasks
         for i in 0..total_jobs {
             let display = display.clone();
-            let mut env = TestEnv::new(80, 24);
+            let mut env = TestEnv::new_with_size(80, 24);
             let i = i;
             handles.push(tokio::spawn(async move {
                 display.spawn_with_mode(ThreadMode::Capturing, move || format!("task-{}", i)).await.unwrap();
@@ -67,7 +67,7 @@ async fn test_capturing_concurrent() {
         }
         
         // Wait for all tasks to complete and merge their outputs
-        let mut final_env = TestEnv::new(80, 24);
+        let mut final_env = TestEnv::new_with_size(80, 24);
         for handle in handles {
             let task_env = handle.await.unwrap();
             final_env.merge(task_env);
@@ -83,7 +83,7 @@ async fn test_capturing_concurrent() {
 async fn test_capturing_error_handling() {
     // Create display outside timeout
     let display = ProgressDisplay::new().await.unwrap();
-    let mut env = TestEnv::new(80, 24);
+    let mut env = TestEnv::new_with_size(80, 24);
     
     // Run test within timeout
     with_timeout(async {
@@ -100,7 +100,7 @@ async fn test_capturing_error_handling() {
 async fn test_capturing_special_chars() {
     // Create display outside timeout
     let display = ProgressDisplay::new().await.unwrap();
-    let mut env = TestEnv::new(80, 24);
+    let mut env = TestEnv::new_with_size(80, 24);
     
     // Run test within timeout
     with_timeout(async {
@@ -117,7 +117,7 @@ async fn test_capturing_special_chars() {
 async fn test_capturing_long_lines() {
     // Create display outside timeout
     let display = ProgressDisplay::new().await.unwrap();
-    let mut env = TestEnv::new(80, 24);
+    let mut env = TestEnv::new_with_size(80, 24);
     
     // Run test within timeout
     with_timeout(async {

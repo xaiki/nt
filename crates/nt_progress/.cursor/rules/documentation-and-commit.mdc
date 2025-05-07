@@ -1,0 +1,92 @@
+---
+description: 
+globs: 
+alwaysApply: true
+---
+# Documentation and Commit Guidelines
+
+This rule outlines documentation standards and commit practices for the `nt_progress` library.
+
+## Documentation Standards
+
+### README
+- Include clear feature overviews
+- Provide usage examples for all major features
+- Document error handling approaches
+- Keep the Features section up-to-date
+
+### Code Documentation
+- Document all public APIs
+- Include usage examples in doc comments
+- Explain error conditions and recovery mechanisms
+- Document thread safety guarantees
+
+Example documentation:
+
+```rust
+/// WindowWithTitle mode configuration.
+/// 
+/// In WindowWithTitle mode, the first line is considered a title
+/// and is always displayed, followed by the last N-1 lines.
+#[derive(Debug, Clone)]
+pub struct WindowWithTitle {
+    // Fields...
+}
+
+impl WindowWithTitle {
+    /// Creates a new WindowWithTitle mode configuration.
+    ///
+    /// # Parameters
+    /// * `total_jobs` - The total number of jobs to track
+    /// * `max_lines` - The maximum number of lines to display, including the title
+    /// * `title` - The title of the window
+    ///
+    /// # Returns
+    /// A Result containing either the new WindowWithTitle or a ModeCreationError
+    ///
+    /// # Errors
+    /// Returns an InvalidWindowSize error if max_lines is less than 2 (need room for title + content)
+    pub fn new(total_jobs: usize, max_lines: usize, title: String) -> Result<Self, ModeCreationError> {
+        // Implementation...
+    }
+}
+```
+
+## Commit Message Guidelines
+
+### Format
+- Use conventional commit format: `type(scope): subject`
+- Follow with a blank line and detailed description
+- Use bullet points for specific changes
+- Group related changes under subheadings
+
+### Process
+1. Create a temporary commit message file (e.g., `commit_msg.txt`)
+2. Write the complete commit message in this file
+3. Use `git commit -F commit_msg.txt` to create the commit
+4. Remove the temporary file with `rm -f commit_msg.txt`
+
+### Example Commit Message
+
+```
+feat(terminal): Implement terminal event system
+
+- Add EventManager for handling terminal events
+  - Implement channel-based event distribution
+  - Add proper cleanup and shutdown handling
+  - Support event handler registration
+
+- Implement resize event handling
+  - Add proper event propagation
+  - Handle terminal size changes
+  - Implement cleanup on shutdown
+```
+
+## Implementation Priorities
+
+1. Fix warnings and linter issues first
+2. Implement core functionality 
+3. Add robust error handling
+4. Improve usability features
+5. Optimize performance
+6. Enhance documentation

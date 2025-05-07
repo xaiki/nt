@@ -2,6 +2,11 @@
 
 This file contains completed tasks and improvements moved from the TODO.md file.
 
+## v0.1.5 (2025-05-07)
+
+### Testing Improvements
+- Added `TestEnv::new_random` to generate random terminal sizes (30–120 width, 10–80 height) to catch hard-coded assumptions
+
 ## v0.1.4 (2023-03-28)
 
 ### Code Cleanup and Refactoring

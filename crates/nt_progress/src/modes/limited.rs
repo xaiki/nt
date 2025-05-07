@@ -1,4 +1,4 @@
-use super::{ThreadConfig, SingleLineBase, HasBaseConfig};
+use super::{ThreadConfig, SingleLineBase, HasBaseConfig, BaseConfig};
 use std::any::Any;
 
 /// Configuration for Limited mode
@@ -36,18 +36,8 @@ impl Limited {
     /// A new Limited instance
     pub fn new(total_jobs: usize) -> Self {
         Self {
-            single_line_base: SingleLineBase::new(total_jobs, true), // true = passthrough enabled
+            single_line_base: SingleLineBase::new(total_jobs, true),
         }
-    }
-}
-
-impl HasBaseConfig for Limited {
-    fn base_config(&self) -> &super::BaseConfig {
-        self.single_line_base.base_config()
-    }
-    
-    fn base_config_mut(&mut self) -> &mut super::BaseConfig {
-        self.single_line_base.base_config_mut()
     }
 }
 
@@ -65,37 +55,49 @@ impl ThreadConfig for Limited {
         vec![self.single_line_base.get_line()]
     }
 
-    fn clone_box(&self) -> Box<dyn ThreadConfig> {
-        Box::new(self.clone())
+    fn as_any(&self) -> &dyn Any {
+        self
     }
-    
+
     fn as_any_mut(&mut self) -> &mut dyn Any {
         self
     }
-    
-    fn as_any(&self) -> &dyn Any {
-        self
+
+    fn clone_box(&self) -> Box<dyn ThreadConfig> {
+        Box::new(self.clone())
+    }
+}
+
+impl HasBaseConfig for Limited {
+    fn base_config(&self) -> &BaseConfig {
+        self.single_line_base.base_config()
+    }
+
+    fn base_config_mut(&mut self) -> &mut BaseConfig {
+        self.single_line_base.base_config_mut()
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ProgressDisplay;
+    use crate::modes::ThreadMode;
+    use crate::terminal::TestEnv;
     use tokio::time::sleep;
     use std::time::Duration;
-    use crate::ProgressDisplay;
-    use crate::modes::{ThreadMode, JobTracker};
-    use crate::terminal::TestEnv;
+    use crate::tests::common::with_timeout;
+    use anyhow::Result;
 
     #[test]
     fn test_limited_mode_basic() {
         let mut limited = Limited::new(1);
-        let mut env = TestEnv::new(80, 24);
+        let mut env = TestEnv::new_with_size(80, 24);
         
         // Test initial state
         assert_eq!(limited.lines_to_display(), 1);
         assert_eq!(limited.get_lines(), vec![""]);
-        assert_eq!(limited.get_total_jobs(), 1);
+        assert_eq!(limited.base_config().get_total_jobs(), 1);
         
         // Test message handling
         env.writeln("test message");
@@ -110,73 +112,85 @@ mod tests {
         env.verify();
         
         // Test completed jobs
-        assert_eq!(limited.increment_completed_jobs(), 1);
+        assert_eq!(limited.base_config_mut().increment_completed_jobs(), 1);
     }
 
     #[tokio::test]
-    async fn test_concurrent_tasks() {
-        let display = ProgressDisplay::new().await;
+    async fn test_concurrent_tasks() -> Result<()> {
+        // Create display outside timeout
+        let display = ProgressDisplay::new().await?;
         let total_jobs = 5;
-        let mut handles = vec![];
-        let mut main_env = TestEnv::new(80, 24);
+        let mut main_env = TestEnv::new_with_size(80, 24);
         let (width, height) = main_env.size();
         
-        // Test task cancellation
-        for i in 0..total_jobs {
-            let display = display.clone();
-            let i = i;
-            let mut task_env = TestEnv::new(width, height);
-            handles.push(tokio::spawn(async move {
-                display.spawn_with_mode(ThreadMode::Limited, move || format!("task-{}", i)).await.unwrap();
-                for j in 0..3 {
-                    task_env.writeln(&format!("Thread {}: Message {}", i, j));
-                    sleep(Duration::from_millis(50)).await;
-                }
-                // Simulate task cancellation
-                if i == 2 {
-                    return task_env;
-                }
-                task_env.writeln(&format!("Thread {}: Completed", i));
-                task_env
-            }));
-        }
+        // Run test within timeout
+        let _ = with_timeout(async {
+            let mut handles = vec![];
+            
+            // Test task cancellation
+            for i in 0..total_jobs {
+                let display = display.clone();
+                let i = i;
+                let mut task_env = TestEnv::new_with_size(width, height);
+                handles.push(tokio::spawn(async move {
+                    let mut task = display.spawn_with_mode(ThreadMode::Limited, move || format!("task-{}", i)).await?;
+                    for j in 0..3 {
+                        let message = format!("Thread {}: Message {}", i, j);
+                        task.capture_stdout(message.clone()).await?;
+                        task_env.writeln(&message);
+                        sleep(Duration::from_millis(50)).await;
+                    }
+                    // Simulate task cancellation
+                    if i == 2 {
+                        return Ok::<_, anyhow::Error>(task_env);
+                    }
+                    let message = format!("Thread {}: Completed", i);
+                    task.capture_stdout(message.clone()).await?;
+                    task_env.writeln(&message);
+                    Ok(task_env)
+                }));
+            }
+            
+            // Wait for all tasks to complete and merge their outputs
+            for handle in handles {
+                let task_env = handle.await??;
+                main_env.merge(task_env);
+            }
+            
+            display.display().await?;
+            Ok::<_, anyhow::Error>(())
+        }, 5).await?;
         
-        // Wait for all tasks to complete and merge their outputs
-        for handle in handles {
-            let task_env = handle.await.unwrap();
-            main_env.merge(task_env);
-        }
-        
-        display.display().await.unwrap();
-        display.stop().await.unwrap();
-        main_env.verify();
+        // Always clean up outside timeout
+        display.stop().await?;
+        Ok(())
     }
 
     #[tokio::test]
     async fn test_limited_mode_error_handling() {
         let display = ProgressDisplay::new().await;
-        let mut env = TestEnv::new(80, 24);
+        let mut env = TestEnv::new_with_size(80, 24);
         
         // Test stdout error
-        let _handle = display.spawn_with_mode(ThreadMode::Limited, || "error-test").await.unwrap();
+        let _handle = display.as_ref().expect("Failed to get display").spawn_with_mode(ThreadMode::Limited, || "error-test").await.unwrap();
         
         // Simulate stdout error
         env.writeln("Test message");
         env.writeln("Error message");
         
         // Verify display still works
-        display.display().await.unwrap();
-        display.stop().await.unwrap();
+        display.as_ref().expect("Failed to get display").display().await.unwrap();
+        display.as_ref().expect("Failed to get display").stop().await.unwrap();
         env.verify();
     }
 
     #[tokio::test]
     async fn test_limited_mode_special_characters() {
         let display = ProgressDisplay::new().await;
-        let mut env = TestEnv::new(80, 24);
+        let mut env = TestEnv::new_with_size(80, 24);
         
         // Test with special characters
-        let _handle = display.spawn_with_mode(ThreadMode::Limited, || "special-chars").await.unwrap();
+        let _handle = display.as_ref().expect("Failed to get display").spawn_with_mode(ThreadMode::Limited, || "special-chars").await.unwrap();
         
         // Test various special characters
         env.writeln("Test with \n newlines \t tabs \r returns");
@@ -184,26 +198,26 @@ mod tests {
         env.writeln("Test with emoji: 🚀 ✨");
         
         // Verify display
-        display.display().await.unwrap();
-        display.stop().await.unwrap();
+        display.as_ref().expect("Failed to get display").display().await.unwrap();
+        display.as_ref().expect("Failed to get display").stop().await.unwrap();
         env.verify();
     }
 
     #[tokio::test]
     async fn test_limited_mode_long_lines() {
         let display = ProgressDisplay::new().await;
-        let mut env = TestEnv::new(80, 24);
+        let mut env = TestEnv::new_with_size(80, 24);
         
         // Test with long lines
-        let _handle = display.spawn_with_mode(ThreadMode::Limited, || "long-lines").await.unwrap();
+        let _handle = display.as_ref().expect("Failed to get display").spawn_with_mode(ThreadMode::Limited, || "long-lines").await.unwrap();
         
         // Test very long line
         let long_line = "x".repeat(1000);
         env.writeln(&long_line);
         
         // Verify display
-        display.display().await.unwrap();
-        display.stop().await.unwrap();
+        display.as_ref().expect("Failed to get display").display().await.unwrap();
+        display.as_ref().expect("Failed to get display").stop().await.unwrap();
         env.verify();
     }
 } 

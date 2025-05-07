@@ -31,7 +31,7 @@ async fn test_progress_display_high_concurrency() {
             let task_display = display.clone();
             let i = i;
             handles.push(tokio::spawn(async move {
-                let mut env = TestEnv::new(80, 24);
+                let mut env = TestEnv::new();
                 task_display.spawn_with_mode(ThreadMode::Window(5), move || format!("task-{}", i)).await.unwrap();
                 for j in 0..10 {
                     env.writeln(&format!("Thread {}: Message {}", i, j));
@@ -56,7 +56,7 @@ async fn test_progress_display_high_concurrency() {
 async fn test_progress_display_different_modes() {
     // Create display outside timeout
     let display = ProgressDisplay::new().await.unwrap();
-    let mut env = TestEnv::new(80, 24);
+    let mut env = TestEnv::new();
     
     // Run test within timeout
     with_timeout(async {
@@ -107,7 +107,7 @@ async fn test_progress_display_error_handling() {
 async fn test_progress_display_limited_mode() {
     // Create display outside timeout
     let display = ProgressDisplay::new().await.unwrap();
-    let mut env = TestEnv::new(80, 24);
+    let mut env = TestEnv::new();
     
     // Test within timeout
     with_timeout(async {
@@ -128,7 +128,7 @@ async fn test_progress_display_limited_mode() {
 async fn test_progress_display_capturing_mode() {
     // Create display outside timeout
     let display = ProgressDisplay::new().await.unwrap();
-    let mut env = TestEnv::new(80, 24);
+    let mut env = TestEnv::new();
     
     // Test within timeout
     with_timeout(async {
@@ -149,7 +149,7 @@ async fn test_progress_display_capturing_mode() {
 async fn test_progress_display_window_mode() {
     // Create display outside timeout
     let display = ProgressDisplay::new().await.unwrap();
-    let mut env = TestEnv::new(80, 24);
+    let mut env = TestEnv::new();
     
     // Test within timeout
     with_timeout(async {
@@ -170,7 +170,7 @@ async fn test_progress_display_window_mode() {
 async fn test_progress_display_window_with_title_mode() {
     // Create display outside timeout
     let display = ProgressDisplay::new().await.unwrap();
-    let mut env = TestEnv::new(80, 24);
+    let mut env = TestEnv::new();
     
     // Test within timeout
     with_timeout(async {
@@ -190,7 +190,7 @@ async fn test_progress_display_window_with_title_mode() {
 async fn test_progress_display_empty_output() {
     // Create the display outside the timeout
     let display = ProgressDisplay::new().await.unwrap();
-    let mut env = TestEnv::new(80, 24);
+    let mut env = TestEnv::new();
     
     // Test within timeout
     with_timeout(async {
@@ -209,7 +209,7 @@ async fn test_progress_display_empty_output() {
 async fn test_progress_display_long_lines() {
     // Create the display outside the timeout
     let display = ProgressDisplay::new().await.unwrap();
-    let mut env = TestEnv::new(80, 24);
+    let mut env = TestEnv::new();
     
     // Test within timeout
     with_timeout(async {
@@ -229,7 +229,7 @@ async fn test_progress_display_long_lines() {
 async fn test_progress_display_special_chars() {
     // Create the display outside the timeout
     let display = ProgressDisplay::new().await.unwrap();
-    let mut env = TestEnv::new(80, 24);
+    let mut env = TestEnv::new();
     
     // Test within timeout
     with_timeout(async {
@@ -248,7 +248,7 @@ async fn test_progress_display_special_chars() {
 async fn test_progress_display_concurrency() {
     // Create display outside timeout
     let display = ProgressDisplay::new().await.unwrap();
-    let mut main_env = TestEnv::new(80, 24);
+    let main_env = TestEnv::new();
     let (width, height) = main_env.size();
     
     // Run test within timeout
@@ -261,7 +261,7 @@ async fn test_progress_display_concurrency() {
             let display_ref = Arc::new(display.clone());
             let i = i;
             handles.push(tokio::spawn(async move {
-                let mut task_env = TestEnv::new(width, height);
+                let mut task_env = TestEnv::new();
                 let handle = display_ref.spawn_with_mode(ThreadMode::Window(3), move || format!("task-{}", i)).await.unwrap();
                 for j in 0..5 {
                     task_env.writeln(&format!("Thread {}: Message {}", i, j));
@@ -272,7 +272,7 @@ async fn test_progress_display_concurrency() {
         }
         
         // Wait for all tasks to complete and combine their outputs
-        let mut final_env = TestEnv::new(width, height);
+        let mut final_env = TestEnv::new();
         for handle in handles {
             let task_env = handle.await.unwrap();
             let content = task_env.contents();
@@ -293,7 +293,7 @@ async fn test_progress_display_concurrency() {
 async fn test_progress_display_resource_cleanup() {
     // Create display outside timeout
     let display = ProgressDisplay::new().await.unwrap();
-    let env = TestEnv::new(80, 24);
+    let env = TestEnv::new();
     
     // Run test within timeout
     with_timeout(async {
