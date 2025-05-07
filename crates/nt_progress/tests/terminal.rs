@@ -1,6 +1,8 @@
 use nt_progress::terminal::TestEnv;
 use nt_progress::{ProgressDisplay, ThreadMode};
 use crossterm::style::Color;
+use nt_progress::terminal::test_helpers::with_timeout;
+use anyhow::Result;
 
 #[test]
 fn test_basic_terminal_output() {
@@ -87,15 +89,28 @@ fn test_terminal_operations() {
 }
 
 #[tokio::test]
-async fn test_terminal_output() {
-    let display = ProgressDisplay::new().await.expect("Failed to create display");
+async fn test_terminal_output() -> Result<()> {
+    // Create display OUTSIDE timeout
+    let display = ProgressDisplay::new().await?;
     let mut env = TestEnv::new();
     
-    // Test basic output
-    display.spawn_with_mode(ThreadMode::Limited, || "test-task".to_string()).await.unwrap();
-    env.writeln("Test line 1");
-    env.writeln("Test line 2");
-    display.display().await.unwrap();
-    display.stop().await.unwrap();
-    env.verify();
+    // Run test logic INSIDE timeout
+    let _ = with_timeout(async {
+        let mut task = display.spawn_with_mode(ThreadMode::Limited, || "test-task".to_string()).await?;
+        
+        // Test basic output
+        task.capture_stdout("Test line 1".to_string()).await?;
+        task.capture_stdout("Test line 2".to_string()).await?;
+        
+        env.writeln("Test line 1");
+        env.writeln("Test line 2");
+        
+        display.display().await?;
+        env.verify();
+        Ok::<(), anyhow::Error>(())
+    }, 15).await?;
+    
+    // Clean up OUTSIDE timeout
+    display.stop().await?;
+    Ok(())
 } 
