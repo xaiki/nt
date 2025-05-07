@@ -2,8 +2,6 @@
 #![feature(internal_output_capture)]
 
 use std::{
-    collections::HashMap,
-    io::Write,
     sync::{
         atomic::{AtomicBool, AtomicUsize, Ordering},
         Arc,
@@ -18,10 +16,11 @@ use anyhow::{Result, anyhow};
 use std::fmt::Debug;
 use std::cell::RefCell;
 use crate::errors::{ErrorContext, ProgressError};
-use crate::terminal::Terminal;
 use crate::modes::Config;
 use crate::modes::factory::ModeFactory;
-use crate::thread::{ThreadManager, TaskHandle};
+use crate::thread::TaskHandle;
+use crate::renderer::Renderer;
+use crate::progress_manager::ProgressManager;
 pub mod io;
 
 pub mod modes;
@@ -29,6 +28,8 @@ pub mod errors;
 pub mod formatter;
 pub mod terminal;
 pub mod thread;
+pub mod renderer;
+pub mod progress_manager;
 #[cfg(test)]
 pub mod tests;
 
@@ -98,31 +99,26 @@ pub struct ThreadMessage {
 /// ```
 #[derive(Clone)]
 pub struct ProgressDisplay {
-    outputs: Arc<Mutex<HashMap<usize, Vec<String>>>>,
-    terminal: Arc<Terminal>,
-    spinner_index: Arc<AtomicUsize>,
-    message_tx: mpsc::Sender<ThreadMessage>,
+    /// Renderer responsible for UI display
+    renderer: Arc<Renderer>,
+    /// Progress manager for business logic
+    progress_manager: Arc<ProgressManager>,
+    /// Message receiving channel for thread messages
     message_rx: Arc<Mutex<mpsc::Receiver<ThreadMessage>>>,
+    /// Flag to control if the display is running
     running: Arc<AtomicBool>,
+    /// Background processing task
     processing_task: Arc<Mutex<Option<JoinHandle<()>>>>,
-    thread_manager: Arc<ThreadManager>,
-    writer: Arc<Mutex<Box<dyn Write + Send + 'static>>>,
-    factory: Arc<ModeFactory>,
 }
 
 impl std::fmt::Debug for ProgressDisplay {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("ProgressDisplay")
-            .field("outputs", &"Arc<Mutex<HashMap<usize, Vec<String>>>>")
-            .field("terminal", &"Arc<Terminal>")
-            .field("spinner_index", &self.spinner_index)
-            .field("message_tx", &"mpsc::Sender<ThreadMessage>")
+            .field("renderer", &"Arc<Renderer>")
+            .field("progress_manager", &"Arc<ProgressManager>")
             .field("message_rx", &"Arc<Mutex<mpsc::Receiver<ThreadMessage>>>")
             .field("running", &self.running)
             .field("processing_task", &self.processing_task)
-            .field("thread_manager", &self.thread_manager)
-            .field("writer", &"Arc<Mutex<Box<dyn Write + Send>>>")
-            .field("factory", &self.factory)
             .finish()
     }
 }
@@ -142,19 +138,16 @@ impl ProgressDisplay {
 
     /// Create a new ProgressDisplay with a specific factory
     pub async fn new_with_factory(factory: Arc<ModeFactory>) -> Result<Self> {
-        let (message_tx, message_rx) = mpsc::channel(100);
-        let terminal: Arc<Terminal> = Arc::new(Terminal::new());
+        let (message_tx, message_rx) = mpsc::channel(1000);
+        let renderer = Arc::new(Renderer::new());
+        let progress_manager = Arc::new(ProgressManager::new(factory.clone(), message_tx));
+        
         let display = Self {
-            outputs: Arc::new(Mutex::new(HashMap::new())),
-            terminal: terminal.clone(),
-            spinner_index: Arc::new(AtomicUsize::new(0)),
-            message_tx: message_tx.clone(),
+            renderer,
+            progress_manager,
             message_rx: Arc::new(Mutex::new(message_rx)),
             running: Arc::new(AtomicBool::new(true)),
             processing_task: Arc::new(Mutex::new(None)),
-            thread_manager: Arc::new(ThreadManager::new()),
-            writer: Arc::new(Mutex::new(Box::new(std::io::stdout()))),
-            factory: factory.clone(),
         };
 
         // Create a weak reference for the processing task
@@ -186,14 +179,7 @@ impl ProgressDisplay {
             return Err(anyhow::Error::from(ProgressError::DisplayOperation("Display is not running".to_string()).into_context(ctx)));
         }
         
-        let thread_id = self.thread_manager.next_thread_id();
-        let config = Config::from(self.factory.create_mode(mode, total_jobs)?);
-        let task_handle = TaskHandle::new(thread_id, config);
-        let join_handle = tokio::spawn(async move {
-            Ok(())
-        });
-        self.thread_manager.register_thread(thread_id, task_handle.clone(), join_handle).await;
-        Ok(task_handle)
+        self.progress_manager.create_task(mode, total_jobs).await
     }
 
     pub async fn spawn<F, R>(&self, f: F) -> Result<TaskHandle>
@@ -207,15 +193,7 @@ impl ProgressDisplay {
             return Err(anyhow::Error::from(ProgressError::DisplayOperation("Display is not running".to_string()).into_context(ctx)));
         }
 
-        let handle = self.create_task(ThreadMode::Limited, 1).await?;
-        
-        // Spawn the task
-        let task_handle: JoinHandle<Result<()>> = tokio::spawn(f(handle.clone()));
-        
-        // Store the handle
-        self.thread_manager.register_thread(handle.thread_id(), handle.clone(), task_handle).await;
-        
-        Ok(handle)
+        self.progress_manager.spawn(f).await
     }
 
     /// Create a new task with the specified mode and title
@@ -224,17 +202,19 @@ impl ProgressDisplay {
         F: FnOnce() -> R + Send + 'static,
         R: Into<String> + Send + 'static,
     {
-        // Create the task directly with the specified mode instead of Limited mode
-        let mut handle = self.create_task(mode, 1).await?;
+        if !self.running.load(Ordering::SeqCst) {
+            let ctx = ErrorContext::new("spawning task with mode", "ProgressDisplay")
+                .with_details("Display is not running");
+            return Err(anyhow::Error::from(ProgressError::DisplayOperation("Display is not running".to_string()).into_context(ctx)));
+        }
         
         let title = f().into();
-        handle.capture_stdout(title).await?;
-        
-        Ok(handle)
+        self.progress_manager.create_task_with_title(mode, title).await
     }
 
     pub async fn display(&self) -> std::io::Result<()> {
-        self.render_display().await
+        let outputs = self.progress_manager.outputs().lock().await;
+        self.renderer.render(&outputs).await
     }
 
     /// Stop the display and clean up all resources
@@ -243,204 +223,123 @@ impl ProgressDisplay {
         self.running.store(false, Ordering::SeqCst);
         
         // Cancel all tasks first
-        self.cancel_all().await?;
+        self.progress_manager.cancel_all().await?;
         
         // Join all tasks to ensure they're properly cleaned up
-        self.join_all().await?;
+        self.progress_manager.join_all().await?;
         
         // Stop the terminal event detection
-        if let Err(e) = self.terminal.stop_event_detection().await {
+        if let Err(e) = self.renderer.stop().await {
             let ctx = ErrorContext::new("stopping terminal event detection", "ProgressDisplay")
                 .with_details(format!("Failed to stop terminal event detection: {}", e));
             return Err(anyhow::Error::from(ProgressError::DisplayOperation(e.to_string()).into_context(ctx)));
         }
         
         // Stop the processing task last
-        if let Some(handle) = self.processing_task.lock().await.take() {
-            // Give the task a chance to finish gracefully
-            tokio::select! {
-                result = handle => {
-                    if let Err(e) = result {
-                        let ctx = ErrorContext::new("stopping processing task", "ProgressDisplay")
-                            .with_details(format!("Processing task failed during shutdown: {}", e));
-                        return Err(anyhow::Error::from(ProgressError::DisplayOperation(e.to_string()).into_context(ctx)));
-                    }
-                }
-                _ = tokio::time::sleep(std::time::Duration::from_millis(100)) => {
-                    // If we timeout, we can't abort the handle since it's moved into the select
-                    // But the process will be cleaned up when the program exits
-                    let ctx = ErrorContext::new("stopping processing task", "ProgressDisplay")
-                        .with_details("Processing task did not finish gracefully during shutdown");
-                    return Err(anyhow::Error::from(ProgressError::DisplayOperation("Processing task timeout".to_string()).into_context(ctx)));
-                }
-            }
+        let mut guard = self.processing_task.lock().await;
+        if let Some(task) = guard.take() {
+            task.abort();
         }
-        
         Ok(())
     }
 
+    /// Set the title for a specific thread (if it supports titles)
     pub async fn set_title(&self, thread_id: usize, title: String) -> Result<()> {
-        if let Some(handle) = self.thread_manager.get_task(thread_id).await {
-            let mut config = handle.config().lock().await;
-            config.set_title(title)?;
-            Ok(())
-        } else {
-            let ctx = ErrorContext::new("setting title", "ProgressDisplay")
-                .with_thread_id(thread_id)
-                .with_details("Thread not found");
-            
-            let error_msg = format!("Thread {} not found", thread_id);
-            let error = ProgressError::TaskOperation(error_msg).into_context(ctx);
-            Err(anyhow::Error::from(error))
-        }
+        self.progress_manager.set_title(thread_id, title).await
     }
 
+    /// Add an emoji to the display of a specific thread (if it supports emojis)
     pub async fn add_emoji(&self, thread_id: usize, emoji: &str) -> Result<()> {
-        if let Some(handle) = self.thread_manager.get_task(thread_id).await {
-            let mut config = handle.config().lock().await;
-            config.add_emoji(emoji)?;
-            Ok(())
-        } else {
-            let ctx = ErrorContext::new("adding emoji", "ProgressDisplay")
-                .with_thread_id(thread_id)
-                .with_details("Thread not found");
-            
-            let error_msg = format!("Thread {} not found", thread_id);
-            let error = ProgressError::TaskOperation(error_msg).into_context(ctx);
-            Err(anyhow::Error::from(error))
-        }
+        self.progress_manager.add_emoji(thread_id, emoji).await
     }
 
+    /// Set the total number of jobs for a specific thread or all threads
     pub async fn set_total_jobs(&self, thread_id: Option<usize>, total: usize) -> Result<()> {
-        if total == 0 {
-            let ctx = ErrorContext::new("setting total jobs", "ProgressDisplay")
-                .with_details("Total jobs cannot be zero");
-            let error = ProgressError::DisplayOperation("Total jobs cannot be zero".to_string())
-                .into_context(ctx);
-            return Err(anyhow::Error::from(error));
-        }
-        
-        if let Some(thread_id) = thread_id {
-            // Update a specific thread's total jobs
-            if let Some(handle) = self.thread_manager.get_task(thread_id).await {
-                let mut config = handle.config().lock().await;
-                config.set_total_jobs(total);
-                Ok(())
-            } else {
-                let ctx = ErrorContext::new("setting total jobs", "ProgressDisplay")
-                    .with_thread_id(thread_id)
-                    .with_details("Thread not found");
-                
-                let error_msg = format!("Thread {} not found", thread_id);
-                let error = ProgressError::TaskOperation(error_msg).into_context(ctx);
-                Err(anyhow::Error::from(error))
-            }
-        } else {
-            // Update total jobs for all threads
-            let active_threads = self.thread_manager.get_active_threads().await;
-            for thread_id in active_threads {
-                if let Some(handle) = self.thread_manager.get_task(thread_id).await {
-                    let mut config = handle.config().lock().await;
-                    config.set_total_jobs(total);
-                }
-            }
-            Ok(())
-        }
+        self.progress_manager.set_total_jobs(thread_id, total).await
     }
 
+    /// Update the progress bar for a specific thread
     pub async fn update_progress(&self, thread_id: usize, current: usize, total: usize, prefix: &str) -> Result<()> {
-        if total == 0 {
-            return Err(ProgressError::DisplayOperation("Total jobs cannot be zero".to_string()).into());
-        }
-        
-        let progress_percent = ((current * 100) / total).min(100);
-        let bar_width = 50;
-        let filled = (progress_percent * bar_width) / 100;
-        let bar = "▉".repeat(filled) + &"▏".repeat(bar_width - filled);
-        let message = format!("{:<12} {}%|{}| {}/{}", prefix, progress_percent, bar, current, total);
-        
-        let mut outputs = self.outputs.lock().await;
-        if let Some(lines) = outputs.get_mut(&thread_id) {
-            if lines.is_empty() {
-                lines.push(message);
-            } else {
-                lines[0] = message;
-            }
-        } else {
-            outputs.insert(thread_id, vec![message]);
-        }
-        Ok(())
+        self.progress_manager.update_progress(thread_id, current, total, prefix).await
     }
 
+    /// Join all tasks to ensure they're properly cleaned up
     pub async fn join_all(&self) -> Result<()> {
-        self.thread_manager.join_all().await
+        self.progress_manager.join_all().await
     }
 
+    /// Cancel all tasks (abort execution)
     pub async fn cancel_all(&self) -> Result<()> {
-        self.thread_manager.cancel_all().await
+        self.progress_manager.cancel_all().await
     }
 
+    /// Get the number of active threads
     pub async fn thread_count(&self) -> usize {
-        self.thread_manager.thread_count().await
+        self.progress_manager.thread_count().await
     }
 
+    /// Get a task handle by its thread ID
     pub async fn get_task(&self, thread_id: usize) -> Option<TaskHandle> {
-        self.thread_manager.get_task(thread_id).await
+        self.progress_manager.get_task(thread_id).await
     }
 
+    /// Background thread that receives messages and processes them
     async fn start_display_thread(&self) {
         let mut rx = self.message_rx.lock().await;
-        while self.running.load(Ordering::SeqCst) {
-            if let Some(msg) = rx.recv().await {
-                self.handle_message(msg).await;
-            }
-        }
-    }
-
-    async fn handle_message(&self, msg: ThreadMessage) {
-        let mut outputs = self.outputs.lock().await;
-        let thread_outputs = outputs.entry(msg.thread_id).or_insert_with(Vec::new);
         
-        // Add new messages
-        thread_outputs.extend(msg.lines);
-    }
-
-    async fn render_display(&self) -> std::io::Result<()> {
-        let outputs = self.outputs.lock().await;
-        if outputs.is_empty() {
-            return Ok(());
-        }
-
-        let mut writer = self.writer.lock().await;
-        write!(writer, "\x1B[2J\x1B[1H")?;
-
-        // First, collect all messages for each thread
-        let mut thread_messages = Vec::new();
-        for (thread_id, lines) in outputs.iter() {
-            for line in lines {
-                thread_messages.push((*thread_id, line.clone()));
-            }
-        }
-
-        // Sort messages by thread ID and content to ensure consistent ordering
-        thread_messages.sort_by(|a, b| {
-            a.0.cmp(&b.0).then_with(|| a.1.cmp(&b.1))
-        });
-
-        // Group messages by thread ID and ensure proper spacing
-        let mut current_thread = None;
-        for (thread_id, message) in thread_messages {
-            if current_thread != Some(thread_id) {
-                if current_thread.is_some() {
-                    writeln!(writer)?;
+        // Process messages in batches for better performance
+        let mut batch_size = 0;
+        const MAX_BATCH_SIZE: usize = 50;
+        
+        while self.running.load(Ordering::SeqCst) {
+            tokio::select! {
+                // Try to receive a message with a small timeout
+                msg_option = tokio::time::timeout(
+                    tokio::time::Duration::from_millis(10), 
+                    rx.recv()
+                ) => {
+                    match msg_option {
+                        Ok(Some(msg)) => {
+                            // Process the message
+                            self.progress_manager.handle_message(msg).await;
+                            batch_size += 1;
+                            
+                            // If we've processed enough messages, update the display
+                            if batch_size >= MAX_BATCH_SIZE {
+                                if let Err(e) = self.display().await {
+                                    eprintln!("Error displaying progress: {}", e);
+                                }
+                                batch_size = 0;
+                            }
+                            
+                            // Try to process any pending messages without delay
+                            while batch_size < MAX_BATCH_SIZE {
+                                match rx.try_recv() {
+                                    Ok(msg) => {
+                                        self.progress_manager.handle_message(msg).await;
+                                        batch_size += 1;
+                                    },
+                                    Err(_) => break,
+                                }
+                            }
+                        },
+                        Ok(None) => {
+                            // Channel is closed, exit
+                            return;
+                        },
+                        Err(_) => {
+                            // Timeout, update display with current state
+                            if batch_size > 0 {
+                                if let Err(e) = self.display().await {
+                                    eprintln!("Error displaying progress: {}", e);
+                                }
+                                batch_size = 0;
+                            }
+                        }
+                    }
                 }
-                current_thread = Some(thread_id);
             }
-            writeln!(writer, "{}", message)?;
         }
-
-        writer.flush()?;
-        Ok(())
     }
 }
 

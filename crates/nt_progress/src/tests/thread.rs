@@ -1,20 +1,26 @@
-use crate::thread::{ThreadManager, ThreadState};
+use crate::thread::{ThreadManager, ThreadState, TaskHandle};
 use crate::modes::Config;
 use crate::modes::ThreadMode;
+use crate::io::OutputBuffer;
 use tokio::time::sleep;
 use std::time::Duration;
 use anyhow::Result;
+use tokio::sync::mpsc;
+use crate::ThreadMessage;
 
 #[tokio::test]
 async fn test_thread_pool_basic() -> Result<()> {
     let manager = ThreadManager::with_thread_limit(3);
+    
+    // Create a message channel for task handles
+    let (message_tx, _message_rx) = mpsc::channel::<ThreadMessage>(100);
     
     // Create 5 threads (should be limited to 3 at a time)
     let mut handles = Vec::new();
     for i in 0..5 {
         let thread_id = manager.next_thread_id();
         let config = Config::new(ThreadMode::Limited, 1)?;
-        let task_handle = crate::thread::TaskHandle::new(thread_id, config);
+        let task_handle = crate::thread::TaskHandle::new(thread_id, config, message_tx.clone());
         let join_handle = tokio::spawn(async move {
             sleep(Duration::from_millis(100)).await;
             Ok(())
@@ -41,10 +47,13 @@ async fn test_thread_pool_basic() -> Result<()> {
 async fn test_thread_state_tracking() -> Result<()> {
     let manager = ThreadManager::new();
     
+    // Create a message channel for task handles
+    let (message_tx, _message_rx) = mpsc::channel::<ThreadMessage>(100);
+    
     // Create threads in different states
     let running_id = manager.next_thread_id();
     let config = Config::new(ThreadMode::Limited, 1)?;
-    let task_handle = crate::thread::TaskHandle::new(running_id, config);
+    let task_handle = crate::thread::TaskHandle::new(running_id, config, message_tx.clone());
     let join_handle = tokio::spawn(async move {
         sleep(Duration::from_millis(100)).await;
         Ok(())
@@ -53,14 +62,14 @@ async fn test_thread_state_tracking() -> Result<()> {
     
     let paused_id = manager.next_thread_id();
     let config = Config::new(ThreadMode::Limited, 1)?;
-    let task_handle = crate::thread::TaskHandle::new(paused_id, config);
+    let task_handle = crate::thread::TaskHandle::new(paused_id, config, message_tx.clone());
     let join_handle = tokio::spawn(async move { Ok(()) });
     manager.register_thread(paused_id, task_handle, join_handle).await;
     manager.update_thread_state(paused_id, ThreadState::Paused).await?;
     
     let failed_id = manager.next_thread_id();
     let config = Config::new(ThreadMode::Limited, 1)?;
-    let task_handle = crate::thread::TaskHandle::new(failed_id, config);
+    let task_handle = crate::thread::TaskHandle::new(failed_id, config, message_tx.clone());
     let join_handle = tokio::spawn(async move { Ok(()) });
     manager.register_thread(failed_id, task_handle, join_handle).await;
     manager.update_thread_state(failed_id, ThreadState::Failed("Test failure".to_string())).await?;
@@ -88,11 +97,14 @@ async fn test_thread_state_tracking() -> Result<()> {
 async fn test_thread_cleanup() -> Result<()> {
     let manager = ThreadManager::new();
     
+    // Create a message channel for task handles
+    let (message_tx, _message_rx) = mpsc::channel::<ThreadMessage>(100);
+    
     // Create some threads that will complete quickly
     for i in 0..3 {
         let thread_id = manager.next_thread_id();
         let config = Config::new(ThreadMode::Limited, 1)?;
-        let task_handle = crate::thread::TaskHandle::new(thread_id, config);
+        let task_handle = crate::thread::TaskHandle::new(thread_id, config, message_tx.clone());
         let join_handle = tokio::spawn(async move {
             sleep(Duration::from_millis(50 * (i + 1) as u64)).await;
             Ok(())
@@ -116,12 +128,15 @@ async fn test_thread_cleanup() -> Result<()> {
 async fn test_thread_limit_adjustment() -> Result<()> {
     let manager = ThreadManager::with_thread_limit(2);
     
+    // Create a message channel for task handles
+    let (message_tx, _message_rx) = mpsc::channel::<ThreadMessage>(100);
+    
     // Create 4 threads (should be limited to 2 at a time)
     let mut handles = Vec::new();
     for i in 0..4 {
         let thread_id = manager.next_thread_id();
         let config = Config::new(ThreadMode::Limited, 1)?;
-        let task_handle = crate::thread::TaskHandle::new(thread_id, config);
+        let task_handle = crate::thread::TaskHandle::new(thread_id, config, message_tx.clone());
         let join_handle = tokio::spawn(async move {
             sleep(Duration::from_millis(100)).await;
             Ok(())
@@ -142,7 +157,7 @@ async fn test_thread_limit_adjustment() -> Result<()> {
     for i in 0..2 {
         let thread_id = manager.next_thread_id();
         let config = Config::new(ThreadMode::Limited, 1)?;
-        let task_handle = crate::thread::TaskHandle::new(thread_id, config);
+        let task_handle = crate::thread::TaskHandle::new(thread_id, config, message_tx.clone());
         let join_handle = tokio::spawn(async move {
             sleep(Duration::from_millis(100)).await;
             Ok(())
@@ -157,5 +172,51 @@ async fn test_thread_limit_adjustment() -> Result<()> {
     
     // Clean up
     manager.join_all().await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_task_handle_io() -> Result<()> {
+    let manager = ThreadManager::new();
+    
+    // Create a message channel for task handles
+    let (message_tx, _message_rx) = mpsc::channel::<ThreadMessage>(100);
+    
+    let thread_id = manager.next_thread_id();
+    let config = Config::new(ThreadMode::Limited, 1)?;
+    let mut task_handle = TaskHandle::new(thread_id, config, message_tx.clone());
+    
+    // Test writing lines
+    task_handle.write_line("test line 1").await?;
+    task_handle.write_line("test line 2").await?;
+    
+    // Test writing raw bytes
+    task_handle.write(b"raw bytes").await?;
+    
+    // Test stdout capture
+    task_handle.capture_stdout("stdout line".to_string()).await?;
+    
+    // Test stderr capture
+    task_handle.capture_stderr("stderr line".to_string()).await?;
+    
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_task_handle_output_buffer() -> Result<()> {
+    let manager = ThreadManager::new();
+    
+    // Create a message channel for task handles
+    let (message_tx, _message_rx) = mpsc::channel::<ThreadMessage>(100);
+    
+    let thread_id = manager.next_thread_id();
+    let config = Config::new(ThreadMode::Limited, 1)?;
+    let mut task_handle = TaskHandle::new(thread_id, config, message_tx.clone());
+    
+    // Write multiple lines to test buffer management
+    for i in 0..150 {
+        task_handle.write_line(&format!("line {}", i)).await?;
+    }
+    
     Ok(())
 } 

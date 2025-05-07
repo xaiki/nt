@@ -10,6 +10,7 @@ use crate::errors::{ErrorContext, ProgressError};
 use crate::modes::{Config, ThreadMode};
 use tokio::sync::mpsc;
 use std::io::Write;
+use crate::io::{ProgressWriter, OutputBuffer};
 
 /// Represents the state of a thread in the system
 #[derive(Debug, Clone, PartialEq)]
@@ -251,40 +252,67 @@ impl ThreadManager {
 
     /// Join all threads and wait for their completion.
     pub async fn join_all(&self) -> Result<()> {
-        let mut threads = self.threads.lock().await;
-        let mut thread_contexts = Vec::new();
-        
-        // Drain the threads map into our vector
-        for (thread_id, ctx) in threads.drain() {
-            thread_contexts.push((thread_id, ctx));
-        }
-        
-        // Now process each thread
-        for (thread_id, mut ctx) in thread_contexts {
-            if let Some(join_handle) = ctx.take_join_handle() {
-                if let Err(e) = join_handle.await {
-                    let ctx = ErrorContext::new("joining thread", "ThreadManager")
-                        .with_thread_id(thread_id)
-                        .with_details(&e.to_string());
-                    return Err(ProgressError::TaskOperation(
-                        format!("Failed to join thread {}: {}", thread_id, e)
-                    ).into_context(ctx).into());
+        // Get a snapshot of threads to join while minimizing lock time
+        let mut threads_to_join = Vec::new();
+        {
+            let mut threads = self.threads.lock().await;
+            // Extract only the join handles that we need to wait for
+            for (thread_id, ctx) in threads.iter_mut() {
+                if let Some(handle) = ctx.take_join_handle() {
+                    threads_to_join.push((*thread_id, handle));
                 }
             }
         }
+        
+        // Now join each thread without holding the main lock
+        let mut errors = Vec::new();
+        for (thread_id, join_handle) in threads_to_join {
+            if let Err(e) = join_handle.await {
+                let error_msg = format!("Failed to join thread {}: {}", thread_id, e);
+                errors.push((thread_id, error_msg));
+            }
+        }
+        
+        // After joining, clear the threads collection
+        {
+            let mut threads = self.threads.lock().await;
+            threads.clear();
+        }
+        
+        // Report any errors that occurred
+        if let Some((thread_id, error_msg)) = errors.first() {
+            let ctx = ErrorContext::new("joining thread", "ThreadManager")
+                .with_thread_id(*thread_id)
+                .with_details(error_msg);
+            return Err(ProgressError::TaskOperation(error_msg.clone())
+                .into_context(ctx).into());
+        }
+        
         Ok(())
     }
 
     /// Cancel all threads and clean up resources.
     pub async fn cancel_all(&self) -> Result<()> {
-        let mut threads = self.threads.lock().await;
-        for ctx in threads.values_mut() {
-            ctx.update_state(ThreadState::Failed("Cancelled".to_string()));
-            if let Some(join_handle) = ctx.take_join_handle() {
-                join_handle.abort();
+        // First collect all handles we need to abort
+        let mut handles_to_abort = Vec::new();
+        {
+            let mut threads = self.threads.lock().await;
+            for ctx in threads.values_mut() {
+                ctx.update_state(ThreadState::Failed("Cancelled".to_string()));
+                if let Some(handle) = ctx.take_join_handle() {
+                    handles_to_abort.push(handle);
+                }
             }
+            
+            // Clear the threads collection immediately to reduce resource usage
+            threads.clear();
         }
-        threads.clear();
+        
+        // Now abort all the handles without holding the lock
+        for handle in handles_to_abort {
+            handle.abort();
+        }
+        
         Ok(())
     }
 
@@ -321,7 +349,7 @@ pub struct TaskHandle {
     #[cfg(not(test))]
     thread_config: Arc<Mutex<Config>>,
     message_tx: mpsc::Sender<crate::ThreadMessage>,
-    writer: Arc<Mutex<Box<dyn Write + Send + 'static>>>,
+    writer: Arc<Mutex<Box<dyn ProgressWriter + Send + 'static>>>,
     join_handle: Arc<Mutex<Option<JoinHandle<Result<()>>>>>,
 }
 
@@ -331,7 +359,7 @@ impl std::fmt::Debug for TaskHandle {
             .field("thread_id", &self.thread_id)
             .field("thread_config", &"Arc<Mutex<Config>>")
             .field("message_tx", &"mpsc::Sender<ThreadMessage>")
-            .field("writer", &"Arc<Mutex<Box<dyn Write + Send>>>")
+            .field("writer", &"Arc<Mutex<Box<dyn ProgressWriter + Send>>>")
             .field("join_handle", &"Arc<Mutex<Option<JoinHandle<Result<()>>>>>")
             .finish()
     }
@@ -339,12 +367,12 @@ impl std::fmt::Debug for TaskHandle {
 
 impl TaskHandle {
     /// Create a new TaskHandle with the specified thread ID and configuration.
-    pub fn new(thread_id: usize, config: Config) -> Self {
+    pub fn new(thread_id: usize, config: Config, message_tx: mpsc::Sender<crate::ThreadMessage>) -> Self {
         Self {
             thread_id,
             thread_config: Arc::new(Mutex::new(config)),
-            message_tx: mpsc::channel(100).0,
-            writer: Arc::new(Mutex::new(Box::new(std::io::stdout()))),
+            message_tx,
+            writer: Arc::new(Mutex::new(Box::new(OutputBuffer::new(100)))),
             join_handle: Arc::new(Mutex::new(None)),
         }
     }
@@ -369,14 +397,34 @@ impl TaskHandle {
         Ok(())
     }
 
+    /// Write a line to the task's output
+    pub async fn write_line(&mut self, line: &str) -> Result<()> {
+        let mut writer = self.writer.lock().await;
+        writer.write_line(line)?;
+        writer.flush()?;
+        Ok(())
+    }
+
+    /// Write raw bytes to the task's output
+    pub async fn write(&mut self, buf: &[u8]) -> Result<()> {
+        let mut writer = self.writer.lock().await;
+        writer.write_all(buf)?;
+        writer.flush()?;
+        Ok(())
+    }
+
     /// Capture stdout output for this task.
     pub async fn capture_stdout(&mut self, line: String) -> Result<()> {
         let config = self.thread_config.lock().await.clone();
         self.message_tx.send(crate::ThreadMessage {
             thread_id: self.thread_id,
-            lines: vec![line],
+            lines: vec![line.clone()],
             config,
         }).await.map_err(|e| anyhow::anyhow!("Failed to send message: {}", e))?;
+        
+        // Also write to the task's output
+        self.write_line(&line).await?;
+        
         Ok(())
     }
 
@@ -385,9 +433,13 @@ impl TaskHandle {
         let config = self.thread_config.lock().await.clone();
         self.message_tx.send(crate::ThreadMessage {
             thread_id: self.thread_id,
-            lines: vec![line],
+            lines: vec![line.clone()],
             config,
         }).await.map_err(|e| anyhow::anyhow!("Failed to send message: {}", e))?;
+        
+        // Also write to the task's output
+        self.write_line(&line).await?;
+        
         Ok(())
     }
 
@@ -471,12 +523,24 @@ impl TaskHandle {
         Ok(())
     }
 
-    /// Abort this task without waiting.
-    pub fn abort(&self) {
-        if let Ok(mut handle) = self.join_handle.try_lock() {
-            if let Some(task_handle) = handle.take() {
-                task_handle.abort();
-            }
-        }
+    /// Execute a closure with a mutable reference to a specific implementation type.
+    ///
+    /// This is a generic method that can be used to access any implementation
+    /// type that is stored in this TaskHandle's config. It allows downcasting
+    /// to specific mode types like Limited, Window, etc.
+    ///
+    /// # Type Parameters
+    /// * `T` - The implementation type to downcast to
+    /// * `F` - The closure type that takes a mutable reference to T
+    /// * `R` - The return type of the closure
+    ///
+    /// # Returns
+    /// `Some(R)` if the config is of type T and the closure returns a value, `None` otherwise
+    pub async fn with_type_mut<T: 'static, F, R>(&mut self, f: F) -> Option<R>
+    where
+        F: FnOnce(&mut T) -> R,
+    {
+        let mut config = self.thread_config.lock().await;
+        config.as_type_mut::<T>().map(f)
     }
 } 
