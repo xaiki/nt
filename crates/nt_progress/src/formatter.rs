@@ -241,10 +241,27 @@ impl ProgressTemplate {
     }
     
     // Process a conditional tag {?condition}content{/} or {!condition}content{/}
-    fn render_conditional_tag(&self, _tag: &str, _context: &TemplateContext) -> Result<Option<String>, ProgressError> {
-        // TODO: Implement conditional tag processing
-        // For now, just return None (skip this tag)
-        Ok(None)
+    fn render_conditional_tag(&self, tag: &str, context: &TemplateContext) -> Result<Option<String>, ProgressError> {
+        let (is_positive, condition) = if tag.starts_with('?') {
+            (true, &tag[1..])
+        } else if tag.starts_with('!') {
+            (false, &tag[1..])
+        } else {
+            return Ok(None);
+        };
+
+        // Get the condition variable
+        let condition_value = match context.get(condition) {
+            Some(var) => var.is_truthy(),
+            None => false,
+        };
+
+        // Return Some("") if the condition matches, None if it doesn't
+        if condition_value == is_positive {
+            Ok(Some(String::new()))
+        } else {
+            Ok(None)
+        }
     }
     
     // Apply a format to a variable

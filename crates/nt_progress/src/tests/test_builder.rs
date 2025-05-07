@@ -158,6 +158,45 @@ impl TestBuilder {
         Ok(display)
     }
 
+    /// Run a concurrent task test with an existing display
+    pub async fn test_concurrent_tasks_with_display(&mut self, display: &ProgressDisplay, task_count: usize, message_template: &str) -> Result<()> {
+        let display_arc = Arc::new(Mutex::new(display.clone()));
+        
+        // Create tasks that will send messages
+        let mut handles = Vec::with_capacity(task_count);
+        
+        for i in 0..task_count {
+            let display_clone = Arc::clone(&display_arc);
+            let message = message_template.replace("{}", &i.to_string());
+            
+            let handle = tokio::spawn(async move {
+                let display = display_clone.lock().await;
+                let mut task = display.spawn(|| {}).await.unwrap();
+                task.capture_stdout(message).await.unwrap();
+                task
+            });
+            
+            handles.push(handle);
+        }
+        
+        // Wait for all tasks to complete and join them
+        for handle in handles {
+            let task = handle.await.unwrap();
+            task.join().await.unwrap();
+        }
+        
+        // For concurrent tests, we need to add expected messages in the same way
+        for i in 0..task_count {
+            let message = message_template.replace("{}", &i.to_string());
+            self.env.writeln(&message);
+        }
+        
+        display.display().await?;
+        self.env.verify();
+        
+        Ok(())
+    }
+
     /// Test error handling by sending an error message
     pub async fn test_error(&mut self, error_message: &str) -> Result<ProgressDisplay> {
         let display = self.build_display().await;
@@ -174,9 +213,8 @@ impl TestBuilder {
         Ok(display)
     }
 
-    /// Test edge cases specific to different modes
-    pub async fn test_edge_case(&mut self, case_type: EdgeCaseType) -> Result<ProgressDisplay> {
-        let display = self.build_display().await;
+    /// Test edge cases specific to different modes using an existing display
+    pub async fn test_edge_case_with_display(&mut self, display: &ProgressDisplay, case_type: EdgeCaseType) -> Result<()> {
         let mut task = display.spawn(|| {}).await?;
         
         match case_type {
@@ -200,20 +238,22 @@ impl TestBuilder {
                 task.capture_stdout(special_message.to_string()).await?;
                 display.display().await?;
                 
+                // Special characters should be displayed properly
                 self.env.writeln(special_message);
                 self.env.verify();
             },
             EdgeCaseType::UnicodeCharacters => {
-                let unicode_message = "Unicode: 😀 🚀 👍 ❤️ 🔥 🌟 🎉 🙏 🌈 ✨";
+                let unicode_message = "Unicode: 你好, こんにちは, 안녕하세요 🚀🔥🌈";
                 task.capture_stdout(unicode_message.to_string()).await?;
                 display.display().await?;
                 
+                // Unicode characters should be displayed properly
                 self.env.writeln(unicode_message);
                 self.env.verify();
             },
         }
         
-        Ok(display)
+        Ok(())
     }
 
     /// Test window-specific features

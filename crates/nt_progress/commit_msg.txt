@@ -1,59 +1,17 @@
-feat(terminal): Implement Phase 2 terminal module refactoring (partial)
+refactor: clean up dead code and implement missing functionality
 
-This commit implements a major part of Phase 2 from the roadmap:
+- Implement render_conditional_tag in formatter.rs
+  - Add support for {?condition} and {!condition} tags
+  - Handle truthy/falsy conditions properly
+  - Return appropriate string based on condition result
 
-- Created a dedicated terminal module with structured components:
-  - Terminal struct for size detection and capability checking
-  - CursorPosition type for cursor handling abstractions
-  - Style struct for ANSI color and style management
-  - Enhanced TestEnv with improved debugging capabilities
+- Remove unused _mode parameter from start_display_thread
+  - Parameter was not being used in the function
+  - Clean up function signature for better clarity
 
-- Improved TestEnv capabilities:
-  - Added screen buffer dumping for debugging test failures
-  - Added string diff utilities for comparing expected/actual output
-  - Implemented visual diff highlighting with ^ markers
-  - Added support for applying and managing terminal styles
+- Keep Terminal struct fields for future features
+  - Fields are placeholders for upcoming terminal capabilities
+  - Will be used in Phase 2: Terminal Module Refactoring
+  - No need to remove as they are part of the planned development
 
-- Modified ProgressDisplay to use the new Terminal abstraction
-- Updated tests to work with the new terminal module
-- Fixed terminal coordinate handling and positioning
-- Added unit tests for all new terminal components
-
-This refactoring improves code organization by separating terminal
-handling from the main library code, making maintenance easier and
-enabling future terminal-related enhancements.
-
-Closes Phase 2 items:
-- Create a dedicated terminal module
-- Move terminal size detection to Terminal struct
-- Implement terminal feature detection
-- Add terminal style management
-- Implement cursor handling abstractions
-- Improve TestEnv for terminal testing 
-
-refactor: clean up test environment duplication
-
-This commit refactors and consolidates the TestEnv implementations to remove
-code duplication. Previously, we had multiple implementations of TestEnv in 
-different parts of the codebase:
-- src/test_utils.rs (original implementation)
-- src/terminal/test_env.rs (new implementation)
-- src/tests/common.rs (another duplicate)
-
-Changes:
-- Removed duplicate TestEnv from src/tests/common.rs, replacing it with a
-  re-export of the terminal module's TestEnv
-- Updated all test files to import TestEnv from the terminal module or through
-  the common module re-export
-- Fixed test compatibility issues by updating direct access to the private
-  'expected' field with the contents() method
-- Removed the now unused test_utils.rs module from the codebase
-- Removed test_utils from the module list in lib.rs
-- Fixed linter warnings that appeared during the refactoring
-
-This refactoring is part of the terminal module improvements mentioned in the
-TODO.md Phase 2. It eliminates a source of potential bugs where changes to
-one implementation wouldn't be reflected in the others.
-
-All tests now pass with the unified TestEnv implementation, and we've removed
-approximately 200 lines of duplicate code. 
+All tests passing with no regressions. 

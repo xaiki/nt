@@ -18,6 +18,7 @@ use anyhow::{Result, anyhow};
 use std::fmt::Debug;
 use std::cell::RefCell;
 use crate::errors::{ContextExt, ErrorContext, ProgressError};
+use crate::terminal::{Terminal, TerminalEvent};
 
 pub mod modes;
 pub mod errors;
@@ -31,9 +32,6 @@ pub use modes::{ModeRegistry, ModeCreator, get_registry, create_thread_config};
 pub use errors::ModeCreationError;
 pub use formatter::{ProgressTemplate, TemplateContext, TemplateVar, TemplatePreset};
 
-// Import the Terminal module components we need
-use crate::terminal::Terminal;
-
 thread_local! {
     static CURRENT_THREAD_ID: AtomicUsize = AtomicUsize::new(0);
     static CURRENT_WRITER: RefCell<Option<ThreadLogger>> = RefCell::new(None);
@@ -46,6 +44,52 @@ pub struct ThreadMessage {
     pub config: Config,
 }
 
+/// A display for tracking progress of multiple threads or tasks.
+///
+/// ProgressDisplay provides a central point for aggregating outputs from multiple
+/// tasks and rendering them in different display modes.
+///
+/// # Safety and Resource Cleanup
+///
+/// Although ProgressDisplay implements Drop for safety, it's strongly recommended to 
+/// call `stop()` explicitly when you're done with it, especially in tests:
+///
+/// ```rust
+/// # async fn example() {
+/// let display = ProgressDisplay::new().await;
+///
+/// // Use the display...
+///
+/// // Always call stop() explicitly when done
+/// display.stop().await.unwrap();
+/// # }
+/// ```
+///
+/// # Test Best Practices
+///
+/// In tests, it's vital to follow this pattern to avoid hangs:
+///
+/// 1. Create ProgressDisplay OUTSIDE any timeout block
+/// 2. Run test logic INSIDE a timeout block
+/// 3. Call display.stop() OUTSIDE the timeout (to ensure cleanup even if timeout occurs)
+///
+/// ```rust
+/// # use anyhow::Result;
+/// # async fn test_example() -> Result<()> {
+/// // 1. Create outside timeout
+/// let display = ProgressDisplay::new().await;
+///
+/// // 2. Test inside timeout
+/// with_timeout(async {
+///     // Test logic here...
+///     Ok(())
+/// }, 3).await?;
+///
+/// // 3. Clean up outside timeout
+/// display.stop().await?;
+/// Ok(())
+/// # }
+/// ```
 #[derive(Clone)]
 pub struct ProgressDisplay {
     outputs: Arc<Mutex<HashMap<usize, Vec<String>>>>,
@@ -107,6 +151,32 @@ impl ProgressDisplay {
             writer: Arc::new(Mutex::new(Box::new(writer))),
         };
 
+        // Start the terminal event detection
+        if let Err(e) = display.terminal.start_event_detection().await {
+            eprintln!("Warning: Failed to start terminal event detection: {}", e);
+        }
+        
+        // Register a handler for terminal resize events to trigger display refresh
+        let display_clone = display.clone();
+        if let Err(e) = display.terminal.event_manager().register_handler(move |event| {
+            let display = display_clone.clone();
+            
+            async move {
+                match event {
+                    TerminalEvent::Resize { width: _, height: _ } => {
+                        // Resize happened, refresh the display
+                        if let Err(e) = display.display().await {
+                            eprintln!("Error refreshing display after resize: {}", e);
+                        }
+                    },
+                    _ => {}, // Ignore other events for now
+                }
+                Ok(())
+            }
+        }).await {
+            eprintln!("Warning: Failed to register resize event handler: {}", e);
+        }
+
         // Start the display thread with a reference to the terminal
         let processing_task = tokio::spawn(Self::start_display_thread(
             Arc::clone(&display.outputs),
@@ -114,7 +184,6 @@ impl ProgressDisplay {
             Arc::clone(&display.spinner_index),
             Arc::clone(&display.message_rx),
             Arc::clone(&display.running),
-            mode,
             Arc::clone(&display.writer),
         ));
         *display.processing_task.lock().await = Some(processing_task);
@@ -185,6 +254,11 @@ impl ProgressDisplay {
     pub async fn stop(&self) -> Result<()> {
         self.running.store(false, Ordering::SeqCst);
         self.join_all().await?;
+        
+        // Stop the terminal event detection
+        if let Err(e) = self.terminal.stop_event_detection().await {
+            eprintln!("Warning: Failed to stop terminal event detection: {}", e);
+        }
         
         if let Some(handle) = self.processing_task.lock().await.take() {
             handle.await.map_err(|e| anyhow!("Failed to join processing task: {}", e))?;
@@ -355,7 +429,6 @@ impl ProgressDisplay {
         spinner_index: Arc<AtomicUsize>,
         message_rx: Arc<Mutex<mpsc::Receiver<ThreadMessage>>>,
         running: Arc<AtomicBool>,
-        _mode: ThreadMode,
         writer: Arc<Mutex<Box<dyn Write + Send + 'static>>>,
     ) {
         // Detect the terminal size at startup
@@ -493,6 +566,36 @@ impl ProgressDisplay {
         writer_guard.flush()?;
         
         Ok(())
+    }
+}
+
+impl Drop for ProgressDisplay {
+    fn drop(&mut self) {
+        // Signal that we're shutting down
+        self.running.store(false, Ordering::SeqCst);
+        
+        // We can't run async code directly in drop, so we just do our best with synchronous cleanup
+        
+        // Try to abort all tasks we have handles for
+        let _handles = {
+            if let Ok(mut handles_lock) = self.thread_handles.try_lock() {
+                // Collect and abort all handles
+                for (_, handle) in handles_lock.drain() {
+                    handle.abort();
+                }
+            }
+        };
+        
+        // Try to abort the processing task
+        if let Ok(mut guard) = self.processing_task.try_lock() {
+            if let Some(handle) = guard.take() {
+                handle.abort();
+            }
+        }
+        
+        // We can't stop the terminal event detection properly in drop
+        // This is a last-ditch effort to warn users if they didn't call stop() explicitly
+        eprintln!("Warning: ProgressDisplay dropped without calling stop() - some resources may not be fully cleaned up");
     }
 }
 
