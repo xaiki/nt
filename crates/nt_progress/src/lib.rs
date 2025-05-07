@@ -35,7 +35,7 @@ pub mod tests;
 
 pub use modes::{ModeRegistry, ModeCreator, ThreadMode};
 pub use errors::ModeCreationError;
-pub use formatter::{ProgressTemplate, TemplateContext, TemplateVar, TemplatePreset};
+pub use formatter::{ProgressTemplate, TemplateContext, TemplateVar, TemplatePreset, ColorName};
 pub use io::{ProgressWriter, OutputBuffer, TeeWriter};
 pub use io::custom::{CustomWriter, WriterCapabilities, WriterRegistry};
 

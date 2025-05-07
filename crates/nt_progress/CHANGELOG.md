@@ -2,6 +2,30 @@
 
 This file contains completed tasks and improvements moved from the TODO.md file.
 
+## v0.1.17 (2024-05-13)
+
+### Display Enhancements
+- Added color support for text highlighting 
+  - Implemented color formatting in ProgressTemplate
+  - Added {var:color:name} syntax to templates
+  - Supported standard terminal colors (black, red, green, yellow, blue, magenta, cyan, white)
+  - Added documentation and examples
+  - Created ColorName enum for color representation and conversion
+  - Added tests for color formatting functionality
+
+## v0.1.16 (2024-05-13)
+
+### Code Cleanup and Refactoring
+- Fixed various Clippy warnings throughout the codebase
+  - Improved code structure and readability
+  - Removed redundant code constructs
+  - Used more idiomatic Rust patterns
+  - Added proper Default implementations
+  - Used appropriate type aliases for complex types
+- Enhanced error handling with io::Error::other
+- Improved comparison handling with match statements
+- Optimized iterator usage with better patterns
+
 ## v0.1.15 (2024-05-12)
 
 ### Feature Enhancements

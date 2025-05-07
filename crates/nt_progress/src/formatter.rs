@@ -6,6 +6,7 @@
 
 use std::collections::HashMap;
 use crate::errors::{ProgressError, ContextExt};
+use crate::terminal::Color;
 
 /// Template variable types that can be interpolated into templates
 #[derive(Debug, Clone)]
@@ -134,6 +135,7 @@ impl ProgressTemplate {
     /// - `{var:pad:N}` - Pad `var` to length N with spaces
     /// - `{var:lpad:N}` - Left-pad `var` to length N with spaces
     /// - `{var:rpad:N}` - Right-pad `var` to length N with spaces
+    /// - `{var:color:name}` - Apply color to `var` (supported colors: black, red, green, yellow, blue, magenta, cyan, white, reset)
     ///
     /// # Examples
     ///
@@ -148,6 +150,19 @@ impl ProgressTemplate {
     ///
     /// let output = template.render(&ctx).unwrap();
     /// // Output: "Progress: [=====     ] 50% (5/10)"
+    /// ```
+    /// 
+    /// Using color formatting:
+    /// 
+    /// ```
+    /// use nt_progress::formatter::{ProgressTemplate, TemplateContext};
+    /// 
+    /// let template = ProgressTemplate::new("Status: {status:color:green}");
+    /// let mut ctx = TemplateContext::new();
+    /// ctx.set("status", "Success");
+    /// 
+    /// let output = template.render(&ctx).unwrap();
+    /// // Output will show "Status: Success" with "Success" in green
     /// ```
     pub fn new(template: impl Into<String>) -> Self {
         Self {
@@ -278,6 +293,7 @@ impl ProgressTemplate {
             "percent" => self.format_percent(var, format_parts, context),
             "ratio" => self.format_ratio(var, format_parts, context),
             "pad" | "lpad" | "rpad" => self.format_padding(var, format, format_parts, context),
+            "color" => self.format_color(var, format_parts, context),
             _ => Ok(Some(var.as_string())),
         }
     }
@@ -425,6 +441,110 @@ impl ProgressTemplate {
             _ => Ok(Some(format!("{:^width$}", text, width = width))), // Center padding
         }
     }
+    
+    /// Format a variable with color
+    fn format_color(
+        &self,
+        var: &TemplateVar,
+        format_parts: &[&str],
+        _context: &TemplateContext,
+    ) -> Result<Option<String>, ProgressError> {
+        // Extract the text value
+        let text = var.as_string();
+        
+        // Get the color from format
+        if format_parts.len() < 2 {
+            return Err(ProgressError::DisplayOperation(
+                "Color format requires a color name".to_string(),
+            ));
+        }
+        
+        let color_name = format_parts[1].trim();
+        let color = match ColorName::from_str(color_name) {
+            Some(c) => c,
+            None => {
+                return Err(ProgressError::DisplayOperation(
+                    format!("Unknown color: {}", color_name),
+                ));
+            }
+        };
+        
+        // Convert to crossterm Color and then to ANSI code
+        let crossterm_color = color.to_color();
+        let color_code = match crossterm_color {
+            Color::Black => "\x1B[30m",
+            Color::Red => "\x1B[31m",
+            Color::Green => "\x1B[32m",
+            Color::Yellow => "\x1B[33m", 
+            Color::Blue => "\x1B[34m",
+            Color::Magenta => "\x1B[35m",
+            Color::Cyan => "\x1B[36m",
+            Color::White => "\x1B[37m",
+            Color::Reset => "\x1B[0m",
+            _ => "\x1B[0m", // Default to reset for other colors
+        };
+        
+        // Apply color to text and reset after
+        let colored_text = format!("{}{}\x1B[0m", color_code, text);
+        
+        Ok(Some(colored_text))
+    }
+}
+
+/// Supported color names for formatting
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ColorName {
+    /// Black color
+    Black,
+    /// Red color
+    Red,
+    /// Green color
+    Green,
+    /// Yellow color
+    Yellow,
+    /// Blue color
+    Blue,
+    /// Magenta color
+    Magenta,
+    /// Cyan color
+    Cyan,
+    /// White color
+    White,
+    /// Reset to default color
+    Reset,
+}
+
+impl ColorName {
+    /// Convert to crossterm Color
+    fn to_color(&self) -> Color {
+        match self {
+            ColorName::Black => Color::Black,
+            ColorName::Red => Color::Red,
+            ColorName::Green => Color::Green,
+            ColorName::Yellow => Color::Yellow,
+            ColorName::Blue => Color::Blue,
+            ColorName::Magenta => Color::Magenta,
+            ColorName::Cyan => Color::Cyan,
+            ColorName::White => Color::White,
+            ColorName::Reset => Color::Reset,
+        }
+    }
+    
+    /// Parse from string
+    fn from_str(s: &str) -> Option<Self> {
+        match s.to_lowercase().as_str() {
+            "black" => Some(ColorName::Black),
+            "red" => Some(ColorName::Red),
+            "green" => Some(ColorName::Green),
+            "yellow" => Some(ColorName::Yellow),
+            "blue" => Some(ColorName::Blue),
+            "magenta" => Some(ColorName::Magenta),
+            "cyan" => Some(ColorName::Cyan),
+            "white" => Some(ColorName::White),
+            "reset" => Some(ColorName::Reset),
+            _ => None,
+        }
+    }
 }
 
 /// Built-in template presets for common progress displays
@@ -545,5 +665,44 @@ mod tests {
         
         let result = template.render(&ctx).unwrap();
         assert_eq!(result, "[=====     ] 50% (5/10)");
+    }
+    
+    #[test]
+    fn test_color_format() {
+        let template = ProgressTemplate::new("Hello, {name:color:red}!");
+        let mut ctx = TemplateContext::new();
+        ctx.set("name", "World");
+        
+        let result = template.render(&ctx).unwrap();
+        // The result should contain ANSI color codes
+        assert!(result.contains("\x1B[31m"), "Result should contain red color code");
+        assert!(result.contains("\x1B[0m"), "Result should contain reset code");
+        assert!(result.contains("World"), "Result should contain the variable value");
+    }
+    
+    #[test]
+    fn test_color_name_parsing() {
+        assert_eq!(ColorName::from_str("red"), Some(ColorName::Red));
+        assert_eq!(ColorName::from_str("RED"), Some(ColorName::Red));
+        assert_eq!(ColorName::from_str("Red"), Some(ColorName::Red));
+        assert_eq!(ColorName::from_str("unknown"), None);
+        
+        // Test color to crossterm Color conversion
+        assert_eq!(ColorName::Red.to_color(), Color::Red);
+        assert_eq!(ColorName::Green.to_color(), Color::Green);
+        assert_eq!(ColorName::Reset.to_color(), Color::Reset);
+    }
+    
+    #[test]
+    fn test_invalid_color_format() {
+        let template = ProgressTemplate::new("Hello, {name:color}!");
+        let mut ctx = TemplateContext::new();
+        ctx.set("name", "World");
+        
+        // Should error without a color name
+        assert!(template.render(&ctx).is_err());
+        
+        let template = ProgressTemplate::new("Hello, {name:color:invalid}!");
+        assert!(template.render(&ctx).is_err());
     }
 } 
