@@ -516,7 +516,7 @@ pub enum ColorName {
 
 impl ColorName {
     /// Convert to crossterm Color
-    fn to_color(&self) -> Color {
+    fn to_color(self) -> Color {
         match self {
             ColorName::Black => Color::Black,
             ColorName::Red => Color::Red,
