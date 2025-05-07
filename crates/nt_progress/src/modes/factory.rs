@@ -5,6 +5,7 @@ use std::sync::Once;
 use std::sync::Mutex;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::fmt::Debug;
 
 // Flag to control error propagation behavior - false means recover with fallbacks (default),
 // true means propagate errors for tests that check error conditions
@@ -23,9 +24,15 @@ pub fn should_propagate_errors() -> bool {
     PROPAGATE_ERRORS.load(Ordering::SeqCst)
 }
 
-/// Trait for mode creators that can create a specific ThreadConfig implementation
-pub trait ModeCreator: Send + Sync {
-    /// Create a ThreadConfig instance with the given parameters
+/// Trait for creating mode instances
+pub trait ModeCreator: Send + Sync + Debug {
+    /// Get the name of the mode this creator creates
+    fn mode_name(&self) -> &'static str;
+    
+    /// Get the minimum number of parameters required
+    fn min_params(&self) -> usize;
+    
+    /// Create a new mode instance
     fn create(&self, total_jobs: usize, params: &[usize]) -> Result<Box<dyn ThreadConfig>, ModeCreationError>;
     
     /// Create a ThreadConfig with fallback options if the primary creation fails
@@ -33,19 +40,10 @@ pub trait ModeCreator: Send + Sync {
         // By default, just try the regular create method
         self.create(total_jobs, params)
     }
-    
-    /// Get the name of the mode this creator creates
-    fn mode_name(&self) -> &'static str;
-    
-    /// Get the minimum required parameters for this mode
-    fn min_params(&self) -> usize;
 }
 
-/// A registry for mode creators
-/// 
-/// This registry allows for centralized management of mode creation
-/// and enables easy addition of new modes without modifying existing code.
-#[derive(Default)]
+/// Registry for mode creators
+#[derive(Debug)]
 pub struct ModeRegistry {
     creators: HashMap<String, Box<dyn ModeCreator>>,
 }
@@ -104,6 +102,7 @@ impl ModeRegistry {
 // Concrete creator implementations
 
 /// Creator for Limited mode
+#[derive(Debug)]
 pub struct LimitedCreator;
 
 impl ModeCreator for LimitedCreator {
@@ -121,6 +120,7 @@ impl ModeCreator for LimitedCreator {
 }
 
 /// Creator for Capturing mode
+#[derive(Debug)]
 pub struct CapturingCreator;
 
 impl ModeCreator for CapturingCreator {
@@ -138,6 +138,7 @@ impl ModeCreator for CapturingCreator {
 }
 
 /// Creator for Window mode
+#[derive(Debug)]
 pub struct WindowCreator;
 
 impl ModeCreator for WindowCreator {
@@ -177,6 +178,7 @@ impl ModeCreator for WindowCreator {
 }
 
 /// Creator for WindowWithTitle mode
+#[derive(Debug)]
 pub struct WindowWithTitleCreator;
 
 impl ModeCreator for WindowWithTitleCreator {
@@ -282,6 +284,55 @@ pub fn create_thread_config(mode: ThreadMode, total_jobs: usize) -> Result<Box<d
     }
     
     creation_result
+}
+
+/// A factory for creating mode instances
+///
+/// ModeFactory provides a way to create mode instances without using static
+/// references. It maintains a registry of mode creators and can create new
+/// instances on demand.
+#[derive(Debug, Clone)]
+pub struct ModeFactory {
+    registry: Arc<ModeRegistry>,
+}
+
+impl ModeFactory {
+    /// Create a new ModeFactory with the default set of modes
+    pub fn new() -> Self {
+        let mut registry = ModeRegistry::new();
+        
+        // Register standard modes
+        registry.register(LimitedCreator);
+        registry.register(CapturingCreator);
+        registry.register(WindowCreator);
+        registry.register(WindowWithTitleCreator);
+        
+        Self {
+            registry: Arc::new(registry),
+        }
+    }
+    
+    /// Create a new mode instance
+    ///
+    /// # Parameters
+    /// * `mode` - The mode to create
+    /// * `total_jobs` - The total number of jobs to track
+    ///
+    /// # Returns
+    /// A Result containing either the created ThreadConfig or an error
+    pub fn create_mode(&self, mode: ThreadMode, total_jobs: usize) -> Result<Box<dyn ThreadConfig>, ModeCreationError> {
+        match mode {
+            ThreadMode::Limited => self.registry.create("limited", total_jobs, &[]),
+            ThreadMode::Capturing => self.registry.create("capturing", total_jobs, &[]),
+            ThreadMode::Window(size) => self.registry.create("window", total_jobs, &[size]),
+            ThreadMode::WindowWithTitle(size) => self.registry.create("window_with_title", total_jobs, &[size]),
+        }
+    }
+    
+    /// Get a reference to the underlying registry
+    pub fn registry(&self) -> &ModeRegistry {
+        &self.registry
+    }
 }
 
 #[cfg(test)]
