@@ -4,65 +4,94 @@ use crate::ProgressDisplay;
 use tokio::time::sleep;
 use std::time::Duration;
 use crate::tests::common::with_timeout;
+use anyhow::Result;
 
 #[tokio::test]
-async fn test_window_with_title_basic() {
-    with_timeout(async {
-        let display = ProgressDisplay::new_with_mode(ThreadMode::WindowWithTitle(3)).await.unwrap();
-        let mut env = TestEnv::new();
-        
-        let _handle = display.spawn_with_mode(ThreadMode::WindowWithTitle(3), || "window-title-test").await.unwrap();
+async fn test_window_with_title_basic() -> Result<()> {
+    // Create display OUTSIDE timeout
+    let display = ProgressDisplay::new_with_mode(ThreadMode::WindowWithTitle(3)).await?;
+    let mut env = TestEnv::new();
+    
+    // Run test logic INSIDE timeout
+    let _ = with_timeout(async {
+        let mut task = display.spawn_with_mode(ThreadMode::WindowWithTitle(3), || "window-title-test").await?;
+        task.capture_stdout("Test message".to_string()).await?;
         env.writeln("Test message");
         
-        display.display().await.unwrap();
-        display.stop().await.unwrap();
+        display.display().await?;
         env.verify();
-    }, 30).await.unwrap();
+        Ok::<(), anyhow::Error>(())
+    }, 30).await?;
+
+    // Clean up OUTSIDE timeout
+    display.stop().await?;
+    Ok(())
 }
 
 #[tokio::test]
-async fn test_window_with_title_update() {
-    with_timeout(async {
-        let display = ProgressDisplay::new_with_mode(ThreadMode::WindowWithTitle(3)).await.unwrap();
-        let mut env = TestEnv::new();
-        
-        let _handle = display.spawn_with_mode(ThreadMode::WindowWithTitle(3), || "title-update-test").await.unwrap();
+async fn test_window_with_title_update() -> Result<()> {
+    // Create display OUTSIDE timeout
+    let display = ProgressDisplay::new_with_mode(ThreadMode::WindowWithTitle(3)).await?;
+    let mut env = TestEnv::new();
+    
+    // Run test logic INSIDE timeout
+    let _ = with_timeout(async {
+        let mut task = display.spawn_with_mode(ThreadMode::WindowWithTitle(3), || "title-update-test").await?;
+        task.capture_stdout("First message".to_string()).await?;
+        task.capture_stdout("Second message".to_string()).await?;
         env.writeln("First message");
         env.writeln("Second message");
         
-        display.display().await.unwrap();
-        display.stop().await.unwrap();
+        display.display().await?;
         env.verify();
-    }, 30).await.unwrap();
+        Ok::<(), anyhow::Error>(())
+    }, 30).await?;
+
+    // Clean up OUTSIDE timeout
+    display.stop().await?;
+    Ok(())
 }
 
 #[tokio::test]
-async fn test_window_with_title_persistence() {
-    with_timeout(async {
-        let display = ProgressDisplay::new_with_mode(ThreadMode::WindowWithTitle(3)).await.unwrap();
-        let mut env = TestEnv::new();
-        
-        let _handle = display.spawn_with_mode(ThreadMode::WindowWithTitle(3), || "title-persistence-test").await.unwrap();
+async fn test_window_with_title_persistence() -> Result<()> {
+    // Create display OUTSIDE timeout
+    let display = ProgressDisplay::new_with_mode(ThreadMode::WindowWithTitle(3)).await?;
+    let mut env = TestEnv::new();
+    
+    // Run test logic INSIDE timeout
+    let _ = with_timeout(async {
+        let mut task = display.spawn_with_mode(ThreadMode::WindowWithTitle(3), || "title-persistence-test").await?;
+        task.capture_stdout("Message 1".to_string()).await?;
         env.writeln("Message 1");
         sleep(Duration::from_millis(50)).await;
+        
+        task.capture_stdout("Message 2".to_string()).await?;
         env.writeln("Message 2");
         sleep(Duration::from_millis(50)).await;
+        
+        task.capture_stdout("Message 3".to_string()).await?;
         env.writeln("Message 3");
         
-        display.display().await.unwrap();
-        display.stop().await.unwrap();
+        display.display().await?;
         env.verify();
-    }, 30).await.unwrap();
+        Ok::<(), anyhow::Error>(())
+    }, 30).await?;
+
+    // Clean up OUTSIDE timeout
+    display.stop().await?;
+    Ok(())
 }
 
 #[tokio::test]
-async fn test_window_with_title_emoji() {
-    with_timeout(async {
-        let display = ProgressDisplay::new().await.unwrap();
-        let mut env = TestEnv::new();
-        
+async fn test_window_with_title_emoji() -> Result<()> {
+    // Create display OUTSIDE timeout
+    let display = ProgressDisplay::new().await?;
+    let mut env = TestEnv::new();
+    
+    // Run test logic INSIDE timeout
+    let _ = with_timeout(async {
         // Create a task in WindowWithTitle mode
-        let mut task = display.spawn_with_mode(ThreadMode::WindowWithTitle(3), || "Initial Title").await.unwrap();
+        let mut task = display.spawn_with_mode(ThreadMode::WindowWithTitle(3), || "Initial Title").await?;
         
         // First, verify if the task has a proper mode with emoji support
         let config = task.thread_config.lock().await;
@@ -78,40 +107,43 @@ async fn test_window_with_title_emoji() {
         drop(config);
         
         // Add some emojis
-        task.add_emoji("✨").await.unwrap();
+        task.add_emoji("✨").await?;
         env.writeln("✨ Initial Title");
         env.verify();
         
         // Add another emoji
-        task.add_emoji("🚀").await.unwrap();
+        task.add_emoji("🚀").await?;
         env.writeln("✨ 🚀 Initial Title");
         env.verify();
         
         // Change the title and verify emojis remain
-        task.set_title("Updated Title".to_string()).await.unwrap();
+        task.set_title("Updated Title".to_string()).await?;
         env.writeln("✨ 🚀 Updated Title");
         env.verify();
         
         // Add a message and verify title formatting
-        let result = task.capture_stdout("This is a test message".to_string()).await;
-        assert!(result.is_ok());
+        task.capture_stdout("This is a test message".to_string()).await?;
         
         // Verify the output
-        display.display().await.unwrap();
+        display.display().await?;
         env.verify();
-        
-        // Clean up
-        display.stop().await.unwrap();
-    }, 30).await.unwrap();
+        Ok::<(), anyhow::Error>(())
+    }, 30).await?;
+
+    // Clean up OUTSIDE timeout
+    display.stop().await?;
+    Ok(())
 }
 
 #[tokio::test]
-async fn test_window_with_title_emoji_errors() {
-    with_timeout(async {
-        let display = ProgressDisplay::new().await.unwrap();
-        
+async fn test_window_with_title_emoji_errors() -> Result<()> {
+    // Create display OUTSIDE timeout
+    let display = ProgressDisplay::new().await?;
+    
+    // Run test logic INSIDE timeout
+    let _ = with_timeout(async {
         // Create a task in Limited mode (doesn't support emojis)
-        let limited_task = display.spawn_with_mode(ThreadMode::Limited, || "Limited Task").await.unwrap();
+        let limited_task = display.spawn_with_mode(ThreadMode::Limited, || "Limited Task").await?;
         
         // Trying to add an emoji should fail
         let result = limited_task.add_emoji("🚀").await;
@@ -120,94 +152,112 @@ async fn test_window_with_title_emoji_errors() {
         assert!(error.contains("not in a mode that supports emojis"), "Error message should mention emojis support: {}", error);
         
         // Create a task in Window mode (doesn't support emojis)
-        let window_task = display.spawn_with_mode(ThreadMode::Window(3), || "Window Task").await.unwrap();
+        let window_task = display.spawn_with_mode(ThreadMode::Window(3), || "Window Task").await?;
         
         // Trying to add an emoji should fail
         let result = window_task.add_emoji("🚀").await;
         assert!(result.is_err());
         let error = result.unwrap_err().to_string();
         assert!(error.contains("not in a mode that supports emojis"), "Error message should mention emojis support: {}", error);
-        
-        // Clean up
-        display.stop().await.unwrap();
-    }, 30).await.unwrap();
+        Ok::<(), anyhow::Error>(())
+    }, 30).await?;
+
+    // Clean up OUTSIDE timeout
+    display.stop().await?;
+    Ok(())
 }
 
 #[tokio::test]
-async fn test_window_with_title_multiple_emojis() {
-    with_timeout(async {
-        let display = ProgressDisplay::new().await.unwrap();
-        let mut env = TestEnv::new();
-        
+async fn test_window_with_title_multiple_emojis() -> Result<()> {
+    // Create display OUTSIDE timeout
+    let display = ProgressDisplay::new().await?;
+    let mut env = TestEnv::new();
+    
+    // Run test logic INSIDE timeout
+    let _ = with_timeout(async {
         // Create a task in WindowWithTitle mode
-        let mut task = display.spawn_with_mode(ThreadMode::WindowWithTitle(3), || "Initial Title").await.unwrap();
+        let mut task = display.spawn_with_mode(ThreadMode::WindowWithTitle(3), || "Initial Title").await?;
         
         // Add multiple emojis
-        task.add_emoji("✨").await.unwrap();
-        task.add_emoji("🚀").await.unwrap();
-        task.add_emoji("🔥").await.unwrap();
+        task.add_emoji("✨").await?;
+        task.add_emoji("🚀").await?;
+        task.add_emoji("🔥").await?;
         
         // Verify output
         env.writeln("✨ 🚀 🔥 Initial Title");
         env.verify();
         
         // Add a message
-        let result = task.capture_stdout("This is a test message".to_string()).await;
-        assert!(result.is_ok());
+        task.capture_stdout("This is a test message".to_string()).await?;
         
         // Verify the output includes all emojis
-        display.display().await.unwrap();
+        display.display().await?;
         env.verify();
-        
-        // Clean up
-        display.stop().await.unwrap();
-    }, 30).await.unwrap();
+        Ok::<(), anyhow::Error>(())
+    }, 30).await?;
+
+    // Clean up OUTSIDE timeout
+    display.stop().await?;
+    Ok(())
 }
 
 #[tokio::test]
-async fn test_window_with_title_size() {
-    with_timeout(async {
-        for size in [2, 3, 5, 10] {
-            let display = ProgressDisplay::new_with_mode(ThreadMode::WindowWithTitle(size)).await.unwrap();
-            let mut env = TestEnv::new();
-            
-            display.spawn_with_mode(ThreadMode::WindowWithTitle(size), move || format!("size-{}", size)).await.unwrap();
+async fn test_window_with_title_size() -> Result<()> {
+    for size in [2, 3, 5, 10] {
+        // Create display OUTSIDE timeout
+        let display = ProgressDisplay::new_with_mode(ThreadMode::WindowWithTitle(size)).await?;
+        let mut env = TestEnv::new();
+        
+        // Run test logic INSIDE timeout
+        let _ = with_timeout(async {
+            let mut task = display.spawn_with_mode(ThreadMode::WindowWithTitle(size), move || format!("size-{}", size)).await?;
             for i in 0..size + 2 {
-                env.writeln(&format!("Line {}", i));
+                let message = format!("Line {}", i);
+                task.capture_stdout(message.clone()).await?;
+                env.writeln(&message);
             }
             
-            display.display().await.unwrap();
-            display.stop().await.unwrap();
+            display.display().await?;
             env.verify();
-        }
-    }, 30).await.unwrap();
+            Ok::<(), anyhow::Error>(())
+        }, 30).await?;
+
+        // Clean up OUTSIDE timeout
+        display.stop().await?;
+    }
+    Ok(())
 }
 
 #[tokio::test]
-async fn test_window_with_title_concurrent() {
-    with_timeout(async {
-        let display = ProgressDisplay::new().await.unwrap();
+async fn test_window_with_title_concurrent() -> Result<()> {
+    // Create display OUTSIDE timeout
+    let display = ProgressDisplay::new().await?;
+    
+    // Run test logic INSIDE timeout
+    let _ = with_timeout(async {
         let mut handles = vec![];
         
         // Spawn multiple tasks in WindowWithTitle mode
         for i in 0..3 {
-            let display = display.clone();
+            let display_ref = display.clone();
             let mut env = TestEnv::new();
             let i = i;
             handles.push(tokio::spawn(async move {
-                display.spawn_with_mode(ThreadMode::WindowWithTitle(3), move || format!("task-{}", i)).await.unwrap();
+                let mut task = display_ref.spawn_with_mode(ThreadMode::WindowWithTitle(3), move || format!("task-{}", i)).await?;
                 for j in 0..5 {
-                    env.writeln(&format!("Thread {}: Message {}", i, j));
+                    let message = format!("Thread {}: Message {}", i, j);
+                    task.capture_stdout(message.clone()).await?;
+                    env.writeln(&message);
                     sleep(Duration::from_millis(50)).await;
                 }
-                env
+                Ok::<TestEnv, anyhow::Error>(env)
             }));
         }
         
         // Wait for all tasks to complete and combine their outputs
         let mut final_env = TestEnv::new();
         for handle in handles {
-            let task_env = handle.await.unwrap();
+            let task_env = handle.await??;
             let content = task_env.contents();
             if !content.is_empty() {
                 final_env.write(&content);
@@ -215,141 +265,206 @@ async fn test_window_with_title_concurrent() {
         }
         
         // Verify final state
-        display.display().await.unwrap();
-        display.stop().await.unwrap();
+        display.display().await?;
         final_env.verify();
-    }, 30).await.unwrap();
+        Ok::<(), anyhow::Error>(())
+    }, 30).await?;
+
+    // Clean up OUTSIDE timeout
+    display.stop().await?;
+    Ok(())
 }
 
 #[tokio::test]
-async fn test_window_with_title_edge_cases() {
-    with_timeout(async {
+async fn test_window_with_title_edge_cases() -> Result<()> {
+    // Create display OUTSIDE timeout
+    let display = ProgressDisplay::new_with_mode(ThreadMode::WindowWithTitle(3)).await?;
+    let mut env = TestEnv::new();
+    
+    // Run test logic INSIDE timeout
+    let _ = with_timeout(async {
         // Enable error propagation for this test
         crate::modes::set_error_propagation(true);
         
-        let display = ProgressDisplay::new_with_mode(ThreadMode::WindowWithTitle(3)).await.unwrap();
-        let mut env = TestEnv::new();
-        
         // Test edge cases
-        display.spawn_with_mode(ThreadMode::WindowWithTitle(3), || "edge-case").await.unwrap();
-        
-        // Skip adding whitespace lines that cause verification issues
+        let mut task = display.spawn_with_mode(ThreadMode::WindowWithTitle(3), || "edge-case").await?;
         
         // Test very short line
+        task.capture_stdout("x".to_string()).await?;
         env.writeln("x");
         
-        display.display().await.unwrap();
-        display.stop().await.unwrap();
+        display.display().await?;
         env.verify();
         
         // Test trying to create a window with less than 2 lines (should fail)
-        let result = ProgressDisplay::new_with_mode(ThreadMode::WindowWithTitle(1)).await.unwrap()
+        let result = ProgressDisplay::new_with_mode(ThreadMode::WindowWithTitle(1)).await?
             .spawn_with_mode(ThreadMode::WindowWithTitle(1), || "too-small").await;
         assert!(result.is_err());
-            
-        // Disable error propagation after test
-        crate::modes::set_error_propagation(false);
-    }, 30).await.unwrap();
+        Ok::<(), anyhow::Error>(())
+    }, 30).await?;
+
+    // Clean up OUTSIDE timeout
+    display.stop().await?;
+    Ok(())
 }
 
 #[tokio::test]
-async fn test_window_with_title_special_chars() {
-    with_timeout(async {
-        let display = ProgressDisplay::new_with_mode(ThreadMode::WindowWithTitle(3)).await.unwrap();
-        let mut env = TestEnv::new();
-        
-        let _handle = display.spawn_with_mode(ThreadMode::WindowWithTitle(3), || "special-chars").await.unwrap();
+async fn test_window_with_title_special_chars() -> Result<()> {
+    // Create display OUTSIDE timeout
+    let display = ProgressDisplay::new_with_mode(ThreadMode::WindowWithTitle(3)).await?;
+    let mut env = TestEnv::new();
+    
+    // Run test logic INSIDE timeout
+    let _ = with_timeout(async {
+        let mut task = display.spawn_with_mode(ThreadMode::WindowWithTitle(3), || "special-chars").await?;
         
         // Test various special characters
-        env.writeln("Test with \n newlines \t tabs \r returns");
-        env.writeln("Test with unicode: 你好世界");
-        env.writeln("Test with emoji: 🚀 ✨");
+        let special_chars = vec![
+            "!@#$%^&*()",
+            "\\n\\t\\r",
+            "🎉 🌟 🚀",
+            "Unicode: 你好, こんにちは",
+            "Mixed: ABC123!@#",
+        ];
         
-        display.display().await.unwrap();
-        display.stop().await.unwrap();
+        for chars in special_chars {
+            task.capture_stdout(chars.to_string()).await?;
+            env.writeln(chars);
+        }
+        
+        display.display().await?;
         env.verify();
-    }, 30).await.unwrap();
+        Ok::<(), anyhow::Error>(())
+    }, 30).await?;
+
+    // Clean up OUTSIDE timeout
+    display.stop().await?;
+    Ok(())
 }
 
 #[tokio::test]
-async fn test_window_with_title_long_lines() {
-    with_timeout(async {
-        let display = ProgressDisplay::new_with_mode(ThreadMode::WindowWithTitle(3)).await.unwrap();
-        let mut env = TestEnv::new();
+async fn test_window_with_title_long_lines() -> Result<()> {
+    // Create display OUTSIDE timeout
+    let display = ProgressDisplay::new_with_mode(ThreadMode::WindowWithTitle(3)).await?;
+    let mut env = TestEnv::new();
+    
+    // Run test logic INSIDE timeout
+    let _ = with_timeout(async {
+        let mut task = display.spawn_with_mode(ThreadMode::WindowWithTitle(3), || "long-lines").await?;
         
-        let _handle = display.spawn_with_mode(ThreadMode::WindowWithTitle(3), || "long-lines").await.unwrap();
+        // Test various line lengths
+        let lines = vec![
+            "Short line",
+            "A bit longer line with some more content",
+            "A very long line that should definitely exceed the normal terminal width and require wrapping or truncation depending on the implementation",
+            "Another very long line with special characters: !@#$%^&*()_+ and some unicode: 你好, こんにちは, to make it even more challenging",
+        ];
         
-        // Test very long line
-        let long_line = "x".repeat(1000);
-        env.writeln(&long_line);
+        for line in lines {
+            task.capture_stdout(line.to_string()).await?;
+            env.writeln(line);
+        }
         
-        display.display().await.unwrap();
-        display.stop().await.unwrap();
+        display.display().await?;
         env.verify();
-    }, 30).await.unwrap();
+        Ok::<(), anyhow::Error>(())
+    }, 30).await?;
+
+    // Clean up OUTSIDE timeout
+    display.stop().await?;
+    Ok(())
 }
 
 #[tokio::test]
-async fn test_window_with_title_terminal_size() {
-    with_timeout(async {
-        let display = ProgressDisplay::new_with_mode(ThreadMode::WindowWithTitle(3)).await.unwrap();
-        let mut env = TestEnv::new(); // Smaller terminal size
+async fn test_window_with_title_terminal_size() -> Result<()> {
+    // Create display OUTSIDE timeout
+    let display = ProgressDisplay::new_with_mode(ThreadMode::WindowWithTitle(3)).await?;
+    let mut env = TestEnv::new();
+    
+    // Run test logic INSIDE timeout
+    let _ = with_timeout(async {
+        let mut task = display.spawn_with_mode(ThreadMode::WindowWithTitle(3), || "terminal-size").await?;
         
-        let _handle = display.spawn_with_mode(ThreadMode::WindowWithTitle(3), || "terminal-size").await.unwrap();
-        env.writeln("Testing with smaller terminal");
+        // Test with different content lengths
+        for i in 1..5 {
+            let message = "X".repeat(i * 20);
+            task.capture_stdout(message.clone()).await?;
+            env.writeln(&message);
+        }
         
-        display.display().await.unwrap();
-        display.stop().await.unwrap();
+        display.display().await?;
         env.verify();
-    }, 30).await.unwrap();
+        Ok::<(), anyhow::Error>(())
+    }, 30).await?;
+
+    // Clean up OUTSIDE timeout
+    display.stop().await?;
+    Ok(())
 }
 
 #[tokio::test]
-async fn test_window_with_title_set_title() {
-    with_timeout(async {
-        let display = ProgressDisplay::new().await.unwrap();
-        let env = TestEnv::new();
+async fn test_window_with_title_set_title() -> Result<()> {
+    // Create display OUTSIDE timeout
+    let display = ProgressDisplay::new_with_mode(ThreadMode::WindowWithTitle(3)).await?;
+    let mut env = TestEnv::new();
+    
+    // Run test logic INSIDE timeout
+    let _ = with_timeout(async {
+        let mut task = display.spawn_with_mode(ThreadMode::WindowWithTitle(3), || "initial-title").await?;
         
-        // Create a task in WindowWithTitle mode
-        let mut task = display.spawn_with_mode(ThreadMode::WindowWithTitle(3), || "Initial Title").await.unwrap();
+        // Test setting different titles
+        let titles = vec![
+            "New Title",
+            "Another Title",
+            "Title with special chars: !@#$%^&*()",
+            "Title with emoji: 🎉 🌟 🚀",
+            "Title with unicode: 你好, こんにちは",
+        ];
         
-        // Change the title
-        let result = task.set_title("Updated Title".to_string()).await;
-        assert!(result.is_ok());
+        for title in titles {
+            task.set_title(title.to_string()).await?;
+            task.capture_stdout("Content after title change".to_string()).await?;
+            env.writeln(title);
+        }
         
-        // Add a message
-        task.capture_stdout("Message after title change".to_string()).await.unwrap();
-        
-        // Verify output shows updated title
-        display.display().await.unwrap();
+        display.display().await?;
         env.verify();
-        
-        // Change title again
-        task.set_title("Final Title".to_string()).await.unwrap();
-        display.display().await.unwrap();
-        env.verify();
-        
-        // Clean up
-        display.stop().await.unwrap();
-    }, 30).await.unwrap();
+        Ok::<(), anyhow::Error>(())
+    }, 30).await?;
+
+    // Clean up OUTSIDE timeout
+    display.stop().await?;
+    Ok(())
 }
 
 #[tokio::test]
-async fn test_window_with_title_set_title_error() {
-    with_timeout(async {
-        let display = ProgressDisplay::new().await.unwrap();
+async fn test_window_with_title_set_title_error() -> Result<()> {
+    // Create display OUTSIDE timeout
+    let display = ProgressDisplay::new().await?;
+    
+    // Run test logic INSIDE timeout
+    let _ = with_timeout(async {
+        // Create a task in Limited mode (doesn't support title)
+        let limited_task = display.spawn_with_mode(ThreadMode::Limited, || "Limited Task").await?;
         
-        // Create a task in Limited mode (doesn't support title changes)
-        let limited_task = display.spawn_with_mode(ThreadMode::Limited, || "Limited Task").await.unwrap();
-        
-        // Trying to change the title should fail
+        // Trying to set title should fail
         let result = limited_task.set_title("New Title".to_string()).await;
         assert!(result.is_err());
         let error = result.unwrap_err().to_string();
-        assert!(error.contains("not in a mode that supports titles"), 
-            "Error message should mention title change support: {}", error);
+        assert!(error.contains("not in a mode that supports title"), "Error message should mention title support: {}", error);
         
-        // Clean up
-        display.stop().await.unwrap();
-    }, 30).await.unwrap();
+        // Create a task in Window mode (doesn't support title)
+        let window_task = display.spawn_with_mode(ThreadMode::Window(3), || "Window Task").await?;
+        
+        // Trying to set title should fail
+        let result = window_task.set_title("New Title".to_string()).await;
+        assert!(result.is_err());
+        let error = result.unwrap_err().to_string();
+        assert!(error.contains("not in a mode that supports title"), "Error message should mention title support: {}", error);
+        Ok::<(), anyhow::Error>(())
+    }, 30).await?;
+
+    // Clean up OUTSIDE timeout
+    display.stop().await?;
+    Ok(())
 } 

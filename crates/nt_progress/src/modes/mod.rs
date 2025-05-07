@@ -582,7 +582,7 @@ impl WindowBase {
                 // Get or create buffer for this thread
                 let buffer = self.thread_buffers
                     .entry(thread_id.to_string())
-                    .or_insert_with(VecDeque::new);
+                    .or_default();
                 
                 // Add message to thread buffer
                 buffer.push_back(message.clone());
@@ -912,7 +912,7 @@ impl Config {
             with_title.set_title(title)
         } else {
             Err(ModeCreationError::Implementation(
-                format!("Config does not support titles")
+                "Config does not support titles".to_string()
             ))
         }
     }
@@ -933,7 +933,7 @@ impl Config {
             with_size.set_max_lines(max_lines)
         } else {
             Err(ModeCreationError::Implementation(
-                format!("Config does not support custom size")
+                "Config does not support custom size".to_string()
             ))
         }
     }
@@ -954,7 +954,7 @@ impl Config {
             with_emoji.add_emoji(emoji)
         } else {
             Err(ModeCreationError::Implementation(
-                format!("Config does not support emojis")
+                "Config does not support emojis".to_string()
             ))
         }
     }
@@ -1102,14 +1102,12 @@ impl ModeParameters {
         }
 
         // Validate title for WindowWithTitle mode
-        if mode_name == "window_with_title" {
-            if self.title.is_none() {
-                return Err(ModeCreationError::MissingParameter {
-                    param_name: "title".to_string(),
-                    mode_name: mode_name.to_string(),
-                    reason: Some("WindowWithTitle mode requires a title".to_string()),
-                });
-            }
+        if mode_name == "window_with_title" && self.title.is_none() {
+            return Err(ModeCreationError::MissingParameter {
+                param_name: "title".to_string(),
+                mode_name: mode_name.to_string(),
+                reason: Some("WindowWithTitle mode requires a title".to_string()),
+            });
         }
 
         Ok(())

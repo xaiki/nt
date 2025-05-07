@@ -4,48 +4,58 @@ use crate::terminal::TestEnv;
 use tokio::time::sleep;
 use std::time::Duration;
 use crate::tests::common::with_timeout;
+use anyhow::Result;
 
 #[tokio::test]
-async fn test_limited_basic() {
-    with_timeout(async {
-        let display = ProgressDisplay::new_with_mode(ThreadMode::Limited).await;
-        let mut env = TestEnv::new_with_size(80, 24);
-        
-        let _handle = display.as_ref().expect("Failed to get display").spawn_with_mode(ThreadMode::Limited, || "limited-test").await.unwrap();
+async fn test_limited_basic() -> Result<()> {
+    // Create display OUTSIDE timeout
+    let display = ProgressDisplay::new_with_mode(ThreadMode::Limited).await?;
+    let mut env = TestEnv::new_with_size(80, 24);
+
+    // Run test logic INSIDE timeout
+    let _ = with_timeout(async {
+        let mut task = display.spawn_with_mode(ThreadMode::Limited, || "limited-test").await?;
+        task.capture_stdout("Test message".to_string()).await?;
+        display.display().await?;
         env.writeln("Test message");
-        
-        display.as_ref().expect("Failed to get display").display().await.unwrap();
-        display.as_ref().expect("Failed to get display").stop().await.unwrap();
         env.verify();
-    }, 60).await.unwrap();
+        Ok::<(), anyhow::Error>(())
+    }, 60).await?;
+
+    // Clean up OUTSIDE timeout
+    display.stop().await?;
+    Ok(())
 }
 
 #[tokio::test]
-async fn test_limited_concurrent() {
-    with_timeout(async {
-        let display = ProgressDisplay::new().await;
-        let total_jobs = 5;
-        
+async fn test_limited_concurrent() -> Result<()> {
+    // Create display OUTSIDE timeout
+    let display = ProgressDisplay::new().await?;
+    let total_jobs = 5;
+
+    // Run test logic INSIDE timeout
+    let _ = with_timeout(async {
         // Spawn multiple tasks in Limited mode
         let mut handles = vec![];
         for i in 0..total_jobs {
-            let display = display.as_ref().expect("Failed to get display").clone();
+            let display_ref = display.clone();
             let mut env = TestEnv::new_with_size(80, 24);
             let i = i;
             handles.push(tokio::spawn(async move {
-                display.spawn_with_mode(ThreadMode::Limited, move || format!("task-{}", i)).await.unwrap();
+                let mut task = display_ref.spawn_with_mode(ThreadMode::Limited, move || format!("task-{}", i)).await?;
                 for j in 0..3 {
+                    task.capture_stdout(format!("Thread {}: Message {}", i, j)).await?;
                     env.writeln(&format!("Thread {}: Message {}", i, j));
                     sleep(Duration::from_millis(50)).await;
                 }
-                env
+                Ok::<TestEnv, anyhow::Error>(env)
             }));
         }
         
         // Wait for all tasks to complete and combine their outputs
         let mut final_env = TestEnv::new_with_size(80, 24);
         for handle in handles {
-            let task_env = handle.await.unwrap();
+            let task_env = handle.await??;
             let content = task_env.contents();
             if !content.is_empty() {
                 final_env.write(&content);
@@ -53,8 +63,12 @@ async fn test_limited_concurrent() {
         }
         
         // Verify final state
-        display.as_ref().expect("Failed to get display").display().await.unwrap();
-        display.as_ref().expect("Failed to get display").stop().await.unwrap();
+        display.display().await?;
         final_env.verify();
-    }, 60).await.unwrap();
+        Ok::<(), anyhow::Error>(())
+    }, 60).await?;
+
+    // Clean up OUTSIDE timeout
+    display.stop().await?;
+    Ok(())
 } 

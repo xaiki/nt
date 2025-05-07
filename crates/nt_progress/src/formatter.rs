@@ -242,10 +242,10 @@ impl ProgressTemplate {
     
     // Process a conditional tag {?condition}content{/} or {!condition}content{/}
     fn render_conditional_tag(&self, tag: &str, context: &TemplateContext) -> Result<Option<String>, ProgressError> {
-        let (is_positive, condition) = if tag.starts_with('?') {
-            (true, &tag[1..])
-        } else if tag.starts_with('!') {
-            (false, &tag[1..])
+        let (is_positive, condition) = if let Some(stripped) = tag.strip_prefix('?') {
+            (true, stripped)
+        } else if let Some(stripped) = tag.strip_prefix('!') {
+            (false, stripped)
         } else {
             return Ok(None);
         };
@@ -300,7 +300,7 @@ impl ProgressTemplate {
         };
         
         // Clamp to 0..1 range
-        let progress = progress.max(0.0).min(1.0);
+        let progress = progress.clamp(0.0, 1.0);
         
         // Get the bar width (default: 10)
         let width = if format_parts.len() > 1 {
@@ -361,7 +361,7 @@ impl ProgressTemplate {
         };
         
         // Clamp to 0..1 range and convert to percentage
-        let percent = (progress.max(0.0).min(1.0) * 100.0).round() as usize;
+        let percent = (progress.clamp(0.0, 1.0) * 100.0).round() as usize;
         
         Ok(Some(format!("{}%", percent)))
     }

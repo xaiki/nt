@@ -5,7 +5,7 @@ use anyhow::Result;
 use super::ProgressWriter;
 
 /// Capabilities that a custom writer can support
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Default)]
 pub struct WriterCapabilities {
     /// Whether the writer supports custom formatting
     pub supports_formatting: bool,
@@ -15,17 +15,6 @@ pub struct WriterCapabilities {
     pub supports_redirection: bool,
     /// Whether the writer supports async operations
     pub supports_async: bool,
-}
-
-impl Default for WriterCapabilities {
-    fn default() -> Self {
-        Self {
-            supports_formatting: false,
-            supports_filtering: false,
-            supports_redirection: false,
-            supports_async: false,
-        }
-    }
 }
 
 /// A trait for custom writers that can be registered with the system

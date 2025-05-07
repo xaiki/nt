@@ -59,7 +59,7 @@ impl ModeRegistry {
     
     /// Validate parameters before mode creation
     fn validate_params(&self, mode_name: &str, params: &ModeParameters) -> Result<(), ModeCreationError> {
-        if let Some(creator) = self.creators.get(mode_name) {
+        if self.creators.contains_key(mode_name) {
             params.validate(mode_name)?;
             Ok(())
         } else {
@@ -98,6 +98,12 @@ impl ModeRegistry {
             ThreadMode::Window(max_lines) => self.create("window", &ModeParameters::window(total_jobs, max_lines)),
             ThreadMode::WindowWithTitle(max_lines) => self.create("window_with_title", &ModeParameters::window_with_title(total_jobs, max_lines, "Progress".to_string())),
         }
+    }
+}
+
+impl Default for ModeRegistry {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -345,6 +351,12 @@ impl ModeFactory {
     /// Get a reference to the underlying registry
     pub fn registry(&self) -> &ModeRegistry {
         &self.registry
+    }
+}
+
+impl Default for ModeFactory {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

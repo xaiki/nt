@@ -9,108 +9,153 @@ use crate::terminal::KeyData;
 use crossterm::event::{KeyCode, KeyModifiers};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
+use anyhow::Result;
 
 #[tokio::test]
-async fn test_terminal_basic() {
-    with_timeout(async {
-        let mut env = TestEnv::new();
-        let display = ProgressDisplay::new().await.unwrap();
+async fn test_terminal_basic() -> Result<()> {
+    // Create display OUTSIDE timeout
+    let display = ProgressDisplay::new().await?;
+    let mut env = TestEnv::new();
+    
+    // Run test logic INSIDE timeout
+    let _ = with_timeout(async {
+        let mut task = display.spawn_with_mode(ThreadMode::Limited, || "basic-test".to_string()).await?;
+        task.capture_stdout("Test line 1".to_string()).await?;
+        task.capture_stdout("Test line 2".to_string()).await?;
         
-        // Test basic terminal operations
-        display.spawn_with_mode(ThreadMode::Limited, || "basic-test".to_string()).await.unwrap();
         env.writeln("Test line 1");
         env.writeln("Test line 2");
         
-        display.display().await.unwrap();
-        display.stop().await.unwrap();
+        display.display().await?;
         env.verify();
-    }, 60).await.unwrap();
+        Ok::<(), anyhow::Error>(())
+    }, 15).await?;
+    
+    // Clean up OUTSIDE timeout
+    display.stop().await?;
+    Ok(())
 }
 
 #[tokio::test]
-async fn test_terminal_resize() {
-    with_timeout(async {
-        let mut env = TestEnv::new();
-        let display = ProgressDisplay::new().await.unwrap();
+async fn test_terminal_resize() -> Result<()> {
+    // Create display OUTSIDE timeout
+    let display = ProgressDisplay::new().await?;
+    let mut env = TestEnv::new();
+    
+    // Run test logic INSIDE timeout
+    let _ = with_timeout(async {
+        let mut task = display.spawn(|_| async move { Ok(()) }).await?;
         
-        // Test terminal resize handling
-        let _thread = display.spawn(|_| async move { Ok(()) }).await.unwrap();
+        display.renderer.terminal().set_size(40, 12).await?;
         
-        display.terminal.set_size(40, 12).await.expect("Failed to set terminal size");
+        task.capture_stdout("Initial size".to_string()).await?;
+        task.capture_stdout("After resize".to_string()).await?;
         
         env.writeln("Initial size");
         env.writeln("After resize");
         
-        display.display().await.unwrap();
-        display.stop().await.unwrap();
+        display.display().await?;
         env.verify();
-    }, 60).await.unwrap();
+        Ok::<(), anyhow::Error>(())
+    }, 15).await?;
+    
+    // Clean up OUTSIDE timeout
+    display.stop().await?;
+    Ok(())
 }
 
 #[tokio::test]
-async fn test_terminal_clear() {
-    with_timeout(async {
-        let mut env = TestEnv::new();
-        let display = ProgressDisplay::new().await.unwrap();
+async fn test_terminal_clear() -> Result<()> {
+    // Create display OUTSIDE timeout
+    let display = ProgressDisplay::new().await?;
+    let mut env = TestEnv::new();
+    
+    // Run test logic INSIDE timeout
+    let _ = with_timeout(async {
+        let mut task = display.spawn_with_mode(ThreadMode::Limited, || "clear-test".to_string()).await?;
+        task.capture_stdout("Line 1".to_string()).await?;
+        task.capture_stdout("Line 2".to_string()).await?;
+        task.capture_stdout("After clear".to_string()).await?;
         
-        // Test terminal clear
-        display.spawn_with_mode(ThreadMode::Limited, || "clear-test".to_string()).await.unwrap();
         env.writeln("Line 1");
         env.writeln("Line 2");
         env.clear();
         env.writeln("After clear");
         
-        display.display().await.unwrap();
-        display.stop().await.unwrap();
+        display.display().await?;
         env.verify();
-    }, 60).await.unwrap();
+        Ok::<(), anyhow::Error>(())
+    }, 15).await?;
+    
+    // Clean up OUTSIDE timeout
+    display.stop().await?;
+    Ok(())
 }
 
 #[tokio::test]
-async fn test_terminal_cursor() {
-    with_timeout(async {
-        let mut env = TestEnv::new();
-        let display = ProgressDisplay::new().await.unwrap();
+async fn test_terminal_cursor() -> Result<()> {
+    // Create display OUTSIDE timeout
+    let display = ProgressDisplay::new().await?;
+    let mut env = TestEnv::new();
+    
+    // Run test logic INSIDE timeout
+    let _ = with_timeout(async {
+        let mut task = display.spawn_with_mode(ThreadMode::Limited, || "cursor-test".to_string()).await?;
+        task.capture_stdout("Line 1".to_string()).await?;
+        task.capture_stdout("At position".to_string()).await?;
         
-        // Test cursor movement
-        display.spawn_with_mode(ThreadMode::Limited, || "cursor-test".to_string()).await.unwrap();
         env.writeln("Line 1");
         env.move_to(10, 5);
         env.writeln("At position");
         
-        display.display().await.unwrap();
-        display.stop().await.unwrap();
+        display.display().await?;
         env.verify();
-    }, 60).await.unwrap();
+        Ok::<(), anyhow::Error>(())
+    }, 15).await?;
+    
+    // Clean up OUTSIDE timeout
+    display.stop().await?;
+    Ok(())
 }
 
 #[tokio::test]
-async fn test_terminal_colors() {
-    with_timeout(async {
-        let mut env = TestEnv::new();
-        let display = ProgressDisplay::new().await.unwrap();
+async fn test_terminal_colors() -> Result<()> {
+    // Create display OUTSIDE timeout
+    let display = ProgressDisplay::new().await?;
+    let mut env = TestEnv::new();
+    
+    // Run test logic INSIDE timeout
+    let _ = with_timeout(async {
+        let mut task = display.spawn_with_mode(ThreadMode::Limited, || "color-test".to_string()).await?;
         
-        // Test color handling
-        display.spawn_with_mode(ThreadMode::Limited, || "color-test".to_string()).await.unwrap();
         env.set_color(crossterm::style::Color::Red);
+        task.capture_stdout("Red text".to_string()).await?;
         env.writeln("Red text");
+        
         env.reset_styles();
+        task.capture_stdout("Normal text".to_string()).await?;
         env.writeln("Normal text");
         
-        display.display().await.unwrap();
-        display.stop().await.unwrap();
+        display.display().await?;
         env.verify();
-    }, 60).await.unwrap();
+        Ok::<(), anyhow::Error>(())
+    }, 15).await?;
+    
+    // Clean up OUTSIDE timeout
+    display.stop().await?;
+    Ok(())
 }
 
 #[tokio::test]
-async fn test_terminal_event_handling() {
-    with_timeout(async {
-        let mut env = TestEnv::new();
-        let display = ProgressDisplay::new().await.unwrap();
-        
+async fn test_terminal_event_handling() -> Result<()> {
+    // Create display OUTSIDE timeout
+    let display = ProgressDisplay::new().await?;
+    let env = TestEnv::new();
+    
+    // Run test logic INSIDE timeout
+    let _ = with_timeout(async {
         // Test keyboard event handling
-        let event_manager = display.terminal.event_manager();
+        let event_manager = display.renderer.terminal().event_manager();
         let event_count = Arc::new(AtomicUsize::new(0));
         let key_press_count = Arc::new(AtomicUsize::new(0));
         
@@ -128,11 +173,11 @@ async fn test_terminal_event_handling() {
                     }
                     Ok(())
                 }
-            }).await.unwrap();
+            }).await?;
         }
         
         // Start the event loop
-        event_manager.start_event_loop().await.unwrap();
+        event_manager.start_event_loop().await?;
         
         // Simulate key press
         let key_a = KeyData {
@@ -148,32 +193,39 @@ async fn test_terminal_event_handling() {
             is_release: false,
         };
         
-        event_manager.emit_event(TerminalEvent::KeyPress(key_a)).await.unwrap();
-        event_manager.emit_event(TerminalEvent::KeyPress(key_b)).await.unwrap();
+        event_manager.emit_event(TerminalEvent::KeyPress(key_a)).await?;
+        event_manager.emit_event(TerminalEvent::KeyPress(key_b)).await?;
         
         // Wait a bit for the events to be processed
         tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
         
         // Stop the event loop
-        event_manager.stop_event_loop().await.unwrap();
+        event_manager.stop_event_loop().await?;
         
         // Verify events were received
         assert_eq!(event_count.load(Ordering::SeqCst), 2);
         assert_eq!(key_press_count.load(Ordering::SeqCst), 2);
         
-        display.stop().await.unwrap();
+        display.display().await?;
         env.verify();
-    }, 60).await.unwrap();
+        Ok::<(), anyhow::Error>(())
+    }, 15).await?;
+    
+    // Clean up OUTSIDE timeout
+    display.stop().await?;
+    Ok(())
 }
 
 #[tokio::test]
-async fn test_terminal_capability_detection() {
-    with_timeout(async {
-        let mut env = TestEnv::new();
-        let display = ProgressDisplay::new().await.unwrap();
-        
+async fn test_terminal_capability_detection() -> Result<()> {
+    // Create display OUTSIDE timeout
+    let display = ProgressDisplay::new().await?;
+    let env = TestEnv::new();
+    
+    // Run test logic INSIDE timeout
+    let _ = with_timeout(async {
         // Test terminal capabilities
-        let terminal = &display.terminal;
+        let terminal = display.renderer.terminal();
         
         // Check basic capabilities
         assert!(terminal.supports_keyboard_input());
@@ -187,16 +239,25 @@ async fn test_terminal_capability_detection() {
         assert!(terminal.supports_color());
         assert!(terminal.supports_cursor_movement());
         
-        display.stop().await.unwrap();
+        display.display().await?;
         env.verify();
-    }, 60).await.unwrap();
+        Ok::<(), anyhow::Error>(())
+    }, 15).await?;
+    
+    // Clean up OUTSIDE timeout
+    display.stop().await?;
+    Ok(())
 }
 
 #[tokio::test]
-async fn test_terminal_style_management() {
-    with_timeout(async {
-        let mut env = TestEnv::new();
-        let display = ProgressDisplay::new().await.unwrap();
+async fn test_terminal_style_management() -> Result<()> {
+    // Create display OUTSIDE timeout
+    let display = ProgressDisplay::new().await?;
+    let mut env = TestEnv::new();
+    
+    // Run test logic INSIDE timeout
+    let _ = with_timeout(async {
+        let mut task = display.spawn_with_mode(ThreadMode::Limited, || "style-test".to_string()).await?;
         
         // Test style application
         let mut style = Style::new();
@@ -206,13 +267,20 @@ async fn test_terminal_style_management() {
         
         // Apply style
         env.apply_style(&style);
+        task.capture_stdout("Styled text".to_string()).await?;
         env.writeln("Styled text");
         
         // Reset style
         env.reset_styles();
+        task.capture_stdout("Normal text".to_string()).await?;
         env.writeln("Normal text");
         
-        display.stop().await.unwrap();
+        display.display().await?;
         env.verify();
-    }, 60).await.unwrap();
+        Ok::<(), anyhow::Error>(())
+    }, 15).await?;
+    
+    // Clean up OUTSIDE timeout
+    display.stop().await?;
+    Ok(())
 } 

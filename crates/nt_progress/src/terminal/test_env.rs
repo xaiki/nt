@@ -2,6 +2,9 @@ use std::io::Write;
 use std::cmp::min;
 use vt100::Parser;
 use rand::{thread_rng, Rng};
+use crate::io::ProgressWriter;
+use anyhow::Result;
+use std::fmt;
 
 use super::CursorPosition;
 use super::Style;
@@ -18,6 +21,17 @@ pub struct TestEnv {
     height: u16,
     /// Current screen content line by line
     screen_lines: Vec<String>,
+}
+
+impl fmt::Debug for TestEnv {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("TestEnv")
+            .field("expected", &self.expected)
+            .field("width", &self.width)
+            .field("height", &self.height)
+            .field("screen_lines", &self.screen_lines)
+            .finish()
+    }
 }
 
 impl TestEnv {
@@ -97,7 +111,7 @@ impl TestEnv {
     /// Gets the current cursor position
     pub fn cursor_pos(&self) -> (u16, u16) {
         let pos = self.parser.screen().cursor_position();
-        (pos.1 as u16, pos.0 as u16)  // (x, y) format
+        (pos.1, pos.0)  // (x, y) format
     }
 
     /// Gets the cursor position as a CursorPosition object
@@ -348,19 +362,22 @@ impl TestEnv {
             }
         }
         
-        // If one string has more lines than the other
-        if expected_lines.len() > actual_lines.len() {
-            result.push_str("Expected has more lines:\n");
-            for i in actual_lines.len()..expected_lines.len() {
-                result.push_str(&format!("Line {}: '{}'", i, expected_lines[i]));
-                result.push('\n');
+        match expected_lines.len().cmp(&actual_lines.len()) {
+            std::cmp::Ordering::Greater => {
+                result.push_str("Expected has more lines:\n");
+                for (i, line) in expected_lines.iter().enumerate().skip(actual_lines.len()) {
+                    result.push_str(&format!("Line {}: '{}'", i, line));
+                    result.push('\n');
+                }
             }
-        } else if actual_lines.len() > expected_lines.len() {
-            result.push_str("Actual has more lines:\n");
-            for i in expected_lines.len()..actual_lines.len() {
-                result.push_str(&format!("Line {}: '{}'", i, actual_lines[i]));
-                result.push('\n');
+            std::cmp::Ordering::Less => {
+                result.push_str("Actual has more lines:\n");
+                for (i, line) in actual_lines.iter().enumerate().skip(expected_lines.len()) {
+                    result.push_str(&format!("Line {}: '{}'", i, line));
+                    result.push('\n');
+                }
             }
+            std::cmp::Ordering::Equal => {}
         }
         
         result
@@ -387,14 +404,17 @@ impl TestEnv {
             }
         }
         
-        // If lengths are different, mark the rest
-        if expected_chars.len() > actual_chars.len() {
-            result.push_str(" <missing characters>");
-        } else if actual_chars.len() > expected_chars.len() {
-            for _ in min_len..actual_chars.len() {
-                result.push('^');
+        match expected_chars.len().cmp(&actual_chars.len()) {
+            std::cmp::Ordering::Greater => {
+                result.push_str(" <missing characters>");
             }
-            result.push_str(" <extra characters>");
+            std::cmp::Ordering::Less => {
+                for _ in min_len..actual_chars.len() {
+                    result.push('^');
+                }
+                result.push_str(" <extra characters>");
+            }
+            std::cmp::Ordering::Equal => {}
         }
         
         result
@@ -410,6 +430,21 @@ impl Write for TestEnv {
     
     fn flush(&mut self) -> std::io::Result<()> {
         Ok(())
+    }
+}
+
+impl ProgressWriter for TestEnv {
+    fn write_line(&mut self, line: &str) -> Result<()> {
+        self.writeln(line);
+        Ok(())
+    }
+    
+    fn flush(&mut self) -> Result<()> {
+        Ok(())
+    }
+    
+    fn is_ready(&self) -> bool {
+        true
     }
 }
 

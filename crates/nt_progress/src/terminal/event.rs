@@ -304,21 +304,19 @@ impl EventManager {
                 }
                 
                 // Wait for the next event with a timeout
-                if let Ok(Some(event)) = tokio::time::timeout(
+                if let Ok(Some(Ok(crossterm_event))) = tokio::time::timeout(
                     tokio::time::Duration::from_millis(poll_interval),
                     reader.next()
                 ).await {
-                    if let Ok(crossterm_event) = event {
-                        // Convert crossterm event to our TerminalEvent type
-                        if let Some(terminal_event) = convert_event(crossterm_event, *mouse_events_enabled.lock().await).await {
-                            // Send the event to our channel
-                            if let Err(e) = event_tx.send(terminal_event).await {
-                                if !*running_arc.lock().await {
-                                    break; // Normal shutdown
-                                }
-                                eprintln!("Error sending terminal event: {}", e);
-                                break;
+                    // Convert crossterm event to our TerminalEvent type
+                    if let Some(terminal_event) = convert_event(crossterm_event, *mouse_events_enabled.lock().await).await {
+                        // Send the event to our channel
+                        if let Err(e) = event_tx.send(terminal_event).await {
+                            if !*running_arc.lock().await {
+                                break; // Normal shutdown
                             }
+                            eprintln!("Error sending terminal event: {}", e);
+                            break;
                         }
                     }
                 }

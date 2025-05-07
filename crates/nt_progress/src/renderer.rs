@@ -70,4 +70,10 @@ impl Renderer {
     pub async fn stop(&self) -> anyhow::Result<()> {
         self.terminal.stop_event_detection().await
     }
+}
+
+impl Default for Renderer {
+    fn default() -> Self {
+        Self::new()
+    }
 } 

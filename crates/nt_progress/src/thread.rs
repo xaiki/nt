@@ -340,6 +340,12 @@ impl ThreadManager {
     }
 }
 
+impl Default for ThreadManager {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// A handle to a task that can be used to interact with it.
 #[derive(Clone)]
 pub struct TaskHandle {
@@ -461,7 +467,7 @@ impl TaskHandle {
         if let Err(e) = config.set_title(title) {
             let ctx = ErrorContext::new("setting title", "TaskHandle")
                 .with_thread_id(self.thread_id)
-                .with_details(&e.to_string());
+                .with_details(e.to_string());
             
             let error = ProgressError::TaskOperation(
                 format!("Failed to set title: {}", e)
@@ -490,7 +496,7 @@ impl TaskHandle {
         if let Err(e) = config.add_emoji(emoji) {
             let ctx = ErrorContext::new("adding emoji", "TaskHandle")
                 .with_thread_id(self.thread_id)
-                .with_details(&e.to_string());
+                .with_details(e.to_string());
             
             let error = ProgressError::TaskOperation(
                 format!("Failed to add emoji: {}", e)

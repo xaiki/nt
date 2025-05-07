@@ -40,8 +40,8 @@ pub use io::{ProgressWriter, OutputBuffer, TeeWriter};
 pub use io::custom::{CustomWriter, WriterCapabilities, WriterRegistry};
 
 thread_local! {
-    static CURRENT_THREAD_ID: AtomicUsize = AtomicUsize::new(0);
-    static CURRENT_WRITER: RefCell<Option<ThreadLogger>> = RefCell::new(None);
+    static CURRENT_THREAD_ID: AtomicUsize = const { AtomicUsize::new(0) };
+    static CURRENT_WRITER: RefCell<Option<ThreadLogger>> = const { RefCell::new(None) };
 }
 
 #[derive(Debug, Clone)]

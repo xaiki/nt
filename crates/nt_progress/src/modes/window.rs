@@ -131,6 +131,8 @@ mod tests {
     use crate::modes::{ThreadMode, JobTracker};
     use tokio::time::sleep;
     use std::time::Duration;
+    use crate::tests::common::with_timeout;
+    use anyhow::Result;
 
     #[test]
     fn test_window_mode_basic() {
@@ -174,77 +176,108 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_window_mode_concurrent() {
-        let display = ProgressDisplay::new().await;
-        let total_jobs = 3;
-        let mut handles = vec![];
-        let (width, height) = TestEnv::new_with_size(80, 24).size();
+    async fn test_window_mode_concurrent() -> Result<()> {
+        // Create display OUTSIDE timeout
+        let display = ProgressDisplay::new().await?;
+        let _env = TestEnv::new();
         
-        // Spawn multiple tasks in Window mode
-        for i in 0..total_jobs {
-            let display = display.as_ref().expect("Failed to get display").clone();
-            let i = i;
-            let mut task_env = TestEnv::new_with_size(width, height);
-            handles.push(tokio::spawn(async move {
-                display.spawn_with_mode(ThreadMode::Window(3), move || format!("task-{}", i)).await.unwrap();
-                for j in 0..5 {
-                    task_env.writeln(&format!("Thread {}: Message {}", i, j));
-                    sleep(Duration::from_millis(50)).await;
-                }
-                task_env
-            }));
-        }
-        
-        // Wait for all tasks to complete and combine their outputs
-        let mut final_env = TestEnv::new_with_size(80, 24);
-        for handle in handles {
-            let task_env = handle.await.unwrap();
-            let content = task_env.contents();
-            if !content.is_empty() {
-                final_env.write(&content);
+        // Run test logic INSIDE timeout
+        let _ = with_timeout(async {
+            let total_jobs = 3;
+            let mut handles = vec![];
+            
+            // Spawn multiple tasks in Window mode
+            for i in 0..total_jobs {
+                let display_ref = display.clone();
+                let mut task_env = TestEnv::new();
+                let i = i;
+                handles.push(tokio::spawn(async move {
+                    let mut task = display_ref.spawn_with_mode(ThreadMode::Window(3), move || format!("task-{}", i)).await?;
+                    for j in 0..5 {
+                        let message = format!("Thread {}: Message {}", i, j);
+                        task.capture_stdout(message.clone()).await?;
+                        task_env.writeln(&message);
+                        sleep(Duration::from_millis(50)).await;
+                    }
+                    Ok::<TestEnv, anyhow::Error>(task_env)
+                }));
             }
-        }
+            
+            // Wait for all tasks to complete and combine their outputs
+            let mut final_env = TestEnv::new();
+            for handle in handles {
+                let task_env = handle.await??;
+                let content = task_env.contents();
+                if !content.is_empty() {
+                    final_env.write(&content);
+                }
+            }
+            
+            // Verify final state
+            display.display().await?;
+            final_env.verify();
+            Ok::<(), anyhow::Error>(())
+        }, 15).await?;
         
-        // Verify final state
-        display.as_ref().expect("Failed to get display").display().await.unwrap();
-        display.as_ref().expect("Failed to get display").stop().await.unwrap();
-        final_env.verify();
+        // Clean up OUTSIDE timeout
+        display.stop().await?;
+        Ok(())
     }
 
     #[tokio::test]
-    async fn test_window_mode_special_characters() {
-        let display = ProgressDisplay::new().await;
-        let mut env = TestEnv::new_with_size(80, 24);
+    async fn test_window_mode_special_characters() -> Result<()> {
+        // Create display OUTSIDE timeout
+        let display = ProgressDisplay::new().await?;
+        let mut env = TestEnv::new();
         
-        // Test with special characters
-        let _handle = display.as_ref().expect("Failed to get display").spawn_with_mode(ThreadMode::Window(3), || "special-chars").await.unwrap();
+        // Run test logic INSIDE timeout
+        let _ = with_timeout(async {
+            let mut task = display.spawn_with_mode(ThreadMode::Window(3), || "special-chars").await?;
+            
+            // Test various special characters
+            let special_chars = vec![
+                "Test with \n newlines \t tabs \r returns",
+                "Test with unicode: 你好世界",
+                "Test with emoji: 🚀 ✨"
+            ];
+            
+            for chars in special_chars {
+                task.capture_stdout(chars.to_string()).await?;
+                env.writeln(chars);
+            }
+            
+            display.display().await?;
+            env.verify();
+            Ok::<(), anyhow::Error>(())
+        }, 15).await?;
         
-        // Test various special characters
-        env.writeln("Test with \n newlines \t tabs \r returns");
-        env.writeln("Test with unicode: 你好世界");
-        env.writeln("Test with emoji: 🚀 ✨");
-        
-        // Verify display
-        display.as_ref().expect("Failed to get display").display().await.unwrap();
-        display.as_ref().expect("Failed to get display").stop().await.unwrap();
-        env.verify();
+        // Clean up OUTSIDE timeout
+        display.stop().await?;
+        Ok(())
     }
 
     #[tokio::test]
-    async fn test_window_mode_long_lines() {
-        let display = ProgressDisplay::new().await;
-        let mut env = TestEnv::new_with_size(80, 24);
+    async fn test_window_mode_long_lines() -> Result<()> {
+        // Create display OUTSIDE timeout
+        let display = ProgressDisplay::new().await?;
+        let mut env = TestEnv::new();
         
-        // Test with long lines
-        let _handle = display.as_ref().expect("Failed to get display").spawn_with_mode(ThreadMode::Window(3), || "long-lines").await.unwrap();
+        // Run test logic INSIDE timeout
+        let _ = with_timeout(async {
+            let mut task = display.spawn_with_mode(ThreadMode::Window(3), || "long-lines").await?;
+            
+            // Test very long line
+            let long_line = "x".repeat(1000);
+            task.capture_stdout(long_line.clone()).await?;
+            env.writeln(&long_line);
+            
+            display.display().await?;
+            env.verify();
+            Ok::<(), anyhow::Error>(())
+        }, 15).await?;
         
-        // Test very long line
-        let long_line = "x".repeat(1000);
-        env.writeln(&long_line);
-        
-        // Verify display
-        display.as_ref().expect("Failed to get display").display().await.unwrap();
-        display.as_ref().expect("Failed to get display").stop().await.unwrap();
-        env.verify();
+        // Clean up OUTSIDE timeout
+        display.stop().await?;
+        Ok(())
     }
 } 
