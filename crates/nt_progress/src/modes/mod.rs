@@ -1096,6 +1096,106 @@ impl ModeParameters {
     pub fn passthrough(&self) -> Option<bool> {
         self.passthrough
     }
+
+    /// Set the maximum number of lines
+    pub fn with_max_lines(mut self, max_lines: usize) -> Self {
+        self.max_lines = Some(max_lines);
+        self
+    }
+
+    /// Set the title
+    pub fn with_title(mut self, title: String) -> Self {
+        self.title = Some(title);
+        self
+    }
+
+    /// Set emoji support
+    pub fn with_emoji_support(mut self, enabled: bool) -> Self {
+        self.emoji_support = Some(enabled);
+        self
+    }
+
+    /// Set title support
+    pub fn with_title_support(mut self, enabled: bool) -> Self {
+        self.title_support = Some(enabled);
+        self
+    }
+
+    /// Set passthrough
+    pub fn with_passthrough(mut self, enabled: bool) -> Self {
+        self.passthrough = Some(enabled);
+        self
+    }
+
+    /// Validate that all required parameters are present for a specific mode
+    pub fn validate_required_params(&self, mode_name: &str) -> Result<(), ModeCreationError> {
+        match mode_name {
+            "limited" | "capturing" => {
+                // These modes only require total_jobs, which is always present
+                Ok(())
+            },
+            "window" => {
+                if self.max_lines.is_none() {
+                    return Err(ModeCreationError::MissingParameter {
+                        param_name: "max_lines".to_string(),
+                        mode_name: mode_name.to_string(),
+                        reason: Some("Window mode requires max_lines parameter".to_string()),
+                    });
+                }
+                Ok(())
+            },
+            "window_with_title" => {
+                if self.max_lines.is_none() {
+                    return Err(ModeCreationError::MissingParameter {
+                        param_name: "max_lines".to_string(),
+                        mode_name: mode_name.to_string(),
+                        reason: Some("WindowWithTitle mode requires max_lines parameter".to_string()),
+                    });
+                }
+                if self.title.is_none() {
+                    return Err(ModeCreationError::MissingParameter {
+                        param_name: "title".to_string(),
+                        mode_name: mode_name.to_string(),
+                        reason: Some("WindowWithTitle mode requires a title".to_string()),
+                    });
+                }
+                Ok(())
+            },
+            _ => Err(ModeCreationError::ModeNotRegistered {
+                mode_name: mode_name.to_string(),
+                available_modes: vec!["limited".to_string(), "capturing".to_string(), 
+                                    "window".to_string(), "window_with_title".to_string()],
+            }),
+        }
+    }
+
+    /// Validate parameter values for a specific mode
+    pub fn validate_param_values(&self, mode_name: &str) -> Result<(), ModeCreationError> {
+        // Validate total_jobs
+        if self.total_jobs == 0 {
+            return Err(ModeCreationError::ValidationError {
+                mode_name: mode_name.to_string(),
+                rule: "total_jobs".to_string(),
+                value: "0".to_string(),
+                reason: Some("Total jobs must be greater than 0".to_string()),
+            });
+        }
+
+        // Validate max_lines if present
+        if let Some(max_lines) = self.max_lines {
+            let min_size = if mode_name == "window_with_title" { 2 } else { 1 };
+            if max_lines < min_size {
+                return Err(ModeCreationError::InvalidWindowSize {
+                    size: max_lines,
+                    min_size,
+                    mode_name: mode_name.to_string(),
+                    reason: Some(format!("{} mode requires at least {} lines", mode_name, min_size)),
+                });
+            }
+        }
+
+        Ok(())
+    }
 }
 
 /// Common configuration shared across all modes.
@@ -1391,5 +1491,77 @@ mod tests {
         // Check Limited capabilities
         let limited_caps = limited.capabilities();
         assert!(limited_caps.is_empty());
+    }
+
+    #[test]
+    fn test_mode_parameters_validation() {
+        // Test Limited mode parameters
+        let params = ModeParameters::limited(10);
+        assert!(params.validate("limited").is_ok());
+        assert!(params.validate_required_params("limited").is_ok());
+        assert!(params.validate_param_values("limited").is_ok());
+
+        // Test Window mode parameters
+        let params = ModeParameters::window(10, 5);
+        assert!(params.validate("window").is_ok());
+        assert!(params.validate_required_params("window").is_ok());
+        assert!(params.validate_param_values("window").is_ok());
+
+        // Test WindowWithTitle mode parameters
+        let params = ModeParameters::window_with_title(10, 5, "Test Title".to_string());
+        assert!(params.validate("window_with_title").is_ok());
+        assert!(params.validate_required_params("window_with_title").is_ok());
+        assert!(params.validate_param_values("window_with_title").is_ok());
+    }
+
+    #[test]
+    fn test_mode_parameters_validation_errors() {
+        // Test invalid total_jobs
+        let params = ModeParameters::new(0);
+        assert!(params.validate("limited").is_err());
+        assert!(params.validate_param_values("limited").is_err());
+
+        // Test missing max_lines for window mode
+        let params = ModeParameters::new(10);
+        assert!(params.validate("window").is_err());
+        assert!(params.validate_required_params("window").is_err());
+
+        // Test invalid max_lines for window mode
+        let params = ModeParameters::window(10, 0);
+        assert!(params.validate("window").is_err());
+        assert!(params.validate_param_values("window").is_err());
+
+        // Test missing title for window_with_title mode
+        let params = ModeParameters::new(10);
+        assert!(params.validate("window_with_title").is_err());
+        assert!(params.validate_required_params("window_with_title").is_err());
+
+        // Test invalid max_lines for window_with_title mode
+        let params = ModeParameters::window_with_title(10, 1, "Test Title".to_string());
+        assert!(params.validate("window_with_title").is_err());
+        assert!(params.validate_param_values("window_with_title").is_err());
+    }
+
+    #[test]
+    fn test_mode_parameters_builder_pattern() {
+        let params = ModeParameters::new(10)
+            .with_max_lines(5)
+            .with_title("Test Title".to_string())
+            .with_emoji_support(true)
+            .with_title_support(true)
+            .with_passthrough(false);
+
+        assert_eq!(params.total_jobs(), 10);
+        assert_eq!(params.max_lines(), Some(5));
+        assert_eq!(params.title(), Some("Test Title"));
+        assert_eq!(params.emoji_support(), Some(true));
+        assert_eq!(params.title_support(), Some(true));
+        assert_eq!(params.passthrough(), Some(false));
+    }
+
+    #[test]
+    fn test_mode_parameters_unknown_mode() {
+        let params = ModeParameters::new(10);
+        assert!(params.validate_required_params("unknown_mode").is_err());
     }
 }

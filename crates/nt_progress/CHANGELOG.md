@@ -143,4 +143,34 @@ This file contains completed tasks and improvements moved from the TODO.md file.
 - Implemented templating pattern for task progress reporting
 - Fixed unused mutable variables in tests
 - Added tests for error handling and recovery
-- Updated `Config::set_total_jobs` method to use the trait system instead of manual downcasting 
+- Updated `Config::set_total_jobs` method to use the trait system instead of manual downcasting
+
+## v0.1.8 (2024-03-28)
+
+### Capability System Improvements
+- Simplified capability system using direct trait downcasting
+  - Removed complex registry approach in favor of direct trait downcasting
+  - Updated ThreadConfigExt trait with improved capability checks
+  - Added comprehensive tests for capability system
+  - Cleaned up unused code and improved error handling
+  - All tests passing with improved coverage
+
+## [v0.1.8] - 2024-03-21
+### Added
+- Enhanced `ModeParameters` with builder pattern for easier parameter construction
+- Added comprehensive parameter validation methods
+- Added support for default parameter values
+- Added new validation methods for required parameters and parameter values
+
+### Changed
+- Improved parameter standardization across all modes
+- Enhanced error handling for parameter validation
+- Updated mode factory to use standardized parameters
+
+### Fixed
+- Fixed parameter validation in window modes
+- Fixed missing parameter checks in mode creation
+- Fixed validation error messages for better clarity
+
+## [v0.1.7] - 2024-03-20
+// ... existing code ... 
