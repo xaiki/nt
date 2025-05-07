@@ -184,7 +184,13 @@ pub struct WindowWithTitleCreator;
 impl ModeCreator for WindowWithTitleCreator {
     fn create(&self, total_jobs: usize, params: &[usize]) -> Result<Box<dyn ThreadConfig>, ModeCreationError> {
         let max_lines = params[0];
-        WindowWithTitle::new(total_jobs, max_lines).map(|w| Box::new(w) as Box<dyn ThreadConfig>)
+        let mut mode = WindowWithTitle::new(total_jobs, max_lines, "Progress".to_string())?;
+        
+        // Explicitly enable emoji and title support
+        mode.set_emoji_support(true);
+        mode.set_title_support(true);
+        
+        Ok(Box::new(mode) as Box<dyn ThreadConfig>)
     }
     
     fn create_with_fallback(&self, total_jobs: usize, params: &[usize]) -> Result<Box<dyn ThreadConfig>, ModeCreationError> {
@@ -196,18 +202,15 @@ impl ModeCreator for WindowWithTitleCreator {
             eprintln!("Warning: Requested window size {} was invalid, using size 3 instead", max_lines);
             
             // Try with a reasonable fallback size
-            if let Ok(window) = WindowWithTitle::new(total_jobs, 3) {
-                return Ok(Box::new(window));
-            }
-            
-            // Try with Window mode as a fallback
-            if let Ok(window) = Window::new(total_jobs, 3) {
-                eprintln!("Warning: Could not create WindowWithTitle mode, falling back to Window mode");
+            if let Ok(mut window) = WindowWithTitle::new(total_jobs, 3, "Progress".to_string()) {
+                // Explicitly enable emoji and title support
+                window.set_emoji_support(true);
+                window.set_title_support(true);
                 return Ok(Box::new(window));
             }
             
             // Last resort: fall back to Limited mode
-            eprintln!("Warning: Could not create any window mode, falling back to Limited mode");
+            eprintln!("Warning: Could not create WindowWithTitle mode, falling back to Limited mode");
             return Ok(Box::new(Limited::new(total_jobs)));
         }
         
@@ -248,42 +251,55 @@ pub fn get_registry() -> Arc<Mutex<ModeRegistry>> {
     }
 }
 
-/// Create a thread config using the global registry
+/// Create a ThreadConfig instance from a ThreadMode enum
 pub fn create_thread_config(mode: ThreadMode, total_jobs: usize) -> Result<Box<dyn ThreadConfig>, ModeCreationError> {
     let registry = get_registry();
+    let registry = registry.lock().unwrap();
     
-    // Lock registry first and then use it
-    let registry_guard = registry.lock().unwrap();
-    
-    // Try to create the config normally first
-    let creation_result = registry_guard.create_from_mode(mode.clone(), total_jobs);
-    
-    // Drop the lock before processing the result
-    drop(registry_guard);
-    
-    if let Err(_) = &creation_result {
-        // If error propagation is enabled, return the error as-is
-        if should_propagate_errors() {
-            return creation_result;
-        }
-        
-        // For non-error-propagation cases, try to recover using the fallback mechanism
-        match &mode {
-            ThreadMode::Window(_) => {
-                if let Some(creator) = registry.lock().unwrap().creators.get("window") {
-                    return creator.create_with_fallback(total_jobs, &[3]);
-                }
-            },
-            ThreadMode::WindowWithTitle(_) => {
-                if let Some(creator) = registry.lock().unwrap().creators.get("window_with_title") {
-                    return creator.create_with_fallback(total_jobs, &[3]);
-                }
-            },
-            _ => {}
-        }
+    // If error propagation is enabled, use normal creation
+    if should_propagate_errors() {
+        return registry.create_from_mode(mode, total_jobs);
     }
     
-    creation_result
+    // Otherwise, try to create with fallback options
+    match mode {
+        ThreadMode::Limited => registry.create("limited", total_jobs, &[]),
+        ThreadMode::Capturing => registry.create("capturing", total_jobs, &[]),
+        ThreadMode::Window(max_lines) => {
+            let result = registry.create("window", total_jobs, &[max_lines]);
+            if result.is_err() {
+                // Try with a reasonable fallback size
+                eprintln!("Warning: Requested window size {} was invalid, using size 3 instead", max_lines);
+                registry.create("window", total_jobs, &[3])
+            } else {
+                result
+            }
+        },
+        ThreadMode::WindowWithTitle(max_lines) => {
+            let result = registry.create("window_with_title", total_jobs, &[max_lines]);
+            if result.is_err() {
+                // Try with a reasonable fallback size
+                eprintln!("Warning: Requested window size {} was invalid, using size 3 instead", max_lines);
+                let fallback = registry.create("window_with_title", total_jobs, &[3]);
+                if fallback.is_err() {
+                    // Try with Window mode as a fallback
+                    eprintln!("Warning: Could not create WindowWithTitle mode, falling back to Window mode");
+                    let window = registry.create("window", total_jobs, &[3]);
+                    if window.is_err() {
+                        // Last resort: fall back to Limited mode
+                        eprintln!("Warning: Could not create any window mode, falling back to Limited mode");
+                        registry.create("limited", total_jobs, &[])
+                    } else {
+                        window
+                    }
+                } else {
+                    fallback
+                }
+            } else {
+                result
+            }
+        }
+    }
 }
 
 /// A factory for creating mode instances
@@ -294,6 +310,7 @@ pub fn create_thread_config(mode: ThreadMode, total_jobs: usize) -> Result<Box<d
 #[derive(Debug, Clone)]
 pub struct ModeFactory {
     registry: Arc<ModeRegistry>,
+    default_mode: ThreadMode,
 }
 
 impl ModeFactory {
@@ -309,7 +326,18 @@ impl ModeFactory {
         
         Self {
             registry: Arc::new(registry),
+            default_mode: ThreadMode::Limited,
         }
+    }
+    
+    /// Set the default mode for this factory
+    pub fn set_default_mode(&mut self, mode: ThreadMode) {
+        self.default_mode = mode;
+    }
+    
+    /// Get the default mode for this factory
+    pub fn default_mode(&self) -> ThreadMode {
+        self.default_mode
     }
     
     /// Create a new mode instance
@@ -402,16 +430,103 @@ mod tests {
     }
     
     #[test]
-    fn test_create_from_mode() {
-        let registry = get_registry();
-        let registry = registry.lock().unwrap();
+    fn test_error_propagation() {
+        // Test with error propagation enabled
+        set_error_propagation(true);
         
-        // Test creating from ThreadMode::Limited
-        let config = registry.create_from_mode(ThreadMode::Limited, 10).unwrap();
-        assert_eq!(config.lines_to_display(), 1);
+        // Create a window with invalid size
+        let result = create_thread_config(ThreadMode::Window(0), 1);
+        assert!(result.is_err());
         
-        // Test creating from ThreadMode::Window
-        let config = registry.create_from_mode(ThreadMode::Window(3), 10).unwrap();
+        // Test with error propagation disabled
+        set_error_propagation(false);
+        
+        // Should recover with fallback
+        let result = create_thread_config(ThreadMode::Window(0), 1);
+        assert!(result.is_ok());
+        
+        // Reset for other tests
+        set_error_propagation(false);
+    }
+    
+    #[test]
+    fn test_factory_configuration() {
+        let mut factory = ModeFactory::new();
+        
+        // Test default mode
+        assert!(matches!(factory.default_mode(), ThreadMode::Limited));
+        
+        // Change default mode
+        factory.set_default_mode(ThreadMode::Window(3));
+        assert!(matches!(factory.default_mode(), ThreadMode::Window(3)));
+        
+        // Test mode creation with new default
+        let config = factory.create_mode(ThreadMode::Window(3), 10).unwrap();
         assert_eq!(config.lines_to_display(), 3);
+    }
+    
+    #[test]
+    fn test_factory_error_handling() {
+        let factory = ModeFactory::new();
+        
+        // Test invalid window size
+        let result = factory.create_mode(ThreadMode::Window(0), 10);
+        assert!(result.is_err());
+        
+        // Test invalid window with title size
+        let result = factory.create_mode(ThreadMode::WindowWithTitle(0), 10);
+        assert!(result.is_err());
+        
+        // Test with valid sizes
+        let result = factory.create_mode(ThreadMode::Window(3), 10);
+        assert!(result.is_ok());
+        
+        let result = factory.create_mode(ThreadMode::WindowWithTitle(3), 10);
+        assert!(result.is_ok());
+    }
+    
+    #[test]
+    fn test_factory_registry_access() {
+        let factory = ModeFactory::new();
+        let registry = factory.registry();
+        
+        // Verify registry contains all standard modes
+        assert!(registry.creators.contains_key("limited"));
+        assert!(registry.creators.contains_key("capturing"));
+        assert!(registry.creators.contains_key("window"));
+        assert!(registry.creators.contains_key("window_with_title"));
+    }
+    
+    #[test]
+    fn test_factory_clone() {
+        let mut factory1 = ModeFactory::new();
+        factory1.set_default_mode(ThreadMode::Window(3));
+        
+        // Clone the factory
+        let factory2 = factory1.clone();
+        
+        // Verify both have same configuration
+        assert!(matches!(factory1.default_mode(), ThreadMode::Window(3)));
+        assert!(matches!(factory2.default_mode(), ThreadMode::Window(3)));
+        
+        // Verify changes to one don't affect the other
+        factory1.set_default_mode(ThreadMode::Limited);
+        assert!(matches!(factory1.default_mode(), ThreadMode::Limited));
+        assert!(matches!(factory2.default_mode(), ThreadMode::Window(3)));
+    }
+    
+    #[test]
+    fn test_window_with_title_support_flags() {
+        let factory = ModeFactory::new();
+        
+        // Create a WindowWithTitle mode
+        let config = factory.create_mode(ThreadMode::WindowWithTitle(3), 10).unwrap();
+        
+        // Downcast to WindowWithTitle to check support flags
+        let window_with_title = config.as_any().downcast_ref::<WindowWithTitle>().unwrap();
+        
+        // Verify emoji and title support are enabled by default
+        assert!(window_with_title.has_emoji_support(), "Emoji support should be enabled by default");
+        assert!(window_with_title.has_title_support(), "Title support should be enabled by default");
     }
 } 

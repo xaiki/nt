@@ -8,7 +8,7 @@ use std::{
         atomic::{AtomicBool, AtomicUsize, Ordering},
         Arc,
     },
-    time::Duration,
+    future::Future,
 };
 use tokio::{
     sync::{mpsc, Mutex},
@@ -17,8 +17,10 @@ use tokio::{
 use anyhow::{Result, anyhow};
 use std::fmt::Debug;
 use std::cell::RefCell;
-use crate::errors::{ContextExt, ErrorContext, ProgressError};
-use crate::terminal::{Terminal, TerminalEvent};
+use crate::errors::{ErrorContext, ProgressError};
+use crate::terminal::Terminal;
+use crate::modes::Config;
+use crate::modes::factory::ModeFactory;
 
 pub mod modes;
 pub mod errors;
@@ -27,8 +29,7 @@ pub mod terminal;
 #[cfg(test)]
 pub mod tests;
 
-pub use modes::{ThreadMode, ThreadConfig, Config, JobTracker, HasBaseConfig};
-pub use modes::{ModeRegistry, ModeCreator, get_registry, create_thread_config};
+pub use modes::{ModeRegistry, ModeCreator, get_registry, create_thread_config, ThreadMode};
 pub use errors::ModeCreationError;
 pub use formatter::{ProgressTemplate, TemplateContext, TemplateVar, TemplatePreset};
 
@@ -93,16 +94,15 @@ pub struct ThreadMessage {
 #[derive(Clone)]
 pub struct ProgressDisplay {
     outputs: Arc<Mutex<HashMap<usize, Vec<String>>>>,
+    terminal: Arc<Terminal>,
     spinner_index: Arc<AtomicUsize>,
-    pub terminal: Arc<Terminal>,
-    processing_task: Arc<Mutex<Option<JoinHandle<()>>>>,
-    thread_handles: Arc<Mutex<HashMap<usize, JoinHandle<()>>>>,
-    next_thread_id: Arc<AtomicUsize>,
-    running: Arc<AtomicBool>,
     message_tx: mpsc::Sender<ThreadMessage>,
     message_rx: Arc<Mutex<mpsc::Receiver<ThreadMessage>>>,
-    thread_configs: Arc<Mutex<HashMap<usize, Config>>>,
+    running: Arc<AtomicBool>,
+    processing_task: Arc<Mutex<Option<JoinHandle<()>>>>,
+    thread_handles: Arc<Mutex<HashMap<usize, (TaskHandle, JoinHandle<Result<()>>)>>>,
     writer: Arc<Mutex<Box<dyn Write + Send + 'static>>>,
+    factory: Arc<ModeFactory>,
 }
 
 impl Debug for ProgressDisplay {
@@ -113,177 +113,176 @@ impl Debug for ProgressDisplay {
             .field("terminal", &"Terminal")
             .field("processing_task", &self.processing_task)
             .field("thread_handles", &self.thread_handles)
-            .field("next_thread_id", &self.next_thread_id)
             .field("running", &self.running)
             .field("message_tx", &self.message_tx)
             .field("message_rx", &self.message_rx)
-            .field("thread_configs", &self.thread_configs)
+            .field("writer", &"Box<dyn Write + Send>")
+            .field("factory", &self.factory)
             .finish()
     }
 }
 
 impl ProgressDisplay {
-    pub async fn new() -> Self {
-        Self::new_with_mode_and_writer(ThreadMode::Limited, Box::new(std::io::stderr())).await
+    /// Create a new ProgressDisplay with default settings
+    pub async fn new() -> Result<Self> {
+        Self::new_with_factory(Arc::new(ModeFactory::new())).await
     }
 
-    pub async fn new_with_mode(mode: ThreadMode) -> Self {
-        Self::new_with_mode_and_writer(mode, Box::new(std::io::stderr())).await
+    /// Create a new ProgressDisplay with a specific mode
+    pub async fn new_with_mode(mode: ThreadMode) -> Result<Self> {
+        let mut factory = ModeFactory::new();
+        factory.set_default_mode(mode);
+        Self::new_with_factory(Arc::new(factory)).await
     }
 
-    pub async fn new_with_mode_and_writer<W: Write + Send + 'static>(mode: ThreadMode, writer: W) -> Self {
+    /// Create a new ProgressDisplay with a specific factory
+    pub async fn new_with_factory(factory: Arc<ModeFactory>) -> Result<Self> {
         let (message_tx, message_rx) = mpsc::channel(100);
-        
-        // Create a new Terminal instance
-        let terminal = Arc::new(Terminal::new());
-        
+        let terminal: Arc<Terminal> = Arc::new(Terminal::new());
         let display = Self {
             outputs: Arc::new(Mutex::new(HashMap::new())),
+            terminal: terminal.clone(),
             spinner_index: Arc::new(AtomicUsize::new(0)),
-            terminal,
+            message_tx: message_tx.clone(),
+            message_rx: Arc::new(Mutex::new(message_rx)),
+            running: Arc::new(AtomicBool::new(true)),
             processing_task: Arc::new(Mutex::new(None)),
             thread_handles: Arc::new(Mutex::new(HashMap::new())),
-            next_thread_id: Arc::new(AtomicUsize::new(0)),
-            running: Arc::new(AtomicBool::new(true)),
-            message_tx,
-            message_rx: Arc::new(Mutex::new(message_rx)),
-            thread_configs: Arc::new(Mutex::new(HashMap::new())),
-            writer: Arc::new(Mutex::new(Box::new(writer))),
+            writer: Arc::new(Mutex::new(Box::new(std::io::stdout()))),
+            factory: factory.clone(),
         };
 
-        // Start the terminal event detection
-        if let Err(e) = display.terminal.start_event_detection().await {
-            eprintln!("Warning: Failed to start terminal event detection: {}", e);
+        // Create a weak reference for the processing task
+        let display_arc = Arc::new(display);
+        let display_weak = Arc::downgrade(&display_arc);
+
+        let processing_task = tokio::spawn({
+            let display_weak = display_weak.clone();
+            async move {
+                if let Some(display) = display_weak.upgrade() {
+                    display.start_display_thread().await;
+                }
+            }
+        });
+
+        let mut guard = display_arc.processing_task.lock().await;
+        *guard = Some(processing_task);
+        drop(guard);
+
+        Ok(Arc::try_unwrap(display_arc).expect("Failed to unwrap Arc - this should never happen"))
+    }
+
+    /// Create a new task with the specified mode
+    pub async fn create_task(&self, mode: ThreadMode, total_jobs: usize) -> Result<TaskHandle> {
+        // Check if the display is running
+        if !self.running.load(Ordering::SeqCst) {
+            let ctx = ErrorContext::new("creating task", "ProgressDisplay")
+                .with_details("Display is not running");
+            return Err(anyhow::Error::from(ProgressError::DisplayOperation("Display is not running".to_string()).into_context(ctx)));
         }
         
-        // Register a handler for terminal resize events to trigger display refresh
-        let display_clone = display.clone();
-        if let Err(e) = display.terminal.event_manager().register_handler(move |event| {
-            let display = display_clone.clone();
-            
-            async move {
-                match event {
-                    TerminalEvent::Resize { width: _, height: _ } => {
-                        // Resize happened, refresh the display
-                        if let Err(e) = display.display().await {
-                            eprintln!("Error refreshing display after resize: {}", e);
-                        }
-                    },
-                    _ => {}, // Ignore other events for now
-                }
-                Ok(())
-            }
-        }).await {
-            eprintln!("Warning: Failed to register resize event handler: {}", e);
-        }
-
-        // Start the display thread with a reference to the terminal
-        let processing_task = tokio::spawn(Self::start_display_thread(
-            Arc::clone(&display.outputs),
-            Arc::clone(&display.terminal),
-            Arc::clone(&display.spinner_index),
-            Arc::clone(&display.message_rx),
-            Arc::clone(&display.running),
-            Arc::clone(&display.writer),
-        ));
-        *display.processing_task.lock().await = Some(processing_task);
-
-        display
+        let thread_id = self.next_thread_id();
+        let config = Config::new(mode, total_jobs)?;
+        let task_handle = TaskHandle::new_with_config(thread_id, Arc::new(self.clone()), config);
+        let mut handles = self.thread_handles.lock().await;
+        handles.insert(thread_id, (task_handle.clone(), tokio::spawn(async move {
+            Ok(())
+        })));
+        Ok(task_handle)
     }
 
     pub async fn spawn<F, R>(&self, f: F) -> Result<TaskHandle>
     where
-        F: FnOnce() -> R + Send + 'static,
-        R: Send + std::fmt::Debug + 'static,
+        F: FnOnce(TaskHandle) -> R + Send + 'static,
+        R: Future<Output = Result<()>> + Send + 'static,
     {
-        self.spawn_with_mode(ThreadMode::Limited, f).await
+        if !self.running.load(Ordering::SeqCst) {
+            let ctx = ErrorContext::new("spawning task", "ProgressDisplay")
+                .with_details("Display is not running");
+            return Err(anyhow::Error::from(ProgressError::DisplayOperation("Display is not running".to_string()).into_context(ctx)));
+        }
+
+        let handle = self.create_task(ThreadMode::Limited, 1).await?;
+        
+        // Spawn the task
+        let task_handle: JoinHandle<Result<()>> = tokio::spawn(f(handle.clone()));
+        
+        // Store the handle
+        let mut handles = self.thread_handles.lock().await;
+        handles.insert(handle.thread_id, (handle.clone(), task_handle));
+        
+        Ok(handle)
     }
 
+    /// Create a new task with the specified mode and title
     pub async fn spawn_with_mode<F, R>(&self, mode: ThreadMode, f: F) -> Result<TaskHandle>
     where
         F: FnOnce() -> R + Send + 'static,
-        R: Send + std::fmt::Debug + 'static,
+        R: Into<String> + Send + 'static,
     {
-        let thread_id = self.next_thread_id.fetch_add(1, Ordering::SeqCst);
-        let message_tx = self.message_tx.clone();
-        let progress = Arc::new(self.clone());
+        // Create the task directly with the specified mode instead of Limited mode
+        let mut handle = self.create_task(mode, 1).await?;
         
-        // Create the thread's config with specified mode
-        let mut configs = self.thread_configs.lock().await;
+        let title = f().into();
+        handle.capture_stdout(title).await?;
         
-        // Use context-aware error handling
-        let config = Config::new(mode, 1)
-            .with_context("creating thread config", "ProgressDisplay::spawn_with_mode")
-            .map_err(|e: ProgressError| {
-                let ctx = ErrorContext::new("spawning task", "ProgressDisplay")
-                    .with_thread_id(thread_id)
-                    .with_details(format!("with mode {:?}", mode));
-                let err: anyhow::Error = ProgressError::WithContext(Box::new(e), ctx).into();
-                err
-            })?;
-            
-        configs.insert(thread_id, config.clone());
-        
-        let handle = tokio::spawn(async move {
-            let output = f();
-            let lines = vec![format!("{:?}", output)];
-            if let Err(e) = message_tx.send(ThreadMessage { 
-                thread_id, 
-                lines,
-                config,
-            }).await {
-                eprintln!("[Error] Failed to send message for thread {}: {}", thread_id, e);
-            }
-        });
-        
-        let mut handles = self.thread_handles.lock().await;
-        handles.insert(thread_id, handle);
-        
-        Ok(TaskHandle::new(thread_id, progress))
+        Ok(handle)
     }
 
     pub async fn display(&self) -> std::io::Result<()> {
-        Self::render_display(
-            &self.outputs,
-            &self.terminal,
-            &self.spinner_index,
-            &self.writer,
-        ).await
+        self.render_display().await
     }
 
+    /// Stop the display and clean up all resources
     pub async fn stop(&self) -> Result<()> {
+        // First, signal that we're shutting down
         self.running.store(false, Ordering::SeqCst);
+        
+        // Cancel all tasks first
+        self.cancel_all().await?;
+        
+        // Join all tasks to ensure they're properly cleaned up
         self.join_all().await?;
         
         // Stop the terminal event detection
         if let Err(e) = self.terminal.stop_event_detection().await {
-            eprintln!("Warning: Failed to stop terminal event detection: {}", e);
+            let ctx = ErrorContext::new("stopping terminal event detection", "ProgressDisplay")
+                .with_details(format!("Failed to stop terminal event detection: {}", e));
+            return Err(anyhow::Error::from(ProgressError::DisplayOperation(e.to_string()).into_context(ctx)));
         }
         
+        // Stop the processing task last
         if let Some(handle) = self.processing_task.lock().await.take() {
-            handle.await.map_err(|e| anyhow!("Failed to join processing task: {}", e))?;
+            // Give the task a chance to finish gracefully
+            tokio::select! {
+                result = handle => {
+                    if let Err(e) = result {
+                        let ctx = ErrorContext::new("stopping processing task", "ProgressDisplay")
+                            .with_details(format!("Processing task failed during shutdown: {}", e));
+                        return Err(anyhow::Error::from(ProgressError::DisplayOperation(e.to_string()).into_context(ctx)));
+                    }
+                }
+                _ = tokio::time::sleep(std::time::Duration::from_millis(100)) => {
+                    // If we timeout, we can't abort the handle since it's moved into the select
+                    // But the process will be cleaned up when the program exits
+                    let ctx = ErrorContext::new("stopping processing task", "ProgressDisplay")
+                        .with_details("Processing task did not finish gracefully during shutdown");
+                    return Err(anyhow::Error::from(ProgressError::DisplayOperation("Processing task timeout".to_string()).into_context(ctx)));
+                }
+            }
         }
+        
         Ok(())
     }
 
     pub async fn set_title(&self, thread_id: usize, title: String) -> Result<()> {
-        let mut configs = self.thread_configs.lock().await;
+        let mut handles = self.thread_handles.lock().await;
         
         // Check if the thread exists
-        if let Some(config) = configs.get_mut(&thread_id) {
-            // Try to set the title using the capability trait
-            match config.set_title(title) {
-                Ok(()) => Ok(()),
-                Err(_) => {
-                    let ctx = ErrorContext::new("setting title", "ProgressDisplay")
-                        .with_thread_id(thread_id)
-                        .with_details("Thread is not in a mode that supports titles");
-                    
-                    let error_msg = format!("Thread {} is not in a mode that supports titles", thread_id);
-                    let error = ProgressError::TaskOperation(error_msg).into_context(ctx);
-                    Err(anyhow::Error::from(error))
-                }
-            }
+        if let Some((handle, _)) = handles.get_mut(&thread_id) {
+            let mut config = handle.thread_config.lock().await;
+            config.set_title(title)?;
+            Ok(())
         } else {
             let ctx = ErrorContext::new("setting title", "ProgressDisplay")
                 .with_thread_id(thread_id)
@@ -296,23 +295,13 @@ impl ProgressDisplay {
     }
 
     pub async fn add_emoji(&self, thread_id: usize, emoji: &str) -> Result<()> {
-        let mut configs = self.thread_configs.lock().await;
+        let mut handles = self.thread_handles.lock().await;
         
         // Check if the thread exists
-        if let Some(config) = configs.get_mut(&thread_id) {
-            // Try to add the emoji using the capability trait
-            match config.add_emoji(emoji) {
-                Ok(()) => Ok(()),
-                Err(_) => {
-                    let ctx = ErrorContext::new("adding emoji", "ProgressDisplay")
-                        .with_thread_id(thread_id)
-                        .with_details("Thread is not in a mode that supports emojis");
-                    
-                    let error_msg = format!("Thread {} is not in a mode that supports emojis", thread_id);
-                    let error = ProgressError::TaskOperation(error_msg).into_context(ctx);
-                    Err(anyhow::Error::from(error))
-                }
-            }
+        if let Some((handle, _)) = handles.get_mut(&thread_id) {
+            let mut config = handle.thread_config.lock().await;
+            config.add_emoji(emoji)?;
+            Ok(())
         } else {
             let ctx = ErrorContext::new("adding emoji", "ProgressDisplay")
                 .with_thread_id(thread_id)
@@ -333,11 +322,12 @@ impl ProgressDisplay {
             return Err(anyhow::Error::from(error));
         }
         
-        let mut configs = self.thread_configs.lock().await;
+        let mut handles = self.thread_handles.lock().await;
         
         if let Some(thread_id) = thread_id {
             // Update a specific thread's total jobs
-            if let Some(config) = configs.get_mut(&thread_id) {
+            if let Some((handle, _)) = handles.get_mut(&thread_id) {
+                let mut config = handle.thread_config.lock().await;
                 config.set_total_jobs(total);
                 Ok(())
             } else {
@@ -351,7 +341,8 @@ impl ProgressDisplay {
             }
         } else {
             // Update total jobs for all threads
-            for (_, config) in configs.iter_mut() {
+            for (_, (handle, _)) in handles.iter_mut() {
+                let mut config = handle.thread_config.lock().await;
                 config.set_total_jobs(total);
             }
             Ok(())
@@ -388,8 +379,8 @@ impl ProgressDisplay {
             handles.drain().collect::<Vec<_>>()
         };
         
-        for (thread_id, handle) in handles {
-            handle.await.map_err(|e| anyhow!("Failed to join thread {}: {}", thread_id, e))?;
+        for (_, (_, task_handle)) in handles {
+            task_handle.await?;
         }
         Ok(())
     }
@@ -400,8 +391,8 @@ impl ProgressDisplay {
             handles.drain().collect::<Vec<_>>()
         };
         
-        for (thread_id, handle) in handles {
-            handle.abort();
+        for (thread_id, (_, task_handle)) in handles {
+            task_handle.abort();
             eprintln!("[Info] Cancelled thread {}", thread_id);
         }
         Ok(())
@@ -414,157 +405,66 @@ impl ProgressDisplay {
 
     pub async fn get_task(&self, thread_id: usize) -> Option<TaskHandle> {
         let handles = self.thread_handles.lock().await;
-        handles.get(&thread_id).map(|_handle| TaskHandle {
-            thread_id,
-            progress: Arc::new(self.clone()),
-            message_tx: self.message_tx.clone(),
-            thread_config: Arc::new(Mutex::new(Config::new(ThreadMode::Limited, 1).unwrap())),
-            writer: self.writer.clone(),
-        })
+        handles.get(&thread_id).map(|(handle, _)| handle.clone())
     }
 
-    async fn start_display_thread(
-        outputs: Arc<Mutex<HashMap<usize, Vec<String>>>>,
-        terminal: Arc<Terminal>,
-        spinner_index: Arc<AtomicUsize>,
-        message_rx: Arc<Mutex<mpsc::Receiver<ThreadMessage>>>,
-        running: Arc<AtomicBool>,
-        writer: Arc<Mutex<Box<dyn Write + Send + 'static>>>,
-    ) {
-        // Detect the terminal size at startup
-        if let Err(e) = terminal.detect_size().await {
-            eprintln!("Warning: Failed to detect terminal size, using default: {}", e);
-        }
-        
-        while running.load(Ordering::SeqCst) {
-            // Process any pending messages
-            let mut message_rx = message_rx.lock().await;
-            while let Ok(message) = message_rx.try_recv() {
-                let mut outputs = outputs.lock().await;
-                outputs.entry(message.thread_id)
-                    .or_insert_with(Vec::new)
-                    .extend(message.lines);
+    fn next_thread_id(&self) -> usize {
+        static NEXT_THREAD_ID: AtomicUsize = AtomicUsize::new(0);
+        NEXT_THREAD_ID.fetch_add(1, Ordering::SeqCst)
+    }
+
+    async fn start_display_thread(&self) {
+        let mut rx = self.message_rx.lock().await;
+        while self.running.load(Ordering::SeqCst) {
+            if let Some(msg) = rx.recv().await {
+                self.handle_message(msg).await;
             }
-
-            // Update display
-            let result = Self::render_display(
-                &outputs,
-                &terminal,
-                &spinner_index,
-                &writer,
-            ).await;
-
-            if let Err(e) = result {
-                eprintln!("Error updating display: {}", e);
-            }
-
-            // Sleep a bit to prevent CPU spinning
-            tokio::time::sleep(Duration::from_millis(100)).await;
         }
     }
 
-    // Private method for rendering the display
-    async fn render_display(
-        outputs: &Arc<Mutex<HashMap<usize, Vec<String>>>>,
-        terminal: &Arc<Terminal>,
-        _spinner_index: &Arc<AtomicUsize>,
-        writer: &Arc<Mutex<Box<dyn Write + Send + 'static>>>,
-    ) -> std::io::Result<()> {
-        // Get all thread outputs and prepare for rendering
-        let (thread_ids, lines_by_thread, line_count, terminal_height) = {
-            let outputs_guard = outputs.lock().await;
-            if outputs_guard.is_empty() {
-                return Ok(());
-            }
-            
-            // Use terminal to get the height
-            let (_width, height) = terminal.size().await;
-            
-            // Get all thread IDs and sort them
-            let mut thread_ids: Vec<usize> = outputs_guard.keys().copied().collect();
-            thread_ids.sort();
-            
-            // Calculate total lines and adjust if needed
-            let mut total_lines = 0;
-            
-            // First pass: calculate total lines
-            for thread_id in &thread_ids {
-                if let Some(lines) = outputs_guard.get(thread_id) {
-                    total_lines += lines.len();
-                }
-            }
-            
-            // Clone the necessary data to avoid holding the lock
-            let mut lines_by_thread = HashMap::new();
-            for (thread_id, lines) in outputs_guard.iter() {
-                lines_by_thread.insert(*thread_id, lines.clone());
-            }
-            
-            (thread_ids, lines_by_thread, total_lines, height)
-        };
+    async fn handle_message(&self, msg: ThreadMessage) {
+        let mut outputs = self.outputs.lock().await;
+        let thread_outputs = outputs.entry(msg.thread_id).or_insert_with(Vec::new);
         
-        // Get a clone of the writer to avoid holding a lock for too long
-        let mut writer_guard = writer.lock().await;
-        
-        // Clear the screen and format output
-        let mut adjusted_lines_by_thread = lines_by_thread.clone();
-        
-        // Adjust line count if needed based on terminal height
-        if line_count > terminal_height as usize && !adjusted_lines_by_thread.is_empty() {
-            let available_lines = terminal_height as usize;
-            let mut used_lines = 0;
-            
-            // Allocate at least one line per thread
-            for thread_id in thread_ids.iter() {
-                if let Some(lines) = adjusted_lines_by_thread.get_mut(thread_id) {
-                    if !lines.is_empty() {
-                        lines.truncate(1);
-                        used_lines += 1;
-                    }
-                    
-                    if used_lines >= available_lines {
-                        break;
-                    }
-                }
-            }
-            
-            // Allocate remaining lines proportionally
-            if used_lines < available_lines {
-                let remaining_lines = available_lines - used_lines;
-                let lines_per_thread = remaining_lines / thread_ids.len();
-                
-                if lines_per_thread > 0 {
-                    for thread_id in thread_ids.iter() {
-                        if let Some(original_lines) = lines_by_thread.get(thread_id) {
-                            if let Some(adjusted_lines) = adjusted_lines_by_thread.get_mut(thread_id) {
-                                let original_count = original_lines.len();
-                                
-                                if original_count > 1 {
-                                    let additional_lines = (lines_per_thread).min(original_count - 1);
-                                    adjusted_lines.extend(original_lines.iter().skip(1).take(additional_lines).cloned());
-                                    used_lines += additional_lines;
-                                }
-                            }
-                        }
-                    }
-                }
+        // Add new messages
+        thread_outputs.extend(msg.lines);
+    }
+
+    async fn render_display(&self) -> std::io::Result<()> {
+        let outputs = self.outputs.lock().await;
+        if outputs.is_empty() {
+            return Ok(());
+        }
+
+        let mut writer = self.writer.lock().await;
+        write!(writer, "\x1B[2J\x1B[1H")?;
+
+        // First, collect all messages for each thread
+        let mut thread_messages = Vec::new();
+        for (thread_id, lines) in outputs.iter() {
+            for line in lines {
+                thread_messages.push((*thread_id, line.clone()));
             }
         }
-        
-        // Clear previous output
-        write!(writer_guard, "\x1B[2J\x1B[1;1H")?;
-        
-        // Format and display each thread's output
-        for thread_id in thread_ids {
-            if let Some(lines) = adjusted_lines_by_thread.get(&thread_id) {
-                for line in lines {
-                    writeln!(writer_guard, "{}", line)?;
+
+        // Sort messages by thread ID and content to ensure consistent ordering
+        thread_messages.sort_by(|a, b| {
+            a.0.cmp(&b.0).then_with(|| a.1.cmp(&b.1))
+        });
+
+        // Group messages by thread ID and ensure proper spacing
+        let mut current_thread = None;
+        for (thread_id, message) in thread_messages {
+            if current_thread != Some(thread_id) {
+                if current_thread.is_some() {
+                    writeln!(writer)?;
                 }
+                current_thread = Some(thread_id);
             }
+            writeln!(writer, "{}", message)?;
         }
-        
-        writer_guard.flush()?;
-        
+
+        writer.flush()?;
         Ok(())
     }
 }
@@ -574,28 +474,9 @@ impl Drop for ProgressDisplay {
         // Signal that we're shutting down
         self.running.store(false, Ordering::SeqCst);
         
-        // We can't run async code directly in drop, so we just do our best with synchronous cleanup
-        
-        // Try to abort all tasks we have handles for
-        let _handles = {
-            if let Ok(mut handles_lock) = self.thread_handles.try_lock() {
-                // Collect and abort all handles
-                for (_, handle) in handles_lock.drain() {
-                    handle.abort();
-                }
-            }
-        };
-        
-        // Try to abort the processing task
-        if let Ok(mut guard) = self.processing_task.try_lock() {
-            if let Some(handle) = guard.take() {
-                handle.abort();
-            }
-        }
-        
-        // We can't stop the terminal event detection properly in drop
-        // This is a last-ditch effort to warn users if they didn't call stop() explicitly
-        eprintln!("Warning: ProgressDisplay dropped without calling stop() - some resources may not be fully cleaned up");
+        // If we're in a runtime context, we can't do async cleanup
+        // Just log a warning and let the runtime handle cleanup
+        eprintln!("Warning: ProgressDisplay dropped - cleanup will be handled by the runtime");
     }
 }
 
@@ -632,21 +513,25 @@ impl ThreadLogger {
     }
 }
 
+#[derive(Clone)]
 pub struct TaskHandle {
     thread_id: usize,
     progress: Arc<ProgressDisplay>,
     message_tx: mpsc::Sender<ThreadMessage>,
     thread_config: Arc<Mutex<Config>>,
     writer: Arc<Mutex<Box<dyn Write + Send + 'static>>>,
+    join_handle: Arc<Mutex<Option<JoinHandle<Result<()>>>>>,
 }
 
 impl Debug for TaskHandle {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("TaskHandle")
             .field("thread_id", &self.thread_id)
-            .field("progress", &self.progress)
-            .field("message_tx", &self.message_tx)
-            .field("thread_config", &self.thread_config)
+            .field("progress", &"Arc<ProgressDisplay>")
+            .field("message_tx", &"mpsc::Sender<ThreadMessage>")
+            .field("thread_config", &"Arc<Mutex<Config>>")
+            .field("writer", &"Box<dyn Write + Send>")
+            .field("join_handle", &"Arc<Mutex<Option<JoinHandle<Result<()>>>>>")
             .finish()
     }
 }
@@ -659,31 +544,43 @@ impl TaskHandle {
             message_tx: progress.message_tx.clone(),
             thread_config: Arc::new(Mutex::new(Config::new(ThreadMode::Limited, 1).unwrap())),
             writer: progress.writer.clone(),
+            join_handle: Arc::new(Mutex::new(None)),
+        }
+    }
+    
+    pub fn new_with_config(thread_id: usize, progress: Arc<ProgressDisplay>, config: Config) -> Self {
+        Self {
+            thread_id,
+            progress: progress.clone(),
+            message_tx: progress.message_tx.clone(),
+            thread_config: Arc::new(Mutex::new(config)),
+            writer: progress.writer.clone(),
+            join_handle: Arc::new(Mutex::new(None)),
         }
     }
 
     pub async fn join(self) -> Result<()> {
-        let handle = {
-            let mut handles = self.progress.thread_handles.lock().await;
-            handles.remove(&self.thread_id)
-        };
-        
-        if let Some(handle) = handle {
-            handle.await?;
+        let mut handles = self.progress.thread_handles.lock().await;
+        if let Some((_, task_handle)) = handles.remove(&self.thread_id) {
+            task_handle.await?;
         }
         Ok(())
     }
 
     pub async fn cancel(self) -> Result<()> {
-        let handle = {
-            let mut handles = self.progress.thread_handles.lock().await;
-            handles.remove(&self.thread_id)
-        };
-        
-        if let Some(handle) = handle {
-            handle.abort();
+        let mut handles = self.progress.thread_handles.lock().await;
+        if let Some((_, task_handle)) = handles.remove(&self.thread_id) {
+            task_handle.abort();
         }
         Ok(())
+    }
+
+    pub fn abort(&self) {
+        if let Ok(mut handle) = self.join_handle.try_lock() {
+            if let Some(task_handle) = handle.take() {
+                task_handle.abort();
+            }
+        }
     }
 
     pub fn thread_id(&self) -> usize {
@@ -691,8 +588,11 @@ impl TaskHandle {
     }
 
     pub async fn set_mode(&mut self, mode: ThreadMode) -> Result<()> {
-        let mut config = self.thread_config.lock().await;
-        *config = Config::new(mode, 1).unwrap();
+        // Create a new config with the specified mode
+        let mut config = Config::new(mode, 1)?;
+        
+        // Now that we have successfully created the config, update our thread_config
+        *self.thread_config.lock().await = config;
         Ok(())
     }
 
@@ -716,48 +616,71 @@ impl TaskHandle {
         Ok(())
     }
 
-    /// Set the title for a task when using WindowWithTitle mode.
-    ///
-    /// # Parameters
-    /// * `title` - The new title to set
-    ///
-    /// # Returns
-    /// Ok(()) if the title was set successfully, or an error if the task is not in WindowWithTitle mode
-    ///
-    /// # Errors
-    /// Returns a ProgressError::TaskOperation error if the task is not in WindowWithTitle mode
     pub async fn set_title(&self, title: String) -> Result<()> {
-        self.progress.set_title(self.thread_id, title).await
+        let mut config = self.thread_config.lock().await;
+        if !config.supports_title() {
+            let ctx = ErrorContext::new("setting title", "TaskHandle")
+                .with_thread_id(self.thread_id)
+                .with_details("Current mode does not support titles");
+            
+            let error = ProgressError::TaskOperation(
+                "Task is not in a mode that supports titles".to_string()
+            ).into_context(ctx);
+            return Err(anyhow::Error::from(error));
+        }
+        
+        // Set the title using the underlying config
+        if let Err(e) = config.set_title(title) {
+            let ctx = ErrorContext::new("setting title", "TaskHandle")
+                .with_thread_id(self.thread_id)
+                .with_details(&e.to_string());
+            
+            let error = ProgressError::TaskOperation(
+                format!("Failed to set title: {}", e)
+            ).into_context(ctx);
+            return Err(anyhow::Error::from(error));
+        }
+        Ok(())
     }
     
-    /// Add an emoji to the task's display when using WindowWithTitle mode.
-    ///
-    /// The emoji will be shown at the beginning of the title line.
-    /// Multiple emojis can be added and they will be displayed in the order they were added.
-    ///
-    /// # Parameters
-    /// * `emoji` - The emoji character or string to add
-    ///
-    /// # Returns
-    /// Ok(()) if the emoji was added successfully, or an error if the task doesn't support emojis
-    ///
-    /// # Errors
-    /// Returns a ProgressError::TaskOperation error if the task doesn't support emojis
     pub async fn add_emoji(&self, emoji: &str) -> Result<()> {
-        self.progress.add_emoji(self.thread_id, emoji).await
+        let mut config = self.thread_config.lock().await;
+        
+        // Debug output
+        eprintln!("Mode type: {:?}", std::any::TypeId::of::<Config>());
+        if let Some(window) = config.as_type::<crate::modes::window_with_title::WindowWithTitle>() {
+            eprintln!("WindowWithTitle found, supports emoji: {}", window.has_emoji_support());
+        } else {
+            eprintln!("WindowWithTitle type not found in config");
+        }
+        
+        if !config.supports_emoji() {
+            let ctx = ErrorContext::new("adding emoji", "TaskHandle")
+                .with_thread_id(self.thread_id)
+                .with_details("Current mode does not support emojis");
+            
+            let error = ProgressError::TaskOperation(
+                "Task is not in a mode that supports emojis".to_string()
+            ).into_context(ctx);
+            return Err(anyhow::Error::from(error));
+        }
+        
+        // Add the emoji using the underlying config
+        if let Err(e) = config.add_emoji(emoji) {
+            let ctx = ErrorContext::new("adding emoji", "TaskHandle")
+                .with_thread_id(self.thread_id)
+                .with_details(&e.to_string());
+            
+            let error = ProgressError::TaskOperation(
+                format!("Failed to add emoji: {}", e)
+            ).into_context(ctx);
+            return Err(anyhow::Error::from(error));
+        }
+        Ok(())
     }
     
-    /// Set the total number of jobs for this task.
-    ///
-    /// # Parameters
-    /// * `total` - The new total number of jobs
-    ///
-    /// # Returns
-    /// Ok(()) if the total jobs was set successfully, or an error if the task doesn't exist
-    ///
-    /// # Errors
-    /// Returns a ProgressError::TaskOperation error if the task doesn't exist or if total is zero
     pub async fn set_total_jobs(&self, total: usize) -> Result<()> {
         self.progress.set_total_jobs(Some(self.thread_id), total).await
     }
 }
+

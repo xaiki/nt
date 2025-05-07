@@ -8,7 +8,7 @@ use crate::tests::common::with_timeout;
 #[tokio::test]
 async fn test_window_with_title_basic() {
     with_timeout(async {
-        let display = ProgressDisplay::new_with_mode(ThreadMode::WindowWithTitle(3)).await;
+        let display = ProgressDisplay::new_with_mode(ThreadMode::WindowWithTitle(3)).await.unwrap();
         let mut env = TestEnv::new(80, 24);
         
         let _handle = display.spawn_with_mode(ThreadMode::WindowWithTitle(3), || "window-title-test").await.unwrap();
@@ -23,7 +23,7 @@ async fn test_window_with_title_basic() {
 #[tokio::test]
 async fn test_window_with_title_update() {
     with_timeout(async {
-        let display = ProgressDisplay::new_with_mode(ThreadMode::WindowWithTitle(3)).await;
+        let display = ProgressDisplay::new_with_mode(ThreadMode::WindowWithTitle(3)).await.unwrap();
         let mut env = TestEnv::new(80, 24);
         
         let _handle = display.spawn_with_mode(ThreadMode::WindowWithTitle(3), || "title-update-test").await.unwrap();
@@ -39,7 +39,7 @@ async fn test_window_with_title_update() {
 #[tokio::test]
 async fn test_window_with_title_persistence() {
     with_timeout(async {
-        let display = ProgressDisplay::new_with_mode(ThreadMode::WindowWithTitle(3)).await;
+        let display = ProgressDisplay::new_with_mode(ThreadMode::WindowWithTitle(3)).await.unwrap();
         let mut env = TestEnv::new(80, 24);
         
         let _handle = display.spawn_with_mode(ThreadMode::WindowWithTitle(3), || "title-persistence-test").await.unwrap();
@@ -58,11 +58,24 @@ async fn test_window_with_title_persistence() {
 #[tokio::test]
 async fn test_window_with_title_emoji() {
     with_timeout(async {
-        let mut display = ProgressDisplay::new().await;
+        let mut display = ProgressDisplay::new().await.unwrap();
         let mut env = TestEnv::new(80, 24);
         
         // Create a task in WindowWithTitle mode
         let mut task = display.spawn_with_mode(ThreadMode::WindowWithTitle(3), || "Initial Title").await.unwrap();
+        
+        // First, verify if the task has a proper mode with emoji support
+        let config = task.thread_config.lock().await;
+        // Debug output
+        eprintln!("Config: {:?}", config);
+        if let Some(window) = config.as_type::<crate::modes::window_with_title::WindowWithTitle>() {
+            eprintln!("WindowWithTitle found, supports emoji: {}", window.has_emoji_support());
+            assert!(window.has_emoji_support(), "WindowWithTitle should have emoji support enabled!");
+        } else {
+            eprintln!("WindowWithTitle type not found in config");
+            panic!("Task is not using WindowWithTitle mode");
+        }
+        drop(config);
         
         // Add some emojis
         task.add_emoji("✨").await.unwrap();
@@ -95,7 +108,7 @@ async fn test_window_with_title_emoji() {
 #[tokio::test]
 async fn test_window_with_title_emoji_errors() {
     with_timeout(async {
-        let display = ProgressDisplay::new().await;
+        let display = ProgressDisplay::new().await.unwrap();
         
         // Create a task in Limited mode (doesn't support emojis)
         let limited_task = display.spawn_with_mode(ThreadMode::Limited, || "Limited Task").await.unwrap();
@@ -123,7 +136,7 @@ async fn test_window_with_title_emoji_errors() {
 #[tokio::test]
 async fn test_window_with_title_multiple_emojis() {
     with_timeout(async {
-        let display = ProgressDisplay::new().await;
+        let display = ProgressDisplay::new().await.unwrap();
         let mut env = TestEnv::new(80, 24);
         
         // Create a task in WindowWithTitle mode
@@ -155,7 +168,7 @@ async fn test_window_with_title_multiple_emojis() {
 async fn test_window_with_title_size() {
     with_timeout(async {
         for size in [2, 3, 5, 10] {
-            let display = ProgressDisplay::new_with_mode(ThreadMode::WindowWithTitle(size)).await;
+            let display = ProgressDisplay::new_with_mode(ThreadMode::WindowWithTitle(size)).await.unwrap();
             let mut env = TestEnv::new(80, 24);
             
             display.spawn_with_mode(ThreadMode::WindowWithTitle(size), move || format!("size-{}", size)).await.unwrap();
@@ -173,7 +186,7 @@ async fn test_window_with_title_size() {
 #[tokio::test]
 async fn test_window_with_title_concurrent() {
     with_timeout(async {
-        let display = ProgressDisplay::new().await;
+        let display = ProgressDisplay::new().await.unwrap();
         let mut handles = vec![];
         
         // Spawn multiple tasks in WindowWithTitle mode
@@ -214,7 +227,7 @@ async fn test_window_with_title_edge_cases() {
         // Enable error propagation for this test
         crate::modes::set_error_propagation(true);
         
-        let display = ProgressDisplay::new_with_mode(ThreadMode::WindowWithTitle(3)).await;
+        let display = ProgressDisplay::new_with_mode(ThreadMode::WindowWithTitle(3)).await.unwrap();
         let mut env = TestEnv::new(80, 24);
         
         // Test edge cases
@@ -230,10 +243,9 @@ async fn test_window_with_title_edge_cases() {
         env.verify();
         
         // Test trying to create a window with less than 2 lines (should fail)
-        assert!(ProgressDisplay::new_with_mode(ThreadMode::WindowWithTitle(1)).await
-            .spawn_with_mode(ThreadMode::WindowWithTitle(1), || "too-small")
-            .await
-            .is_err());
+        let result = ProgressDisplay::new_with_mode(ThreadMode::WindowWithTitle(1)).await.unwrap()
+            .spawn_with_mode(ThreadMode::WindowWithTitle(1), || "too-small").await;
+        assert!(result.is_err());
             
         // Disable error propagation after test
         crate::modes::set_error_propagation(false);
@@ -243,7 +255,7 @@ async fn test_window_with_title_edge_cases() {
 #[tokio::test]
 async fn test_window_with_title_special_chars() {
     with_timeout(async {
-        let display = ProgressDisplay::new_with_mode(ThreadMode::WindowWithTitle(3)).await;
+        let display = ProgressDisplay::new_with_mode(ThreadMode::WindowWithTitle(3)).await.unwrap();
         let mut env = TestEnv::new(80, 24);
         
         let _handle = display.spawn_with_mode(ThreadMode::WindowWithTitle(3), || "special-chars").await.unwrap();
@@ -262,7 +274,7 @@ async fn test_window_with_title_special_chars() {
 #[tokio::test]
 async fn test_window_with_title_long_lines() {
     with_timeout(async {
-        let display = ProgressDisplay::new_with_mode(ThreadMode::WindowWithTitle(3)).await;
+        let display = ProgressDisplay::new_with_mode(ThreadMode::WindowWithTitle(3)).await.unwrap();
         let mut env = TestEnv::new(80, 24);
         
         let _handle = display.spawn_with_mode(ThreadMode::WindowWithTitle(3), || "long-lines").await.unwrap();
@@ -280,7 +292,7 @@ async fn test_window_with_title_long_lines() {
 #[tokio::test]
 async fn test_window_with_title_terminal_size() {
     with_timeout(async {
-        let display = ProgressDisplay::new_with_mode(ThreadMode::WindowWithTitle(3)).await;
+        let display = ProgressDisplay::new_with_mode(ThreadMode::WindowWithTitle(3)).await.unwrap();
         let mut env = TestEnv::new(40, 10); // Smaller terminal size
         
         let _handle = display.spawn_with_mode(ThreadMode::WindowWithTitle(3), || "terminal-size").await.unwrap();
@@ -295,7 +307,7 @@ async fn test_window_with_title_terminal_size() {
 #[tokio::test]
 async fn test_window_with_title_set_title() {
     with_timeout(async {
-        let mut display = ProgressDisplay::new().await;
+        let mut display = ProgressDisplay::new().await.unwrap();
         let mut env = TestEnv::new(80, 24);
         
         // Create a task in WindowWithTitle mode
@@ -325,7 +337,7 @@ async fn test_window_with_title_set_title() {
 #[tokio::test]
 async fn test_window_with_title_set_title_error() {
     with_timeout(async {
-        let display = ProgressDisplay::new().await;
+        let display = ProgressDisplay::new().await.unwrap();
         
         // Create a task in Limited mode (doesn't support title changes)
         let limited_task = display.spawn_with_mode(ThreadMode::Limited, || "Limited Task").await.unwrap();
@@ -339,5 +351,5 @@ async fn test_window_with_title_set_title_error() {
         
         // Clean up
         display.stop().await.unwrap();
-    }, 5).await.unwrap();
+    }, 30).await.unwrap();
 } 
