@@ -129,35 +129,6 @@ impl WindowWithTitle {
         self.supports_emoji
     }
 
-    /// Get the current lines to display, including the title.
-    ///
-    /// # Returns
-    /// A vector of strings with the current lines to display
-    pub fn get_lines(&self) -> Vec<String> {
-        // Get lines from window base
-        let mut lines = self.window_base.get_lines();
-        
-        // Insert title at the beginning
-        lines.insert(0, self.render_title(80));
-        
-        lines
-    }
-    
-    /// Handle a new message.
-    ///
-    /// # Parameters
-    /// * `message` - The message to handle
-    ///
-    /// # Returns
-    /// A vector of strings with the updated lines to display
-    pub fn handle_message(&mut self, message: String) -> Vec<String> {
-        // Add message to window base
-        self.window_base.add_message(message);
-        
-        // Return the current lines
-        self.get_lines()
-    }
-    
     pub fn render(&self, width: usize) -> String {
         let mut output = String::new();
         
@@ -188,13 +159,21 @@ impl ThreadConfig for WindowWithTitle {
     }
 
     fn handle_message(&mut self, message: String) -> Vec<String> {
-        // Delegate to the struct method
-        WindowWithTitle::handle_message(self, message)
+        // Add message to window base
+        self.window_base.add_message(message);
+        
+        // Return the current lines
+        self.get_lines()
     }
 
     fn get_lines(&self) -> Vec<String> {
-        // Delegate to the struct method
-        WindowWithTitle::get_lines(self)
+        // Get lines from window base
+        let mut lines = self.window_base.get_lines();
+        
+        // Insert title at the beginning
+        lines.insert(0, self.render_title(80));
+        
+        lines
     }
 
     fn clone_box(&self) -> Box<dyn ThreadConfig> {

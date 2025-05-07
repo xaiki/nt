@@ -2,6 +2,14 @@
 
 This file contains completed tasks and improvements moved from the TODO.md file.
 
+## v0.1.4 (2023-03-28)
+
+### Code Cleanup and Refactoring
+- Removed duplicated code in WindowWithTitle implementation
+- Moved get_lines and handle_message implementations directly into ThreadConfig trait
+- Removed redundant delegation between trait and struct methods
+- Improved code organization by removing duplicate functionality
+
 ## v0.1.3 (2023-03-27)
 
 ### Code Cleanup and Refactoring
