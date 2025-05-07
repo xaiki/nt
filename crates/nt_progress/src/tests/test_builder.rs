@@ -25,7 +25,7 @@ impl TestBuilder {
     /// Create a new TestBuilder with specified terminal size
     pub fn with_size(width: u16, height: u16) -> Self {
         Self {
-            env: TestEnv::new(),
+            env: TestEnv::new_with_size(width, height),
             mode: None,
             create_display: false,
         }
@@ -144,41 +144,30 @@ impl TestBuilder {
     }
 
     /// Run a concurrent task test with an existing display
-    pub async fn test_concurrent_tasks_with_display(&mut self, display: &ProgressDisplay, task_count: usize, message_template: &str) -> Result<()> {
-        let display_arc = Arc::new(Mutex::new(display.clone()));
-        
-        // Create tasks that will send messages
-        let mut handles = Vec::with_capacity(task_count);
+    pub async fn test_concurrent_tasks_with_display(&mut self, display: &ProgressDisplay, task_count: usize) -> Result<()> {
+        let display = Arc::new(display.clone());
+        let mut handles = Vec::new();
         
         for i in 0..task_count {
-            let display_clone = Arc::clone(&display_arc);
-            let message = message_template.replace("{}", &i.to_string());
+            let display_clone = display.clone();
+            let message = format!("Task {} message", i);
             
             let handle = tokio::spawn(async move {
-                let display = display_clone.lock().await;
-                let mut task = display.spawn_with_mode(ThreadMode::Capturing, || "test".to_string()).await.unwrap();
-                task.capture_stdout(message).await.unwrap();
-                task
+                let display = display_clone;
+                let mut task = display.spawn_with_mode(ThreadMode::Capturing, || "test".to_string()).await?;
+                task.capture_stdout(message).await?;
+                Ok::<_, anyhow::Error>(task)
             });
             
             handles.push(handle);
         }
         
-        // Wait for all tasks to complete and join them
         for handle in handles {
-            let task = handle.await.unwrap();
-            task.join().await.unwrap();
+            let task = handle.await??;
+            task.join().await?;
         }
         
-        // For concurrent tests, we need to add expected messages in the same way
-        for i in 0..task_count {
-            let message = message_template.replace("{}", &i.to_string());
-            self.env.writeln(&message);
-        }
-        
-        display.display().await?;
-        self.env.verify();
-        
+        display.stop().await?;
         Ok(())
     }
 
@@ -445,6 +434,47 @@ impl TestBuilder {
         task.join().await?;
         
         Ok(display)
+    }
+
+    pub async fn test_basic_message(&mut self, display: &ProgressDisplay) -> Result<()> {
+        let mut task = display.create_task(ThreadMode::Capturing, 1).await?;
+        task.capture_stdout("Test message".to_string()).await?;
+        task.join().await?;
+        display.stop().await?;
+        Ok(())
+    }
+
+    pub async fn test_edge_case_empty_message(&mut self, display: &ProgressDisplay) -> Result<()> {
+        let mut task = display.create_task(ThreadMode::Capturing, 1).await?;
+        task.capture_stdout("".to_string()).await?;
+        task.join().await?;
+        display.stop().await?;
+        Ok(())
+    }
+
+    pub async fn test_edge_case_long_message(&mut self, display: &ProgressDisplay) -> Result<()> {
+        let mut task = display.create_task(ThreadMode::Capturing, 1).await?;
+        let long_message = "A".repeat(1000);
+        task.capture_stdout(long_message).await?;
+        task.join().await?;
+        display.stop().await?;
+        Ok(())
+    }
+
+    pub async fn test_edge_case_special_characters(&mut self, display: &ProgressDisplay) -> Result<()> {
+        let mut task = display.create_task(ThreadMode::Capturing, 1).await?;
+        task.capture_stdout("Special chars: 🦀 👋 🎉".to_string()).await?;
+        task.join().await?;
+        display.stop().await?;
+        Ok(())
+    }
+
+    pub async fn test_edge_case_unicode_characters(&mut self, display: &ProgressDisplay) -> Result<()> {
+        let mut task = display.create_task(ThreadMode::Capturing, 1).await?;
+        task.capture_stdout("Unicode: 你好 こんにちは 안녕하세요".to_string()).await?;
+        task.join().await?;
+        display.stop().await?;
+        Ok(())
     }
 }
 

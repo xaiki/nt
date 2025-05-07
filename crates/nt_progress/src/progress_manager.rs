@@ -2,7 +2,6 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use anyhow::Result;
-use std::sync::atomic::AtomicUsize;
 
 use crate::errors::{ErrorContext, ProgressError};
 use crate::thread::{ThreadManager, TaskHandle};
@@ -21,8 +20,6 @@ pub struct ProgressManager {
     thread_manager: Arc<ThreadManager>,
     /// Factory for creating thread config modes
     factory: Arc<ModeFactory>,
-    /// Spinner state for animated indicators
-    spinner_index: Arc<AtomicUsize>,
     /// Sender for ThreadMessage channel
     message_tx: mpsc::Sender<ThreadMessage>,
 }
@@ -34,7 +31,6 @@ impl ProgressManager {
             outputs: Arc::new(Mutex::new(HashMap::new())),
             thread_manager: Arc::new(ThreadManager::new()),
             factory,
-            spinner_index: Arc::new(AtomicUsize::new(0)),
             message_tx,
         }
     }

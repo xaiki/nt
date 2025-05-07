@@ -12,7 +12,6 @@ use anyhow::Result;
 pub struct WindowWithTitle {
     window_base: WindowBase,
     title: String,
-    title_width: usize,
     emojis: Vec<String>,
     supports_emoji: bool,
     supports_title: bool,
@@ -51,7 +50,6 @@ impl WindowWithTitle {
         Ok(Self {
             window_base: WindowBase::new(total_jobs, max_lines - 1)?,
             title,
-            title_width: 0,
             emojis: Vec::new(),
             supports_emoji: true,  // Enable emoji support by default
             supports_title: true,  // Enable title support by default
