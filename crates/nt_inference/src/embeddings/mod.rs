@@ -31,14 +31,15 @@ mod tests {
         let generator = EmbeddingGenerator::new(model);
         
         let article = Article {
-            url: "http://example.com".to_string(),
             title: "Test Article".to_string(),
-            content: "Test content".to_string(),
-            published_at: chrono::Utc::now(),
+            url: "http://example.com".to_string(),
             source: "test".to_string(),
-            sections: vec![],
+            content: "Test content".to_string(),
             summary: None,
-            authors: vec!["Test Author".to_string()],
+            authors: vec![],
+            published_at: chrono::Utc::now(),
+            sections: vec![],
+            related_articles: vec![],
         };
 
         let embedding = generator.generate_article_embedding(&article).await.unwrap();

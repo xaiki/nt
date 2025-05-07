@@ -199,6 +199,11 @@ async fn main() -> Result<()> {
         cli.backend_url.as_deref()
     ).await?;
 
+    // Check storage connection
+    info!("💾 Checking storage connection...");
+    check_storage(&storage, cli.storage.as_str()).await?;
+    info!("✨ Storage initialized successfully (using {})", cli.storage);
+
     // Initialize inference model based on configuration
     let inference_config = nt_inference::InferenceConfig {
         model_url: cli.model_url,

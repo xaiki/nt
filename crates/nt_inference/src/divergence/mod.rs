@@ -90,14 +90,15 @@ mod tests {
         let analyzer = DivergenceAnalyzer::new(model);
 
         let article = Article {
-            url: "http://test.com".to_string(),
+            url: "http://example.com".to_string(),
             title: "Test Article".to_string(),
-            content: "This is a test article about politics.".to_string(),
+            content: "Test content".to_string(),
             published_at: Utc::now(),
             source: "test".to_string(),
             sections: vec![],
             summary: None,
-            authors: vec!["Test Author".to_string()],
+            authors: vec![],
+            related_articles: vec![],
         };
 
         let analysis = analyzer.analyze_article(&article).await.unwrap();

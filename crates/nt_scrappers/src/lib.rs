@@ -1,7 +1,7 @@
-pub mod scrapers;
-pub mod cli;
-pub mod logging;
 pub mod manager;
+pub mod cli;
+pub mod scrapers;
+pub mod logging;
 
 pub use scrapers::ScraperType;
 pub use nt_core::{Scraper, ArticleStatus, SourceMetadata, RegionMetadata};

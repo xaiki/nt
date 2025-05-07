@@ -2,6 +2,14 @@
 
 This file contains completed tasks and improvements moved from the TODO.md file.
 
+## v0.1.20 (2024-05-15)
+
+### Code Cleanup and Refactoring
+- Fixed needless lifetime warning in TextWrapper implementation
+  - Removed explicit lifetime annotation in get_next_word method
+  - Improved code readability and maintainability
+  - Fixed all Clippy warnings in the codebase
+
 ## v0.1.19 (2024-05-14)
 
 ### Feature Enhancements

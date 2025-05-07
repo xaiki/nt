@@ -4,20 +4,27 @@ use std::collections::HashMap;
 use std::ops::Deref;
 use nt_core::{Article, Result, Error, ArticleStorage, InferenceModel, ArticleStatus, Scraper};
 use crate::scrapers::ScraperType;
-use tracing::info;
+use log::info;
 use tokio::sync::{Mutex as TokioMutex, Semaphore, mpsc};
 use futures::future::join_all;
 use std::sync::Mutex as StdMutex;
 use tokio::task::JoinHandle;
-use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
+use std::io::{stderr, IsTerminal};
+use anyhow;
+use std::io::Write;
+use nt_progress::{ProgressDisplay, ThreadLogger, Config, ThreadMode};
+use std::time::Duration;
+use tokio::time::sleep;
 
+type ScraperType = Box<dyn Scraper + Send + Sync>;
+
+#[derive(Clone)]
 pub struct ScraperManager {
     storage: Arc<dyn ArticleStorage>,
     inference: Arc<dyn InferenceModel>,
     scrapers: Arc<StdMutex<Vec<Arc<Mutex<ScraperType>>>>>,
     semaphore: Arc<Semaphore>,
     inference_tasks: Arc<TokioMutex<Vec<JoinHandle<Result<()>>>>>,
-    progress: Arc<MultiProgress>,
 }
 
 impl ScraperManager {
@@ -26,9 +33,8 @@ impl ScraperManager {
             storage,
             inference,
             scrapers: Arc::new(StdMutex::new(Vec::new())),
-            semaphore: Arc::new(Semaphore::new(32)), // Limit concurrent operations to 32
+            semaphore: Arc::new(Semaphore::new(10)), // Limit concurrent operations to 10
             inference_tasks: Arc::new(TokioMutex::new(Vec::new())),
-            progress: Arc::new(MultiProgress::new()),
         })
     }
 
@@ -257,31 +263,41 @@ impl ScraperManager {
                 .collect()
         };
         
-        // Create progress bar for scrapers
-        let scraper_pb = self.progress.add(ProgressBar::new(scrapers.len() as u64));
-        scraper_pb.set_style(ProgressStyle::default_bar()
-            .template("[{elapsed}] {bar:40} {pos:>3}/{len:3} {msg}")
-            .unwrap());
-        scraper_pb.set_message("Scraping sources");
+        // Create progress display system
+        let (tx, rx) = mpsc::channel(100);
+        let progress = ProgressDisplay::new().await;
         
-        // Run all scrapers in parallel
-        let scraper_futures: Vec<_> = scrapers.into_iter().map(|scraper| {
+        // Run all scrapers in parallel using the threadpool
+        let scraper_futures: Vec<_> = scrapers.into_iter().enumerate().map(|(i, scraper)| {
             let source_name = scraper.source_metadata().name;
-            let scraper_pb = scraper_pb.clone();
+            let tx = tx.clone();
+            let index = i;
             
             async move {
-                scraper_pb.set_message(format!("Scraping: {}", source_name));
+                // Create a simple ThreadLogger with a Config for the window mode
+                let mode_config = Config::new(ThreadMode::Window(3), 10).unwrap();
+                let mut logger = ThreadLogger::new(index, tx, mode_config);
+                
                 let urls = scraper.get_article_urls().await?;
+                let total = urls.len();
                 let mut scraper_articles = Vec::new();
                 
-                // Process URLs in parallel
-                let url_futures: Vec<_> = urls.into_iter().map(|url| {
+                // Process URLs in parallel using the threadpool
+                let url_futures: Vec<_> = urls.into_iter().enumerate().map(|(j, url)| {
                     let manager = self.clone();
+                    let mut logger = logger.clone();
                     async move {
+                        let _permit = manager.semaphore.acquire().await.map_err(|e| Error::External(e.into())).ok()?;
                         match manager.scrape_url(&url).await {
-                            Ok(article) => Some(article),
+                            Ok(article) => {
+                                let output = format!("Scraping {}: {}/{}", source_name, j + 1, total);
+                                logger.log(output).await;
+                                Some(article)
+                            }
                             Err(e) => {
                                 info!("Failed to scrape {}: {}", url, e);
+                                let output = format!("Scraping {}: {}/{}", source_name, j + 1, total);
+                                logger.log(output).await;
                                 None
                             }
                         }
@@ -295,10 +311,20 @@ impl ScraperManager {
                     }
                 }
                 
-                scraper_pb.inc(1);
                 Ok::<_, nt_core::Error>(scraper_articles)
             }
         }).collect();
+
+        // Start a background task to display progress
+        let progress_handle = progress.clone();
+        let display_handle = tokio::spawn(async move {
+            loop {
+                if let Err(e) = progress_handle.display().await {
+                    eprintln!("Error displaying progress: {}", e);
+                }
+                tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+            }
+        });
 
         // Collect results from all scrapers
         let results = join_all(scraper_futures).await;
@@ -308,13 +334,16 @@ impl ScraperManager {
             }
         }
 
+        // Wait for progress display to finish
+        display_handle.abort();
+
         // Wait for all inference tasks to complete
         let mut tasks = self.inference_tasks.lock().await;
         
         // Process tasks in chunks to avoid overwhelming the system
         while !tasks.is_empty() {
             let mut chunk = Vec::new();
-            for _ in 0..32.min(tasks.len()) {
+            for _ in 0..10.min(tasks.len()) {
                 if let Some(task) = tasks.pop() {
                     chunk.push(task);
                 }
@@ -328,9 +357,7 @@ impl ScraperManager {
             }
         }
 
-        // Wait for all progress bars to complete
-        (*self.progress).clear();
-
+        eprintln!();
         Ok(articles)
     }
 

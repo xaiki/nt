@@ -156,7 +156,7 @@ impl TextWrapper {
     ///
     /// # Returns
     /// A tuple containing the word and its visual width
-    fn get_next_word<'a>(&self, graphemes: &[&'a str]) -> (String, usize) {
+    fn get_next_word(&self, graphemes: &[&str]) -> (String, usize) {
         if graphemes.is_empty() {
             return (String::new(), 0);
         }

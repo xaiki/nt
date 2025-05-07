@@ -1,0 +1,87 @@
+name: Performance Benchmarks
+
+on:
+  push:
+    branches: [ master ]
+  pull_request:
+    branches: [ master ]
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+  RUST_LOG: info
+
+permissions:
+  issues: write
+  pull-requests: write
+  contents: write
+
+jobs:
+  benchmark:
+    name: Run benchmarks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Fetch all history for git operations
+      
+      - name: Clean up benchmark files
+        run: |
+          git rm -f --cached benchmark.txt || true
+          rm -f benchmark.txt
+          git commit -m "chore: cleanup benchmark files" --allow-empty || true
+      
+      - name: Setup gh-pages branch
+        run: |
+          git fetch origin gh-pages:gh-pages || git checkout --orphan gh-pages
+          git checkout master
+      
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@nightly
+        
+      - name: Cache dependencies
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install SQLite
+        run: sudo apt-get update && sudo apt-get install -y sqlite3 libsqlite3-dev
+
+      - name: Run benchmark
+        run: |
+          cargo bench --bench performance -- --output-format bencher | tee benchmark.txt
+
+      - name: Store benchmark result
+        uses: benchmark-action/github-action-benchmark@v1
+        with:
+          name: Rust Benchmarks
+          tool: 'cargo'
+          output-file-path: benchmark.txt
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          auto-push: true
+          # Alert if performance regresses more than 10%
+          alert-threshold: '110%'
+          comment-on-alert: true
+          fail-on-alert: true
+          # Save benchmark results in gh-pages branch
+          gh-pages-branch: gh-pages
+          benchmark-data-dir-path: dev/bench/data
+
+      - name: Alert on regression
+        if: failure()
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const issue = await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: '🚨 Performance Regression Detected',
+              body: `Performance regression detected in commit ${context.sha}.\n\nPlease check the [benchmark results](https://github.com/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}) for details.`,
+              labels: ['performance', 'regression']
+            });
+            
+            await github.rest.issues.addAssignees({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: issue.data.number,
+              assignees: [context.actor]
+            }); 
