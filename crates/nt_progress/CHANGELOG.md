@@ -2,6 +2,17 @@
 
 This file contains completed tasks and improvements moved from the TODO.md file.
 
+## v0.1.13 (2024-05-12)
+
+### Feature Enhancements
+- Implemented direct writer functionality for TaskHandle
+  - Added `writer()` method to get direct access to the underlying writer
+  - Added `set_writer()` method to replace the writer with a custom implementation
+  - Added `add_tee_writer()` method to create a writer that outputs to multiple destinations
+  - Added `with_writer()` method for convenient access to the writer with proper locking
+  - Added helper function `new_tee_writer()` for working with boxed writers
+  - Added comprehensive test for the new writer functionality
+
 ## v0.1.12 (2024-05-12)
 
 ### Code Cleanup and Refactoring

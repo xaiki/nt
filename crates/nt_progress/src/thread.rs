@@ -543,4 +543,80 @@ impl TaskHandle {
         let mut config = self.thread_config.lock().await;
         config.as_type_mut::<T>().map(f)
     }
+
+    /// Get a direct reference to the writer.
+    ///
+    /// This allows direct access to the underlying writer without going through
+    /// the TaskHandle's write methods. This can be useful for implementing custom
+    /// formatting or directly writing to the output without TaskHandle's abstractions.
+    ///
+    /// # Returns
+    /// A reference to the Arc<Mutex<Box<dyn ProgressWriter>>> that allows locking and accessing
+    /// the writer directly.
+    pub fn writer(&self) -> &Arc<Mutex<Box<dyn ProgressWriter + Send + 'static>>> {
+        &self.writer
+    }
+
+    /// Replace the current writer with a custom implementation.
+    ///
+    /// This method allows replacing the default OutputBuffer with any custom writer
+    /// that implements the ProgressWriter trait. This is useful for redirecting output
+    /// to custom destinations or implementing specialized formatting.
+    ///
+    /// # Parameters
+    /// * `writer` - A boxed instance of a type that implements ProgressWriter
+    ///
+    /// # Returns
+    /// The previous writer that was replaced
+    pub async fn set_writer(&mut self, writer: Box<dyn ProgressWriter + Send + 'static>) -> Box<dyn ProgressWriter + Send + 'static> {
+        let mut writer_guard = self.writer.lock().await;
+        std::mem::replace(&mut *writer_guard, writer)
+    }
+    
+    /// Create a tee writer that outputs to both the internal writer and a custom writer.
+    ///
+    /// This method allows creating a writer that sends output to both the TaskHandle's
+    /// internal writer and a custom writer. This is useful for capturing output in 
+    /// multiple destinations simultaneously without changing the TaskHandle's behavior.
+    ///
+    /// # Parameters
+    /// * `additional_writer` - A boxed instance of a type that implements ProgressWriter
+    ///
+    /// # Returns
+    /// Result containing () on success, or an error if the operation fails
+    pub async fn add_tee_writer<W: ProgressWriter + Send + 'static>(&mut self, additional_writer: W) -> Result<()> {
+        use crate::io::{OutputBuffer, new_tee_writer};
+        
+        // Create a new buffer to replace the current one
+        let new_buffer = OutputBuffer::new(100);
+        
+        // Replace the current writer with a new empty buffer temporarily
+        let prev_writer = self.set_writer(Box::new(new_buffer)).await;
+        
+        // Create a tee writer from the previous writer and the additional writer
+        let tee_writer = new_tee_writer(prev_writer, Box::new(additional_writer));
+        
+        // Set the writer to the new tee writer
+        self.set_writer(tee_writer).await;
+        
+        Ok(())
+    }
+    
+    /// Execute a closure with mutable access to the writer.
+    ///
+    /// This method provides a convenient way to perform operations on the writer
+    /// without manually managing the locking/unlocking.
+    ///
+    /// # Parameters
+    /// * `f` - A closure that takes a mutable reference to the writer and returns a Result
+    ///
+    /// # Returns
+    /// The result returned by the closure
+    pub async fn with_writer<F, R>(&self, f: F) -> Result<R>
+    where
+        F: FnOnce(&mut Box<dyn ProgressWriter + Send + 'static>) -> Result<R>,
+    {
+        let mut writer = self.writer.lock().await;
+        f(&mut writer)
+    }
 } 

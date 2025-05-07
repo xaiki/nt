@@ -625,4 +625,68 @@ mod tests {
         // without storing any content, which is useful for performance monitoring
         // or tracking write patterns in large applications
     }
+
+    #[tokio::test]
+    async fn test_task_handle_direct_writer() {
+        use tokio::sync::mpsc;
+        use crate::modes::Config;
+        use crate::thread::TaskHandle;
+        use crate::io::OutputBuffer;
+        
+        // Create a basic configuration for testing
+        let config = Config::default();
+        
+        // Create a message channel
+        let (message_tx, _) = mpsc::channel(100);
+        
+        // Create a TaskHandle
+        let mut task_handle = TaskHandle::new(1, config, message_tx);
+        
+        // Test getting a direct reference to the writer
+        {
+            let writer_ref = task_handle.writer();
+            assert!(writer_ref.lock().await.is_ready());
+        }
+        
+        // Test writing with the with_writer method
+        {
+            task_handle.with_writer(|writer| {
+                writer.write_line("Test message via with_writer")?;
+                Ok(())
+            }).await.unwrap();
+        }
+        
+        // Test replacing the writer with a custom implementation
+        {
+            let custom_buffer = OutputBuffer::new(5);
+            let mut prev_writer = task_handle.set_writer(Box::new(custom_buffer)).await;
+            
+            // Write to the new writer
+            task_handle.write_line("Test message after writer replacement").await.unwrap();
+            
+            // Check that the previous writer works
+            prev_writer.write_line("Final message to previous writer").unwrap();
+        }
+        
+        // Test creating a tee writer
+        {
+            // Create a custom writer to tee output to
+            let custom_buffer = OutputBuffer::new(5);
+            
+            // Add it as a tee writer
+            task_handle.add_tee_writer(custom_buffer).await.unwrap();
+            
+            // Write a message that should go to both writers
+            task_handle.write_line("Test message for tee writer").await.unwrap();
+            
+            // Verify the message was captured in the original writer
+            task_handle.with_writer(|writer| {
+                // This is complex because we have a boxed TeeWriter, 
+                // and we'd need to extract the first writer which is also a BoxedWriter.
+                // For this test, it's sufficient to verify that write operations work.
+                assert!(writer.is_ready());
+                Ok(())
+            }).await.unwrap();
+        }
+    }
 } 

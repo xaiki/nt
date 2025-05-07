@@ -3,6 +3,23 @@ use std::fmt::Debug;
 use anyhow::Result;
 
 pub mod custom;
+pub mod io_trait;
+pub mod file_io;
+pub mod memory_io;
+pub mod default_factory;
+pub mod network_io;
+
+// Re-export important types from io_trait
+pub use io_trait::{IO, InputIO, OutputIO, SeekableIO, FilterableIO, IOFactory, IOCapabilities, IOMode};
+// Re-export FileIO and MemoryIO
+pub use file_io::FileIO;
+pub use memory_io::MemoryIO;
+
+// Re-export DefaultIOFactory as the default in-memory IO factory
+pub use default_factory::DefaultIOFactory;
+
+// Re-export NetworkIO stub for network I/O
+pub use network_io::NetworkIO;
 
 /// A trait for writers that can handle both synchronous and asynchronous writes
 pub trait ProgressWriter: Write + Send + Sync + Debug {
@@ -150,4 +167,61 @@ impl<W1: ProgressWriter, W2: ProgressWriter> Debug for TeeWriter<W1, W2> {
             .field("writer2", &self.writer2)
             .finish()
     }
+}
+
+/// Helper function to create a TeeWriter from boxed writers
+pub fn new_tee_writer(
+    writer1: Box<dyn ProgressWriter + Send + 'static>,
+    writer2: Box<dyn ProgressWriter + Send + 'static>
+) -> Box<dyn ProgressWriter + Send + 'static> {
+    struct BoxedTeeWriter {
+        writer1: Box<dyn ProgressWriter + Send + 'static>,
+        writer2: Box<dyn ProgressWriter + Send + 'static>,
+    }
+    
+    impl Write for BoxedTeeWriter {
+        fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+            self.writer1.write(buf)?;
+            self.writer2.write(buf)?;
+            Ok(buf.len())
+        }
+        
+        fn flush(&mut self) -> io::Result<()> {
+            self.writer1.flush()?;
+            self.writer2.flush()?;
+            Ok(())
+        }
+    }
+    
+    impl ProgressWriter for BoxedTeeWriter {
+        fn write_line(&mut self, line: &str) -> Result<()> {
+            self.writer1.write_line(line)?;
+            self.writer2.write_line(line)?;
+            Ok(())
+        }
+        
+        fn flush(&mut self) -> Result<()> {
+            self.writer1.flush()?;
+            self.writer2.flush()?;
+            Ok(())
+        }
+        
+        fn is_ready(&self) -> bool {
+            self.writer1.is_ready() && self.writer2.is_ready()
+        }
+    }
+    
+    impl Debug for BoxedTeeWriter {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            f.debug_struct("BoxedTeeWriter")
+                .field("writer1", &"Box<dyn ProgressWriter>")
+                .field("writer2", &"Box<dyn ProgressWriter>")
+                .finish()
+        }
+    }
+    
+    Box::new(BoxedTeeWriter {
+        writer1,
+        writer2,
+    })
 } 
