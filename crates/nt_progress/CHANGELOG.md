@@ -2,6 +2,15 @@
 
 This file contains completed tasks and improvements moved from the TODO.md file.
 
+## v0.1.18 (2024-05-14)
+
+### Code Cleanup and Refactoring
+- Fixed Clippy warning for ColorName::to_color method
+  - Updated method to take self by value since ColorName is Copy
+  - Improved method consistency with Rust conventions
+  - Fixed all clippy warnings in the codebase
+  - Enhanced code quality with better method conventions
+
 ## v0.1.17 (2024-05-13)
 
 ### Display Enhancements
