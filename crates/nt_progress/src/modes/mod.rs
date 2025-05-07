@@ -878,6 +878,12 @@ impl Default for Config {
     }
 }
 
+impl From<Box<dyn ThreadConfig>> for Config {
+    fn from(config: Box<dyn ThreadConfig>) -> Self {
+        Self { config }
+    }
+}
+
 /// Enum representing the different display modes.
 ///
 /// Each variant represents a different way of displaying output:

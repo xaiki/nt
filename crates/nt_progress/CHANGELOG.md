@@ -2,6 +2,15 @@
 
 This file contains completed tasks and improvements moved from the TODO.md file.
 
+## v0.1.6 (2024-03-28)
+
+### Mode Factory and Dependency Injection
+- Replaced static registry with dependency injection
+  - Added `ModeFactory::with_registry` for custom registry injection
+  - Added `ModeFactory::with_modes` for custom mode registration
+  - Updated ProgressDisplay to use factory for mode creation
+  - Added From implementation for Config to support factory output
+
 ## v0.1.5 (2025-05-07)
 
 ### Testing Improvements

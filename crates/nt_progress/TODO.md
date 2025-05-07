@@ -25,11 +25,11 @@ The `nt_progress` library provides a flexible and thread-safe progress display f
   - [x] Implement expected vs actual comparison helper
 
 ### Phase 3: Mode Factory and Dependency Injection
-- [ ] Replace static registry with dependency injection
-  - [ ] Create ModeFactory struct to replace static REGISTRY
-  - [ ] Add factory creation method to ProgressDisplay
-  - [ ] Implement factory cloning without static references
-  - [ ] Replace direct type checking with capability-based registration
+- [x] Replace static registry with dependency injection
+  - [x] Create ModeFactory struct to replace static REGISTRY
+  - [x] Add factory creation method to ProgressDisplay
+  - [x] Implement factory cloning without static references
+  - [x] Replace direct type checking with capability-based registration
 - [ ] Improve mode creation error handling
   - [ ] Add more detailed failure reasons
   - [ ] Implement validation before creation attempts

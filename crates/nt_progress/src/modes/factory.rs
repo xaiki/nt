@@ -236,6 +236,14 @@ pub struct ModeFactory {
 }
 
 impl ModeFactory {
+    /// Create a new ModeFactory with a custom registry
+    pub fn with_registry(registry: Arc<ModeRegistry>) -> Self {
+        Self {
+            registry,
+            default_mode: ThreadMode::Limited,
+        }
+    }
+
     /// Create a new ModeFactory with the default set of modes
     pub fn new() -> Self {
         let mut registry = ModeRegistry::new();
@@ -246,10 +254,17 @@ impl ModeFactory {
         registry.register(WindowCreator);
         registry.register(WindowWithTitleCreator);
         
-        Self {
-            registry: Arc::new(registry),
-            default_mode: ThreadMode::Limited,
-        }
+        Self::with_registry(Arc::new(registry))
+    }
+
+    /// Create a new ModeFactory with a specific set of modes
+    pub fn with_modes<F>(f: F) -> Self 
+    where
+        F: FnOnce(&mut ModeRegistry)
+    {
+        let mut registry = ModeRegistry::new();
+        f(&mut registry);
+        Self::with_registry(Arc::new(registry))
     }
     
     /// Set the default mode for this factory
@@ -500,5 +515,36 @@ mod tests {
         // Verify emoji and title support are enabled by default
         assert!(window_with_title.has_emoji_support(), "Emoji support should be enabled by default");
         assert!(window_with_title.has_title_support(), "Title support should be enabled by default");
+    }
+
+    #[test]
+    fn test_factory_with_custom_registry() {
+        let mut registry = ModeRegistry::new();
+        registry.register(LimitedCreator);
+        registry.register(WindowCreator);
+        
+        let factory = ModeFactory::with_registry(Arc::new(registry));
+        
+        // Verify registry contains only the registered modes
+        let registry = factory.registry();
+        assert!(registry.creators.contains_key("limited"));
+        assert!(registry.creators.contains_key("window"));
+        assert!(!registry.creators.contains_key("capturing"));
+        assert!(!registry.creators.contains_key("window_with_title"));
+    }
+
+    #[test]
+    fn test_factory_with_modes() {
+        let factory = ModeFactory::with_modes(|registry| {
+            registry.register(LimitedCreator);
+            registry.register(WindowCreator);
+        });
+        
+        // Verify registry contains only the registered modes
+        let registry = factory.registry();
+        assert!(registry.creators.contains_key("limited"));
+        assert!(registry.creators.contains_key("window"));
+        assert!(!registry.creators.contains_key("capturing"));
+        assert!(!registry.creators.contains_key("window_with_title"));
     }
 } 

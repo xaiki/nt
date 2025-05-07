@@ -182,7 +182,7 @@ impl ProgressDisplay {
         }
         
         let thread_id = self.next_thread_id();
-        let config = Config::new(mode, total_jobs)?;
+        let config = Config::from(self.factory.create_mode(mode, total_jobs)?);
         let task_handle = TaskHandle::new_with_config(thread_id, Arc::new(self.clone()), config);
         let mut handles = self.thread_handles.lock().await;
         handles.insert(thread_id, (task_handle.clone(), tokio::spawn(async move {
