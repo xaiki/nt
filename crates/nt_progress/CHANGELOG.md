@@ -2,6 +2,17 @@
 
 This file contains completed tasks and improvements moved from the TODO.md file.
 
+## v0.1.12 (2024-05-12)
+
+### Code Cleanup and Refactoring
+- Fixed unused variable warnings in test files
+  - Fixed unused variable in `tests/display.rs`
+  - Fixed variable naming inconsistencies in `tests/capturing.rs` 
+  - Removed unused mutability in `tests/custom_writer.rs`
+  - Removed unused mutability in `modes/mod.rs`
+- Improved code quality and readability
+- Reduced compiler warning noise
+
 ## v0.1.11 (2024-05-07)
 
 ### I/O Abstraction Layer

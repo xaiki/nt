@@ -20,6 +20,7 @@ use anyhow::Result;
 async fn test_progress_display_high_concurrency() -> Result<()> {
     // Create display OUTSIDE timeout
     let display = ProgressDisplay::new().await?;
+    let _env = TestEnv::new();
     
     // Run test logic INSIDE timeout
     let _ = with_timeout(async {
@@ -294,7 +295,7 @@ async fn test_progress_display_special_chars() -> Result<()> {
 async fn test_progress_display_concurrency() -> Result<()> {
     // Create display OUTSIDE timeout
     let display = ProgressDisplay::new().await?;
-    let mut env = TestEnv::new();
+    let _env = TestEnv::new();
     
     // Run test logic INSIDE timeout
     let _ = with_timeout(async {

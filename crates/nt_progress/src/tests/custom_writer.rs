@@ -420,8 +420,11 @@ mod tests {
             let limited = Limited::new(1);
             let config = Config::from(Box::new(limited) as Box<dyn crate::modes::ThreadConfig>);
             
+            // Create a message channel for task handles
+            let (message_tx, _message_rx) = tokio::sync::mpsc::channel(100);
+            
             // Create a task handle
-            let mut task_handle = TaskHandle::new(1, config);
+            let mut task_handle = TaskHandle::new(1, config, message_tx);
             
             // Create a custom writer
             let mut custom_writer = TestCustomWriter::new("task_test", "TASK: ");
@@ -596,7 +599,7 @@ mod tests {
     #[test]
     fn test_tee_with_dummy_writer_monitoring() {
         // Create a primary writer that actually stores data
-        let mut primary_writer = OutputBuffer::new(10);
+        let primary_writer = OutputBuffer::new(10);
         
         // Create a dummy writer that just counts operations
         let dummy_writer = DummyWriter::new("monitor");

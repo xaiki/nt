@@ -4,6 +4,7 @@ use std::fmt::Debug;
 use std::collections::{VecDeque, HashSet, HashMap};
 use std::any::{Any, TypeId};
 use crate::errors::ModeCreationError;
+use crate::io::ProgressWriter;
 
 pub mod limited;
 pub mod capturing;
@@ -138,6 +139,21 @@ pub trait HasBaseConfig {
     /// # Returns
     /// A mutable reference to the BaseConfig
     fn base_config_mut(&mut self) -> &mut BaseConfig;
+}
+
+/// Trait for modes that support output passthrough
+pub trait WithPassthrough {
+    /// Enable or disable passthrough mode
+    fn set_passthrough(&mut self, enabled: bool);
+    
+    /// Check if passthrough is enabled
+    fn has_passthrough(&self) -> bool;
+    
+    /// Get a mutable reference to the current passthrough writer
+    fn get_passthrough_writer_mut(&mut self) -> Option<&mut dyn ProgressWriter>;
+    
+    /// Set a custom passthrough writer
+    fn set_passthrough_writer(&mut self, writer: Box<dyn ProgressWriter + Send + 'static>) -> Result<(), ModeCreationError>;
 }
 
 /// Core capabilities for display modes.
@@ -673,11 +689,23 @@ impl WindowBase {
 ///
 /// SingleLineBase provides a foundation for modes that display a single
 /// line of output, with optional passthrough to stdout/stderr.
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct SingleLineBase {
     base: BaseConfig,
     current_line: String,
     passthrough: bool,
+    passthrough_writer: Option<Box<dyn ProgressWriter + Send + 'static>>,
+}
+
+impl Clone for SingleLineBase {
+    fn clone(&self) -> Self {
+        Self {
+            base: self.base.clone(),
+            current_line: self.current_line.clone(),
+            passthrough: self.passthrough,
+            passthrough_writer: None, // We can't clone the writer, so we set it to None
+        }
+    }
 }
 
 impl SingleLineBase {
@@ -695,6 +723,7 @@ impl SingleLineBase {
             base: BaseConfig::new(total_jobs),
             current_line: String::new(),
             passthrough,
+            passthrough_writer: None,
         }
     }
     
@@ -720,6 +749,25 @@ impl SingleLineBase {
     /// true if passthrough is enabled, false otherwise
     pub fn has_passthrough(&self) -> bool {
         self.passthrough
+    }
+}
+
+impl WithPassthrough for SingleLineBase {
+    fn set_passthrough(&mut self, enabled: bool) {
+        self.passthrough = enabled;
+    }
+    
+    fn has_passthrough(&self) -> bool {
+        self.passthrough
+    }
+    
+    fn get_passthrough_writer_mut(&mut self) -> Option<&mut dyn ProgressWriter> {
+        self.passthrough_writer.as_mut().map(|w| w.as_mut() as &mut dyn ProgressWriter)
+    }
+    
+    fn set_passthrough_writer(&mut self, writer: Box<dyn ProgressWriter + Send + 'static>) -> Result<(), ModeCreationError> {
+        self.passthrough_writer = Some(writer);
+        Ok(())
     }
 }
 
@@ -1302,7 +1350,7 @@ mod tests {
 
     #[test]
     fn test_window_with_title_capabilities() {
-        let mut mode = WindowWithTitle::new(10, 5, "Test Title".to_string()).unwrap();
+        let mode = WindowWithTitle::new(10, 5, "Test Title".to_string()).unwrap();
         let mut config = Config::from(Box::new(mode) as Box<dyn ThreadConfig>);
 
         // Test title capability
@@ -1361,7 +1409,7 @@ mod tests {
 
     #[test]
     fn test_window_capabilities() {
-        let mut mode = Window::new(10, 5).unwrap();
+        let mode = Window::new(10, 5).unwrap();
         let mut config = Config::from(Box::new(mode) as Box<dyn ThreadConfig>);
 
         // Test title capability (should not be supported)
@@ -1416,7 +1464,7 @@ mod tests {
     #[test]
     fn test_limited_capabilities() {
         let mode = Limited::new(10);
-        let mut config = Config::from(Box::new(mode) as Box<dyn ThreadConfig>);
+        let config = Config::from(Box::new(mode) as Box<dyn ThreadConfig>);
 
         // Test that no window capabilities are supported
         {
@@ -1438,7 +1486,7 @@ mod tests {
 
     #[test]
     fn test_capability_conversion() {
-        let mut mode = WindowWithTitle::new(10, 5, "Test".to_string()).unwrap();
+        let mode = WindowWithTitle::new(10, 5, "Test".to_string()).unwrap();
         let mut config = Config::from(Box::new(mode) as Box<dyn ThreadConfig>);
 
         // Test successful conversions
