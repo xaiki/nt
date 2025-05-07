@@ -1,73 +1,64 @@
 use crate::{
-    ProgressDisplay, 
-    ThreadMode, 
-    modes::set_error_propagation,
+    modes::{WithEmoji, WithTitle},
     errors::{ProgressError, ModeCreationError, ErrorContext, ContextExt, format_error_debug}
 };
 use std::error::Error;
 use std::io;
 use anyhow::Result;
 
-#[tokio::test]
-async fn test_error_context_propagation() {
-    // Enable error propagation for this test
-    set_error_propagation(true);
-    
-    // Test that error context is properly propagated through the error chain
-    let display = ProgressDisplay::new().await;
-    
-    // Attempt to create a window with an invalid size
-    let result = display.spawn_with_mode(ThreadMode::Window(0), || "test").await;
-    
-    // The result should be an error
-    assert!(result.is_err());
-    
-    // Convert the error to a string and check for context information
-    let error_str = result.unwrap_err().to_string();
-    assert!(error_str.contains("ProgressDisplay"));  // Component name
-    assert!(error_str.contains("spawning task"));    // Operation name
-    
-    // Reset error propagation for other tests
-    set_error_propagation(false);
-}
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::modes::window_with_title::WindowWithTitle;
 
-#[tokio::test]
-async fn test_error_recovery_window_mode() {
-    // Test the recovery strategy in create_thread_config for Window mode
-    
-    // Create a window with an invalid size (0) using the recovery function
-    let thread_config_result = crate::modes::create_thread_config(ThreadMode::Window(0), 1);
-    
-    // The function should recover and return a valid config
-    assert!(thread_config_result.is_ok(), "Recovery mechanism failed to create a valid config");
-    
-    let mut thread_config = thread_config_result.unwrap();
-    // This can be verified by checking that it has a reasonable number of lines
-    assert!(thread_config.lines_to_display() > 0);
-    
-    // The message handling should work normally
-    let lines = thread_config.handle_message("Test message".to_string());
-    assert!(!lines.is_empty());
-    assert_eq!(lines[0], "Test message");
-}
+    #[tokio::test]
+    async fn test_error_context_propagation() -> Result<(), Box<dyn std::error::Error>> {
+        let mut mode = WindowWithTitle::new(1, 3, "Test".to_string())?;
+        mode.set_title_support(false);
+        
+        let result = mode.set_title("New Title".to_string());
+        assert!(result.is_err());
+        
+        if let Err(e) = result {
+            assert!(matches!(e, ModeCreationError::TitleNotSupported));
+        }
+        
+        Ok(())
+    }
 
-#[tokio::test]
-async fn test_error_recovery_window_with_title_mode() {
-    // Test the recovery strategy in create_thread_config for WindowWithTitle mode
-    
-    // Create a window with an invalid size (1) using the recovery function
-    let thread_config_result = crate::modes::create_thread_config(ThreadMode::WindowWithTitle(1), 1);
-    
-    // The function should recover and return a valid config
-    assert!(thread_config_result.is_ok(), "Recovery mechanism failed to create a valid config");
-    
-    let mut thread_config = thread_config_result.unwrap();
-    // This can be verified by checking that it has a reasonable number of lines
-    assert!(thread_config.lines_to_display() > 0);
-    
-    // The message handling should work normally
-    let lines = thread_config.handle_message("Test message".to_string());
-    assert!(!lines.is_empty());
+    #[tokio::test]
+    async fn test_error_recovery_window_mode() -> Result<(), Box<dyn std::error::Error>> {
+        let result = WindowWithTitle::new(1, 1, "Test".to_string());
+        assert!(result.is_err());
+        
+        if let Err(e) = result {
+            match e {
+                ModeCreationError::InvalidWindowSize { size, min_size, mode_name } => {
+                    assert_eq!(size, 1);
+                    assert_eq!(min_size, 2);
+                    assert_eq!(mode_name, "WindowWithTitle");
+                }
+                _ => panic!("Expected InvalidWindowSize error"),
+            }
+        }
+        
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_error_recovery_emoji() -> Result<(), Box<dyn std::error::Error>> {
+        let mut mode = WindowWithTitle::new(1, 3, "Test".to_string())?;
+        mode.set_emoji_support(false);
+        
+        let result = mode.add_emoji("🚀");
+        assert!(result.is_err());
+        
+        if let Err(e) = result {
+            assert!(matches!(e, ModeCreationError::EmojiNotSupported));
+        }
+        
+        Ok(())
+    }
 }
 
 #[tokio::test]

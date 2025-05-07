@@ -57,31 +57,6 @@ impl WindowWithTitle {
         })
     }
     
-    /// Set or update the title of the window.
-    ///
-    /// This method allows changing the title of the window after it has been created.
-    /// If no title has been set yet, this will set the initial title.
-    ///
-    /// # Parameters
-    /// * `title` - The new title to set
-    ///
-    /// # Errors
-    /// Returns a ModeCreationError if the config does not support titles
-    pub fn set_title(&mut self, title: String) -> Result<(), ModeCreationError> {
-        if !self.supports_title {
-            return Err(ModeCreationError::TitleNotSupported);
-        }
-        
-        // Ensure title is not empty
-        self.title = if title.is_empty() {
-            "Progress".to_string()
-        } else {
-            title
-        };
-        self.title_width = 0; // Force recalculation of title width
-        Ok(())
-    }
-    
     /// Render the title with emojis if any are present.
     ///
     /// This method formats the title with any emoji characters that have been
@@ -122,56 +97,6 @@ impl WindowWithTitle {
         title
     }
     
-    pub fn handle_message(&mut self, message: String) -> Vec<String> {
-        // Add message to window base
-        self.window_base.add_message(message);
-        
-        // Return the result of get_lines instead of recreating the logic
-        self.get_lines()
-    }
-    
-    pub fn render(&self, width: usize) -> String {
-        let mut output = String::new();
-        
-        // Add title line
-        output.push_str(&self.render_title(width));
-        output.push('\n');
-        
-        // Add content lines
-        output.push_str(&self.window_base.get_lines().join("\n"));
-        
-        output
-    }
-
-    /// Internal method to add emoji that returns Result
-    fn add_emoji_internal(&mut self, emoji: &str) -> Result<(), ModeCreationError> {
-        if !self.supports_emoji {
-            return Err(ModeCreationError::EmojiNotSupported);
-        }
-        
-        if emoji.trim().is_empty() {
-            return Err(ModeCreationError::Implementation("Emoji cannot be empty".to_string()));
-        }
-        
-        // Check if emoji is already present
-        if !self.emojis.contains(&emoji.to_string()) {
-            self.emojis.push(emoji.to_string());
-        }
-        Ok(())
-    }
-
-    /// Internal method to reset title that returns Result
-    fn reset_with_title_internal(&mut self, title: String) -> Result<(), ModeCreationError> {
-        if !self.supports_title {
-            return Err(ModeCreationError::TitleNotSupported);
-        }
-        if !self.supports_emoji {
-            return Err(ModeCreationError::EmojiNotSupported);
-        }
-        self.emojis.clear();
-        self.set_title(title)
-    }
-
     /// Enable or disable title support.
     ///
     /// # Parameters
@@ -204,7 +129,11 @@ impl WindowWithTitle {
         self.supports_emoji
     }
 
-    fn get_lines(&self) -> Vec<String> {
+    /// Get the current lines to display, including the title.
+    ///
+    /// # Returns
+    /// A vector of strings with the current lines to display
+    pub fn get_lines(&self) -> Vec<String> {
         // Get lines from window base
         let mut lines = self.window_base.get_lines();
         
@@ -212,6 +141,34 @@ impl WindowWithTitle {
         lines.insert(0, self.render_title(80));
         
         lines
+    }
+    
+    /// Handle a new message.
+    ///
+    /// # Parameters
+    /// * `message` - The message to handle
+    ///
+    /// # Returns
+    /// A vector of strings with the updated lines to display
+    pub fn handle_message(&mut self, message: String) -> Vec<String> {
+        // Add message to window base
+        self.window_base.add_message(message);
+        
+        // Return the current lines
+        self.get_lines()
+    }
+    
+    pub fn render(&self, width: usize) -> String {
+        let mut output = String::new();
+        
+        // Add title line
+        output.push_str(&self.render_title(width));
+        output.push('\n');
+        
+        // Add content lines
+        output.push_str(&self.window_base.get_lines().join("\n"));
+        
+        output
     }
 }
 
@@ -231,12 +188,12 @@ impl ThreadConfig for WindowWithTitle {
     }
 
     fn handle_message(&mut self, message: String) -> Vec<String> {
-        // Use the implementation from the struct
+        // Delegate to the struct method
         WindowWithTitle::handle_message(self, message)
     }
 
     fn get_lines(&self) -> Vec<String> {
-        // Use the implementation from the struct
+        // Delegate to the struct method
         WindowWithTitle::get_lines(self)
     }
 
@@ -307,8 +264,19 @@ impl WithCustomSize for WindowWithTitle {
 
 impl WithEmoji for WindowWithTitle {
     fn add_emoji(&mut self, emoji: &str) -> Result<(), ModeCreationError> {
-        // Use the internal implementation which already performs the proper checks
-        self.add_emoji_internal(emoji)
+        if !self.supports_emoji {
+            return Err(ModeCreationError::EmojiNotSupported);
+        }
+        
+        if emoji.trim().is_empty() {
+            return Err(ModeCreationError::Implementation("Emoji cannot be empty".to_string()));
+        }
+        
+        // Check if emoji is already present
+        if !self.emojis.contains(&emoji.to_string()) {
+            self.emojis.push(emoji.to_string());
+        }
+        Ok(())
     }
     
     fn get_emojis(&self) -> Vec<String> {

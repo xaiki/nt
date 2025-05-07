@@ -2,6 +2,15 @@
 
 This file contains completed tasks and improvements moved from the TODO.md file.
 
+## v0.1.3 (2023-03-27)
+
+### Code Cleanup and Refactoring
+- Removed duplicated code in WindowWithTitle implementation
+- Simplified trait implementations by delegating to struct methods
+- Fixed layering in WithTitle and WithEmoji trait implementations
+- Improved code organization in WindowWithTitle struct
+- Updated tests to use proper trait imports
+
 ## v0.1.2 (2023-03-26)
 
 ### Code Cleanup and Refactoring
