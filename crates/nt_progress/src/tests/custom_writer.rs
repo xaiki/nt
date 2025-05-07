@@ -689,4 +689,91 @@ mod tests {
             }).await.unwrap();
         }
     }
+
+    #[tokio::test]
+    async fn test_task_handle_passthrough() {
+        use tokio::sync::mpsc;
+        use crate::modes::{Config, ThreadMode};
+        use crate::thread::TaskHandle;
+        use crate::io::ProgressWriter;
+        
+        // Create a message channel for task handles
+        let (message_tx, _message_rx) = mpsc::channel(100);
+        
+        // Create a task handle with Limited mode (which supports passthrough)
+        let config = Config::new(ThreadMode::Limited, 1).unwrap();
+        let mut task_handle = TaskHandle::new(1, config, message_tx);
+        
+        // Test passthrough availability
+        let passthrough_available = task_handle.has_passthrough().await;
+        assert_eq!(passthrough_available, Some(true), "Limited mode should support passthrough");
+        
+        // Test enabling passthrough
+        let result = task_handle.set_passthrough(true).await;
+        assert!(result.is_ok(), "Should be able to enable passthrough");
+        
+        // Create a custom passthrough writer
+        struct CountingWriter {
+            lines: std::sync::atomic::AtomicUsize,
+        }
+        
+        impl std::fmt::Debug for CountingWriter {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                f.debug_struct("CountingWriter")
+                    .field("lines", &self.lines.load(std::sync::atomic::Ordering::SeqCst))
+                    .finish()
+            }
+        }
+        
+        impl std::io::Write for CountingWriter {
+            fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+                self.lines.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                Ok(buf.len())
+            }
+            
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+        
+        impl ProgressWriter for CountingWriter {
+            fn write_line(&mut self, _line: &str) -> anyhow::Result<()> {
+                self.lines.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                Ok(())
+            }
+            
+            fn flush(&mut self) -> anyhow::Result<()> {
+                Ok(())
+            }
+            
+            fn is_ready(&self) -> bool {
+                true
+            }
+        }
+        
+        // Create our counting writer
+        let counting_writer = CountingWriter {
+            lines: std::sync::atomic::AtomicUsize::new(0),
+        };
+        
+        // Set it as the passthrough writer
+        let result = task_handle.set_passthrough_writer(Box::new(counting_writer)).await;
+        assert!(result.is_ok(), "Should be able to set custom passthrough writer");
+        
+        // Write a line - this should trigger the passthrough
+        let _ = task_handle.write_line("Test line for passthrough").await;
+        
+        // Disable passthrough
+        let result = task_handle.set_passthrough(false).await;
+        assert!(result.is_ok(), "Should be able to disable passthrough");
+        
+        // Test filter functionality
+        let result = task_handle.set_passthrough_filter(|line| line.contains("ERROR")).await;
+        assert!(result.is_ok(), "Should be able to set a passthrough filter");
+        
+        // Write some lines with the filter
+        let _ = task_handle.write_line("Normal log message").await;
+        let _ = task_handle.write_line("This is an ERROR message").await;
+        let _ = task_handle.write_line("Another normal message").await;
+    }
 } 

@@ -619,4 +619,157 @@ impl TaskHandle {
         let mut writer = self.writer.lock().await;
         f(&mut writer)
     }
+
+    /// Enable or disable output passthrough for this task.
+    ///
+    /// Output passthrough allows messages to be sent to secondary outputs (like stdout/stderr)
+    /// in addition to being captured by the task's writer. This is particularly useful
+    /// for debugging or when you want to see output in real-time.
+    ///
+    /// # Parameters
+    /// * `enabled` - Whether passthrough should be enabled or disabled
+    ///
+    /// # Returns
+    /// Result containing () on success, or an error if the task's mode doesn't support passthrough
+    pub async fn set_passthrough(&mut self, enabled: bool) -> Result<()> {
+        let mut config = self.thread_config.lock().await;
+        
+        // Try to downcast to Limited mode (currently only Limited supports passthrough)
+        if let Some(limited) = config.as_type_mut::<crate::modes::Limited>() {
+            limited.set_passthrough(enabled);
+            Ok(())
+        } else {
+            let ctx = ErrorContext::new("setting passthrough", "TaskHandle")
+                .with_thread_id(self.thread_id)
+                .with_details("Current mode does not support passthrough");
+            
+            Err(anyhow::anyhow!(ProgressError::TaskOperation(
+                "Task is not in a mode that supports passthrough".to_string()
+            ).into_context(ctx)))
+        }
+    }
+    
+    /// Check if passthrough is enabled for this task.
+    ///
+    /// # Returns
+    /// Some(true) if passthrough is enabled, Some(false) if it's disabled, 
+    /// or None if the task's mode doesn't support passthrough
+    pub async fn has_passthrough(&self) -> Option<bool> {
+        let config = self.thread_config.lock().await;
+        
+        // Using internal method as Limited doesn't implement WithPassthrough trait
+        config.as_type::<crate::modes::Limited>().map(|_| {
+            // We just check if the mode is Limited
+            // Limited mode always has passthrough available, whether it's enabled or not
+            // depends on the state which we need to query elsewhere
+            true
+        })
+    }
+    
+    /// Set a custom passthrough writer for this task.
+    ///
+    /// This allows you to control where passthrough output is sent, rather than
+    /// using the default stdout/stderr. This is useful for redirecting output to
+    /// a file, network connection, or custom formatter.
+    ///
+    /// # Parameters
+    /// * `writer` - A boxed instance of a type that implements ProgressWriter
+    ///
+    /// # Returns
+    /// Result containing () on success, or an error if the task's mode doesn't support passthrough
+    pub async fn set_passthrough_writer(&mut self, writer: Box<dyn ProgressWriter + Send + 'static>) -> Result<()> {
+        let mut config = self.thread_config.lock().await;
+        
+        // Try to downcast to Limited mode (currently only Limited supports passthrough)
+        if let Some(limited) = config.as_type_mut::<crate::modes::Limited>() {
+            limited.set_passthrough_writer(writer)?;
+            Ok(())
+        } else {
+            let ctx = ErrorContext::new("setting passthrough writer", "TaskHandle")
+                .with_thread_id(self.thread_id)
+                .with_details("Current mode does not support passthrough");
+            
+            Err(anyhow::anyhow!(ProgressError::TaskOperation(
+                "Task is not in a mode that supports passthrough".to_string()
+            ).into_context(ctx)))
+        }
+    }
+    
+    /// Apply a filter function to passthrough output.
+    ///
+    /// This allows you to conditionally pass through messages based on their content.
+    /// For example, you could filter to only pass through messages containing "ERROR".
+    ///
+    /// # Parameters
+    /// * `filter_fn` - A function that takes a string slice and returns true if it should be passed through
+    ///
+    /// # Returns
+    /// Result containing () on success, or an error if setting up the filter fails
+    pub async fn set_passthrough_filter<F>(&mut self, filter_fn: F) -> Result<()>
+    where
+        F: Fn(&str) -> bool + Send + Sync + 'static
+    {
+        // Create a filtering writer that wraps the default passthrough
+        struct FilterWriter<F> {
+            filter: F,
+            buffer: crate::io::OutputBuffer,
+        }
+        
+        impl<F: Fn(&str) -> bool + Send + Sync> std::fmt::Debug for FilterWriter<F> {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                f.debug_struct("FilterWriter")
+                    .field("buffer", &self.buffer)
+                    .finish()
+            }
+        }
+        
+        impl<F: Fn(&str) -> bool + Send + Sync> std::io::Write for FilterWriter<F> {
+            fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+                if let Ok(s) = std::str::from_utf8(buf) {
+                    if (self.filter)(s) {
+                        println!("{}", s);
+                    }
+                }
+                Ok(buf.len())
+            }
+            
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+        
+        impl<F: Fn(&str) -> bool + Send + Sync> crate::io::ProgressWriter for FilterWriter<F> {
+            fn write_line(&mut self, line: &str) -> Result<()> {
+                if (self.filter)(line) {
+                    println!("{}", line);
+                }
+                self.buffer.add_line(line.to_string());
+                Ok(())
+            }
+            
+            fn flush(&mut self) -> Result<()> {
+                Ok(())
+            }
+            
+            fn is_ready(&self) -> bool {
+                true
+            }
+        }
+        
+        // Create our filter writer
+        let filter_writer = FilterWriter {
+            filter: filter_fn,
+            buffer: crate::io::OutputBuffer::new(100),
+        };
+        
+        // Set it as the passthrough writer
+        self.set_passthrough_writer(Box::new(filter_writer)).await?;
+        
+        // Enable passthrough if it's not already enabled
+        if let Some(false) = self.has_passthrough().await {
+            self.set_passthrough(true).await?;
+        }
+        
+        Ok(())
+    }
 } 

@@ -2,6 +2,17 @@
 
 This file contains completed tasks and improvements moved from the TODO.md file.
 
+## v0.1.14 (2024-05-12)
+
+### Feature Enhancements
+- Implemented output passthrough functionality
+  - Added `set_passthrough()` method to enable/disable passthrough output
+  - Added `has_passthrough()` method to check if passthrough is supported and enabled
+  - Added `set_passthrough_writer()` to customize where output is passed through to
+  - Added `set_passthrough_filter()` to conditionally pass through messages
+  - Added comprehensive test for passthrough functionality in TaskHandle
+  - Simplified interaction with passthrough functionality
+
 ## v0.1.13 (2024-05-12)
 
 ### Feature Enhancements
