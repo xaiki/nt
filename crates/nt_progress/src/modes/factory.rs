@@ -60,27 +60,63 @@ impl ModeRegistry {
         self.creators.insert(name, Box::new(creator));
     }
     
-    /// Create a ThreadConfig instance using the specified mode and parameters
-    pub fn create(&self, mode_name: &str, total_jobs: usize, params: &[usize]) 
-        -> Result<Box<dyn ThreadConfig>, ModeCreationError> 
-    {
+    /// Validate parameters before mode creation
+    fn validate_params(&self, mode_name: &str, total_jobs: usize, params: &[usize]) -> Result<(), ModeCreationError> {
         if let Some(creator) = self.creators.get(mode_name) {
+            // Validate total_jobs
+            if total_jobs == 0 {
+                return Err(ModeCreationError::ValidationError {
+                    mode_name: mode_name.to_string(),
+                    rule: "total_jobs".to_string(),
+                    value: "0".to_string(),
+                    reason: Some("Total jobs must be greater than 0".to_string()),
+                });
+            }
+
+            // Validate parameter count
             if params.len() < creator.min_params() {
                 return Err(ModeCreationError::MissingParameter {
                     param_name: format!("parameter {}", creator.min_params()),
                     mode_name: mode_name.to_string(),
+                    reason: Some(format!("Mode '{}' requires {} parameters", mode_name, creator.min_params())),
                 });
             }
-            
+
+            // Validate window sizes
+            if mode_name == "window" || mode_name == "window_with_title" {
+                let min_size = if mode_name == "window" { 1 } else { 2 };
+                if params[0] < min_size {
+                    return Err(ModeCreationError::InvalidWindowSize {
+                        size: params[0],
+                        min_size,
+                        mode_name: mode_name.to_string(),
+                        reason: Some(format!("{} mode requires at least {} lines", mode_name, min_size)),
+                    });
+                }
+            }
+        }
+        Ok(())
+    }
+    
+    /// Create a ThreadConfig instance using the specified mode and parameters
+    pub fn create(&self, mode_name: &str, total_jobs: usize, params: &[usize]) 
+        -> Result<Box<dyn ThreadConfig>, ModeCreationError> 
+    {
+        // First validate the parameters
+        self.validate_params(mode_name, total_jobs, params)?;
+
+        if let Some(creator) = self.creators.get(mode_name) {
             let result = creator.create(total_jobs, params);
             match result {
                 Ok(config) => Ok(config),
                 Err(err) => Err(err), // Since the error type is already ModeCreationError
             }
         } else {
-            Err(ModeCreationError::Implementation(
-                format!("Unknown mode: {}", mode_name)
-            ))
+            let available_modes: Vec<String> = self.creators.keys().cloned().collect();
+            Err(ModeCreationError::ModeNotRegistered {
+                mode_name: mode_name.to_string(),
+                available_modes,
+            })
         }
     }
     
@@ -142,6 +178,14 @@ pub struct WindowCreator;
 impl ModeCreator for WindowCreator {
     fn create(&self, total_jobs: usize, params: &[usize]) -> Result<Box<dyn ThreadConfig>, ModeCreationError> {
         let max_lines = params[0];
+        if max_lines < 1 {
+            return Err(ModeCreationError::InvalidWindowSize {
+                size: max_lines,
+                min_size: 1,
+                mode_name: "Window".to_string(),
+                reason: Some("Window mode requires at least 1 line to display content".to_string()),
+            });
+        }
         Window::new(total_jobs, max_lines).map(|w| Box::new(w) as Box<dyn ThreadConfig>)
     }
     
@@ -182,6 +226,14 @@ pub struct WindowWithTitleCreator;
 impl ModeCreator for WindowWithTitleCreator {
     fn create(&self, total_jobs: usize, params: &[usize]) -> Result<Box<dyn ThreadConfig>, ModeCreationError> {
         let max_lines = params[0];
+        if max_lines < 2 {
+            return Err(ModeCreationError::InvalidWindowSize {
+                size: max_lines,
+                min_size: 2,
+                mode_name: "WindowWithTitle".to_string(),
+                reason: Some("WindowWithTitle requires at least 2 lines: 1 for title and 1 for content".to_string()),
+            });
+        }
         let mut mode = WindowWithTitle::new(total_jobs, max_lines, "Progress".to_string())?;
         
         // Explicitly enable emoji and title support
@@ -390,9 +442,11 @@ mod tests {
         
         // Verify the error type
         match result {
-            Err(ModeCreationError::MissingParameter { param_name, mode_name }) => {
+            Err(ModeCreationError::MissingParameter { param_name, mode_name, reason }) => {
                 assert_eq!(mode_name, "window");
                 assert_eq!(param_name, "parameter 1");
+                assert!(reason.is_some());
+                assert!(reason.unwrap().contains("requires"));
             },
             _ => panic!("Unexpected error type"),
         }
@@ -546,5 +600,75 @@ mod tests {
         assert!(registry.creators.contains_key("window"));
         assert!(!registry.creators.contains_key("capturing"));
         assert!(!registry.creators.contains_key("window_with_title"));
+    }
+
+    #[test]
+    fn test_validation_errors() {
+        let mut registry = ModeRegistry::new();
+        registry.register(LimitedCreator);
+        registry.register(WindowCreator);
+        registry.register(WindowWithTitleCreator);
+        
+        // Test zero total_jobs
+        let result = registry.create("limited", 0, &[]);
+        assert!(result.is_err());
+        match result {
+            Err(ModeCreationError::ValidationError { mode_name, rule, value, reason }) => {
+                assert_eq!(mode_name, "limited");
+                assert_eq!(rule, "total_jobs");
+                assert_eq!(value, "0");
+                assert!(reason.is_some());
+                assert!(reason.unwrap().contains("must be greater than 0"));
+            },
+            _ => panic!("Expected ValidationError"),
+        }
+        
+        // Test invalid window size
+        let result = registry.create("window", 1, &[0]);
+        assert!(result.is_err());
+        match result {
+            Err(ModeCreationError::InvalidWindowSize { size, min_size, mode_name, reason }) => {
+                assert_eq!(size, 0);
+                assert_eq!(min_size, 1);
+                assert_eq!(mode_name, "window");
+                assert!(reason.is_some());
+                assert!(reason.unwrap().contains("requires at least 1 lines"));
+            },
+            _ => panic!("Expected InvalidWindowSize error"),
+        }
+        
+        // Test invalid window with title size
+        let result = registry.create("window_with_title", 1, &[1]);
+        assert!(result.is_err());
+        match result {
+            Err(ModeCreationError::InvalidWindowSize { size, min_size, mode_name, reason }) => {
+                assert_eq!(size, 1);
+                assert_eq!(min_size, 2);
+                assert_eq!(mode_name, "window_with_title");
+                assert!(reason.is_some());
+                assert!(reason.unwrap().contains("requires at least 2 lines"));
+            },
+            _ => panic!("Expected InvalidWindowSize error"),
+        }
+    }
+    
+    #[test]
+    fn test_validation_success() {
+        let mut registry = ModeRegistry::new();
+        registry.register(LimitedCreator);
+        registry.register(WindowCreator);
+        registry.register(WindowWithTitleCreator);
+        
+        // Test valid limited mode
+        let result = registry.create("limited", 1, &[]);
+        assert!(result.is_ok());
+        
+        // Test valid window mode
+        let result = registry.create("window", 1, &[3]);
+        assert!(result.is_ok());
+        
+        // Test valid window with title mode
+        let result = registry.create("window_with_title", 1, &[3]);
+        assert!(result.is_ok());
     }
 } 

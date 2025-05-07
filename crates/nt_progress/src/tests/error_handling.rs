@@ -20,7 +20,14 @@ mod tests {
         assert!(result.is_err());
         
         if let Err(e) = result {
-            assert!(matches!(e, ModeCreationError::TitleNotSupported));
+            match e {
+                ModeCreationError::TitleNotSupported { mode_name, reason } => {
+                    assert_eq!(mode_name, "WindowWithTitle");
+                    assert!(reason.is_some());
+                    assert!(reason.unwrap().contains("Title support is disabled for this mode"));
+                }
+                _ => panic!("Expected TitleNotSupported error"),
+            }
         }
         
         Ok(())
@@ -33,10 +40,12 @@ mod tests {
         
         if let Err(e) = result {
             match e {
-                ModeCreationError::InvalidWindowSize { size, min_size, mode_name } => {
+                ModeCreationError::InvalidWindowSize { size, min_size, mode_name, reason } => {
                     assert_eq!(size, 1);
                     assert_eq!(min_size, 2);
                     assert_eq!(mode_name, "WindowWithTitle");
+                    assert!(reason.is_some());
+                    assert!(reason.unwrap().contains("WindowWithTitle requires at least 2 lines: 1 for title and 1 for content"));
                 }
                 _ => panic!("Expected InvalidWindowSize error"),
             }
@@ -54,7 +63,14 @@ mod tests {
         assert!(result.is_err());
         
         if let Err(e) = result {
-            assert!(matches!(e, ModeCreationError::EmojiNotSupported));
+            match e {
+                ModeCreationError::EmojiNotSupported { mode_name, reason } => {
+                    assert_eq!(mode_name, "WindowWithTitle");
+                    assert!(reason.is_some());
+                    assert!(reason.unwrap().contains("Emoji support is disabled for this mode"));
+                }
+                _ => panic!("Expected EmojiNotSupported error"),
+            }
         }
         
         Ok(())
@@ -70,6 +86,7 @@ async fn test_error_hierarchy() {
         size: 0,
         min_size: 1,
         mode_name: "TestMode".to_string(),
+        reason: Some("Test reason".to_string()),
     };
     
     // Convert to ProgressError

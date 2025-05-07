@@ -37,6 +37,7 @@ impl WindowWithTitle {
                 size: max_lines,
                 min_size: 2,
                 mode_name: "WindowWithTitle".to_string(),
+                reason: Some("WindowWithTitle requires at least 2 lines: 1 for title and 1 for content".to_string()),
             });
         }
         
@@ -192,16 +193,17 @@ impl ThreadConfig for WindowWithTitle {
 impl WithTitle for WindowWithTitle {
     fn set_title(&mut self, title: String) -> Result<(), ModeCreationError> {
         if !self.supports_title {
-            return Err(ModeCreationError::TitleNotSupported);
+            return Err(ModeCreationError::TitleNotSupported {
+                mode_name: "WindowWithTitle".to_string(),
+                reason: Some("Title support is disabled for this mode".to_string()),
+            });
         }
         
-        // Ensure title is not empty
         self.title = if title.is_empty() {
             "Progress".to_string()
         } else {
             title
         };
-        self.title_width = 0; // Force recalculation of title width
         Ok(())
     }
     
@@ -217,6 +219,7 @@ impl WithCustomSize for WindowWithTitle {
                 size: max_lines,
                 min_size: 2,
                 mode_name: "WindowWithTitle".to_string(),
+                reason: Some("WindowWithTitle requires at least 2 lines: 1 for title and 1 for content".to_string()),
             });
         }
         
@@ -244,7 +247,10 @@ impl WithCustomSize for WindowWithTitle {
 impl WithEmoji for WindowWithTitle {
     fn add_emoji(&mut self, emoji: &str) -> Result<(), ModeCreationError> {
         if !self.supports_emoji {
-            return Err(ModeCreationError::EmojiNotSupported);
+            return Err(ModeCreationError::EmojiNotSupported {
+                mode_name: "WindowWithTitle".to_string(),
+                reason: Some("Emoji support is disabled for this mode".to_string()),
+            });
         }
         
         if emoji.trim().is_empty() {
@@ -270,10 +276,16 @@ impl WithEmoji for WindowWithTitle {
 impl WithTitleAndEmoji for WindowWithTitle {
     fn reset_with_title(&mut self, title: String) -> Result<(), ModeCreationError> {
         if !self.supports_title {
-            return Err(ModeCreationError::TitleNotSupported);
+            return Err(ModeCreationError::TitleNotSupported {
+                mode_name: "WindowWithTitle".to_string(),
+                reason: Some("Title support is disabled for this mode".to_string()),
+            });
         }
         if !self.supports_emoji {
-            return Err(ModeCreationError::EmojiNotSupported);
+            return Err(ModeCreationError::EmojiNotSupported {
+                mode_name: "WindowWithTitle".to_string(),
+                reason: Some("Emoji support is disabled for this mode".to_string()),
+            });
         }
         self.emojis.clear();
         self.set_title(title)

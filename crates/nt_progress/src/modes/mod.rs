@@ -488,7 +488,8 @@ impl WindowBase {
             return Err(ModeCreationError::InvalidWindowSize {
                 size: max_lines,
                 min_size: 1,
-                mode_name: "WindowBase".to_string(),
+                mode_name: "Window".to_string(),
+                reason: Some("Window mode requires at least 1 line to display content".to_string()),
             });
         }
         

@@ -210,6 +210,8 @@ pub enum ModeCreationError {
         min_size: usize,
         /// The mode that was being created
         mode_name: String,
+        /// Optional reason for the failure
+        reason: Option<String>,
     },
     /// A required window parameter is missing (e.g., title)
     MissingParameter {
@@ -217,33 +219,122 @@ pub enum ModeCreationError {
         param_name: String,
         /// The mode that was being created
         mode_name: String,
+        /// Optional reason why the parameter is required
+        reason: Option<String>,
     },
     /// An error occurred in the underlying mode implementation
     Implementation(String),
     /// Operation attempted on a mode that does not support titles
-    TitleNotSupported,
+    TitleNotSupported {
+        /// The mode that was being used
+        mode_name: String,
+        /// Optional reason why titles are not supported
+        reason: Option<String>,
+    },
     /// Operation attempted on a mode that does not support emojis
-    EmojiNotSupported,
+    EmojiNotSupported {
+        /// The mode that was being used
+        mode_name: String,
+        /// Optional reason why emojis are not supported
+        reason: Option<String>,
+    },
+    /// The mode is not registered in the factory
+    ModeNotRegistered {
+        /// The name of the mode that was requested
+        mode_name: String,
+        /// List of available modes
+        available_modes: Vec<String>,
+    },
+    /// The mode is not compatible with the current configuration
+    IncompatibleConfiguration {
+        /// The mode that was being used
+        mode_name: String,
+        /// The configuration that caused the incompatibility
+        config: String,
+        /// Optional reason for the incompatibility
+        reason: Option<String>,
+    },
+    /// The mode requires a feature that is not available
+    FeatureNotAvailable {
+        /// The mode that was being used
+        mode_name: String,
+        /// The feature that is not available
+        feature: String,
+        /// Optional reason why the feature is not available
+        reason: Option<String>,
+    },
+    /// Validation failed before mode creation
+    ValidationError {
+        /// The mode that was being created
+        mode_name: String,
+        /// The validation rule that failed
+        rule: String,
+        /// The value that failed validation
+        value: String,
+        /// Optional reason for the validation failure
+        reason: Option<String>,
+    },
 }
 
 impl fmt::Display for ModeCreationError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            ModeCreationError::InvalidWindowSize { size, min_size, mode_name } => {
-                write!(f, "Invalid window size for {} mode: {} (minimum: {})", mode_name, size, min_size)
+            ModeCreationError::InvalidWindowSize { size, min_size, mode_name, reason } => {
+                write!(f, "Invalid window size for {} mode: {} (minimum: {})", mode_name, size, min_size)?;
+                if let Some(reason) = reason {
+                    write!(f, " - {}", reason)?;
+                }
+                Ok(())
             },
-            ModeCreationError::MissingParameter { param_name, mode_name } => {
-                write!(f, "Missing required parameter '{}' for {} mode", param_name, mode_name)
+            ModeCreationError::MissingParameter { param_name, mode_name, reason } => {
+                write!(f, "Missing required parameter '{}' for {} mode", param_name, mode_name)?;
+                if let Some(reason) = reason {
+                    write!(f, " - {}", reason)?;
+                }
+                Ok(())
             },
             ModeCreationError::Implementation(msg) => {
                 write!(f, "Mode implementation error: {}", msg)
             },
-            ModeCreationError::TitleNotSupported => {
-                write!(f, "Operation attempted on a mode that does not support titles")
+            ModeCreationError::TitleNotSupported { mode_name, reason } => {
+                write!(f, "Operation attempted on {} mode which does not support titles", mode_name)?;
+                if let Some(reason) = reason {
+                    write!(f, " - {}", reason)?;
+                }
+                Ok(())
             },
-            ModeCreationError::EmojiNotSupported => {
-                write!(f, "Operation attempted on a mode that does not support emojis")
-            }
+            ModeCreationError::EmojiNotSupported { mode_name, reason } => {
+                write!(f, "Operation attempted on {} mode which does not support emojis", mode_name)?;
+                if let Some(reason) = reason {
+                    write!(f, " - {}", reason)?;
+                }
+                Ok(())
+            },
+            ModeCreationError::ModeNotRegistered { mode_name, available_modes } => {
+                write!(f, "Mode '{}' is not registered. Available modes: {}", 
+                    mode_name, available_modes.join(", "))
+            },
+            ModeCreationError::IncompatibleConfiguration { mode_name, config, reason } => {
+                write!(f, "Mode '{}' is not compatible with configuration: {}", mode_name, config)?;
+                if let Some(reason) = reason {
+                    write!(f, " - {}", reason)?;
+                }
+                Ok(())
+            },
+            ModeCreationError::FeatureNotAvailable { mode_name, feature, reason } => {
+                write!(f, "Mode '{}' requires feature '{}' which is not available", mode_name, feature)?;
+                if let Some(reason) = reason {
+                    write!(f, " - {}", reason)?;
+                }
+                Ok(())
+            },
+            ModeCreationError::ValidationError { mode_name, rule, value, reason } => {
+                write!(f, "Validation failed for {} mode: rule '{}' failed for value '{}'", mode_name, rule, value)?;
+                if let Some(reason) = reason {
+                    write!(f, " - {}", reason)?;
+                }
+                Ok(())
+            },
         }
     }
 }

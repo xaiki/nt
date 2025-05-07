@@ -2,6 +2,15 @@
 
 This file contains completed tasks and improvements moved from the TODO.md file.
 
+## v0.1.7 (2024-03-28)
+
+### Mode Factory and Dependency Injection
+- Improved mode creation error handling
+  - Added ValidationError variant for pre-creation validation failures
+  - Added validation for total_jobs and window sizes before mode creation
+  - Enhanced error messages with more detailed failure reasons
+  - Added comprehensive tests for validation scenarios
+
 ## v0.1.6 (2024-03-28)
 
 ### Mode Factory and Dependency Injection
