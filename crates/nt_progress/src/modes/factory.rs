@@ -1,10 +1,8 @@
 use std::collections::HashMap;
 use super::{ThreadConfig, ThreadMode, Limited, Capturing, Window, WindowWithTitle};
 use crate::errors::ModeCreationError;
-use std::sync::Once;
-use std::sync::Mutex;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use std::fmt::Debug;
 
 // Flag to control error propagation behavior - false means recover with fallbacks (default),
@@ -226,82 +224,6 @@ impl ModeCreator for WindowWithTitleCreator {
     }
 }
 
-// Singleton registry instance
-static REGISTRY_INIT: Once = Once::new();
-static mut REGISTRY: Option<Arc<Mutex<ModeRegistry>>> = None;
-
-/// Get the global ModeRegistry instance.
-/// 
-/// This function initializes the registry with the standard mode creators on first call.
-pub fn get_registry() -> Arc<Mutex<ModeRegistry>> {
-    unsafe {
-        REGISTRY_INIT.call_once(|| {
-            let mut registry = ModeRegistry::new();
-            
-            // Register standard creators
-            registry.register(LimitedCreator);
-            registry.register(CapturingCreator);
-            registry.register(WindowCreator);
-            registry.register(WindowWithTitleCreator);
-            
-            REGISTRY = Some(Arc::new(Mutex::new(registry)));
-        });
-        
-        REGISTRY.clone().unwrap()
-    }
-}
-
-/// Create a ThreadConfig instance from a ThreadMode enum
-pub fn create_thread_config(mode: ThreadMode, total_jobs: usize) -> Result<Box<dyn ThreadConfig>, ModeCreationError> {
-    let registry = get_registry();
-    let registry = registry.lock().unwrap();
-    
-    // If error propagation is enabled, use normal creation
-    if should_propagate_errors() {
-        return registry.create_from_mode(mode, total_jobs);
-    }
-    
-    // Otherwise, try to create with fallback options
-    match mode {
-        ThreadMode::Limited => registry.create("limited", total_jobs, &[]),
-        ThreadMode::Capturing => registry.create("capturing", total_jobs, &[]),
-        ThreadMode::Window(max_lines) => {
-            let result = registry.create("window", total_jobs, &[max_lines]);
-            if result.is_err() {
-                // Try with a reasonable fallback size
-                eprintln!("Warning: Requested window size {} was invalid, using size 3 instead", max_lines);
-                registry.create("window", total_jobs, &[3])
-            } else {
-                result
-            }
-        },
-        ThreadMode::WindowWithTitle(max_lines) => {
-            let result = registry.create("window_with_title", total_jobs, &[max_lines]);
-            if result.is_err() {
-                // Try with a reasonable fallback size
-                eprintln!("Warning: Requested window size {} was invalid, using size 3 instead", max_lines);
-                let fallback = registry.create("window_with_title", total_jobs, &[3]);
-                if fallback.is_err() {
-                    // Try with Window mode as a fallback
-                    eprintln!("Warning: Could not create WindowWithTitle mode, falling back to Window mode");
-                    let window = registry.create("window", total_jobs, &[3]);
-                    if window.is_err() {
-                        // Last resort: fall back to Limited mode
-                        eprintln!("Warning: Could not create any window mode, falling back to Limited mode");
-                        registry.create("limited", total_jobs, &[])
-                    } else {
-                        window
-                    }
-                } else {
-                    fallback
-                }
-            } else {
-                result
-            }
-        }
-    }
-}
-
 /// A factory for creating mode instances
 ///
 /// ModeFactory provides a way to create mode instances without using static
@@ -349,11 +271,54 @@ impl ModeFactory {
     /// # Returns
     /// A Result containing either the created ThreadConfig or an error
     pub fn create_mode(&self, mode: ThreadMode, total_jobs: usize) -> Result<Box<dyn ThreadConfig>, ModeCreationError> {
-        match mode {
-            ThreadMode::Limited => self.registry.create("limited", total_jobs, &[]),
-            ThreadMode::Capturing => self.registry.create("capturing", total_jobs, &[]),
-            ThreadMode::Window(size) => self.registry.create("window", total_jobs, &[size]),
-            ThreadMode::WindowWithTitle(size) => self.registry.create("window_with_title", total_jobs, &[size]),
+        if should_propagate_errors() {
+            // If error propagation is enabled, use direct creation without fallbacks
+            match mode {
+                ThreadMode::Limited => self.registry.create("limited", total_jobs, &[]),
+                ThreadMode::Capturing => self.registry.create("capturing", total_jobs, &[]),
+                ThreadMode::Window(size) => self.registry.create("window", total_jobs, &[size]),
+                ThreadMode::WindowWithTitle(size) => self.registry.create("window_with_title", total_jobs, &[size]),
+            }
+        } else {
+            // With error propagation disabled, provide fallbacks
+            match mode {
+                ThreadMode::Limited => self.registry.create("limited", total_jobs, &[]),
+                ThreadMode::Capturing => self.registry.create("capturing", total_jobs, &[]),
+                ThreadMode::Window(size) => {
+                    let result = self.registry.create("window", total_jobs, &[size]);
+                    if result.is_err() {
+                        // Try with a reasonable fallback size
+                        eprintln!("Warning: Requested window size {} was invalid, using size 3 instead", size);
+                        self.registry.create("window", total_jobs, &[3])
+                    } else {
+                        result
+                    }
+                },
+                ThreadMode::WindowWithTitle(size) => {
+                    let result = self.registry.create("window_with_title", total_jobs, &[size]);
+                    if result.is_err() {
+                        // Try with a reasonable fallback size
+                        eprintln!("Warning: Requested window size {} was invalid, using size 3 instead", size);
+                        let fallback = self.registry.create("window_with_title", total_jobs, &[3]);
+                        if fallback.is_err() {
+                            // Try with Window mode as a fallback
+                            eprintln!("Warning: Could not create WindowWithTitle mode, falling back to Window mode");
+                            let window = self.registry.create("window", total_jobs, &[3]);
+                            if window.is_err() {
+                                // Last resort: fall back to Limited mode
+                                eprintln!("Warning: Could not create any window mode, falling back to Limited mode");
+                                self.registry.create("limited", total_jobs, &[])
+                            } else {
+                                window
+                            }
+                        } else {
+                            fallback
+                        }
+                    } else {
+                        result
+                    }
+                }
+            }
         }
     }
     
@@ -419,10 +384,11 @@ mod tests {
     }
     
     #[test]
-    fn test_global_registry() {
-        let registry = get_registry();
-        let registry = registry.lock().unwrap();
+    fn test_factory_modes() {
+        let factory = ModeFactory::new();
+        let registry = factory.registry();
         
+        // Verify registry contains all standard modes
         assert!(registry.creators.contains_key("limited"));
         assert!(registry.creators.contains_key("capturing"));
         assert!(registry.creators.contains_key("window"));
@@ -434,15 +400,17 @@ mod tests {
         // Test with error propagation enabled
         set_error_propagation(true);
         
+        let factory = ModeFactory::new();
+        
         // Create a window with invalid size
-        let result = create_thread_config(ThreadMode::Window(0), 1);
+        let result = factory.create_mode(ThreadMode::Window(0), 1);
         assert!(result.is_err());
         
         // Test with error propagation disabled
         set_error_propagation(false);
         
         // Should recover with fallback
-        let result = create_thread_config(ThreadMode::Window(0), 1);
+        let result = factory.create_mode(ThreadMode::Window(0), 1);
         assert!(result.is_ok());
         
         // Reset for other tests
@@ -467,34 +435,38 @@ mod tests {
     
     #[test]
     fn test_factory_error_handling() {
+        // First test with error propagation enabled - should error on invalid sizes
+        set_error_propagation(true);
         let factory = ModeFactory::new();
         
         // Test invalid window size
         let result = factory.create_mode(ThreadMode::Window(0), 10);
-        assert!(result.is_err());
+        assert!(result.is_err(), "With error propagation enabled, invalid window size should fail");
         
         // Test invalid window with title size
         let result = factory.create_mode(ThreadMode::WindowWithTitle(0), 10);
-        assert!(result.is_err());
+        assert!(result.is_err(), "With error propagation enabled, invalid window with title size should fail");
         
-        // Test with valid sizes
+        // Now test with error propagation disabled - should use fallbacks
+        set_error_propagation(false);
+        let factory = ModeFactory::new();
+        
+        // Test with invalid sizes - should succeed with fallbacks
+        let result = factory.create_mode(ThreadMode::Window(0), 10);
+        assert!(result.is_ok(), "With error propagation disabled, invalid window size should use fallback");
+        
+        let result = factory.create_mode(ThreadMode::WindowWithTitle(0), 10);
+        assert!(result.is_ok(), "With error propagation disabled, invalid window with title size should use fallback");
+        
+        // Test with valid sizes - always succeeds
         let result = factory.create_mode(ThreadMode::Window(3), 10);
         assert!(result.is_ok());
         
         let result = factory.create_mode(ThreadMode::WindowWithTitle(3), 10);
         assert!(result.is_ok());
-    }
-    
-    #[test]
-    fn test_factory_registry_access() {
-        let factory = ModeFactory::new();
-        let registry = factory.registry();
         
-        // Verify registry contains all standard modes
-        assert!(registry.creators.contains_key("limited"));
-        assert!(registry.creators.contains_key("capturing"));
-        assert!(registry.creators.contains_key("window"));
-        assert!(registry.creators.contains_key("window_with_title"));
+        // Reset for other tests
+        set_error_propagation(false);
     }
     
     #[test]

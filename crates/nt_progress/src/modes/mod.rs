@@ -16,7 +16,7 @@ pub use limited::Limited;
 pub use capturing::Capturing;
 pub use window::Window;
 pub use window_with_title::WindowWithTitle;
-pub use factory::{ModeRegistry, ModeCreator, get_registry, create_thread_config, set_error_propagation};
+pub use factory::{ModeRegistry, ModeCreator, ModeFactory, set_error_propagation};
 
 /// Trait defining the behavior of different display modes.
 ///
@@ -715,7 +715,8 @@ impl Config {
     /// ```
     pub fn new(mode: ThreadMode, total_jobs: usize) -> Result<Self, ModeCreationError> {
         // Use the factory to create the thread config
-        let config = factory::create_thread_config(mode, total_jobs)?;
+        let factory = factory::ModeFactory::new();
+        let config = factory.create_mode(mode, total_jobs)?;
         Ok(Self { config })
     }
 

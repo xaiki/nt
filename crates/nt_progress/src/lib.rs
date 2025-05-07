@@ -29,7 +29,7 @@ pub mod terminal;
 #[cfg(test)]
 pub mod tests;
 
-pub use modes::{ModeRegistry, ModeCreator, get_registry, create_thread_config, ThreadMode};
+pub use modes::{ModeRegistry, ModeCreator, ThreadMode};
 pub use errors::ModeCreationError;
 pub use formatter::{ProgressTemplate, TemplateContext, TemplateVar, TemplatePreset};
 
