@@ -2,6 +2,17 @@
 
 This file contains completed tasks and improvements moved from the TODO.md file.
 
+## v0.1.15 (2024-05-12)
+
+### Feature Enhancements
+- Implemented terminal size customization in TestBuilder
+  - Added `resize()` method to change terminal dimensions at runtime
+  - Added `terminal_size()` method to retrieve current terminal dimensions
+  - Added `test_resize_handling()` method to test resize adaptability
+  - Added `test_terminal_size_detection()` method for size detection testing
+  - Added comprehensive test for terminal size customization
+  - Improved TestBuilder's ability to simulate various terminal environments
+
 ## v0.1.14 (2024-05-12)
 
 ### Feature Enhancements

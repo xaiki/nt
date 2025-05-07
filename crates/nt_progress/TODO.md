@@ -95,7 +95,7 @@ The `nt_progress` library provides a flexible and thread-safe progress display f
 - [ ] Implement remaining core features
   - [x] Direct writer functionality for TaskHandle
   - [x] Output passthrough functionality
-  - [ ] Terminal size customization in TestBuilder
+  - [x] Terminal size customization in TestBuilder
 - [ ] Add display enhancements
   - [ ] Color support for highlighting
   - [ ] Line wrapping for long messages
