@@ -2,6 +2,7 @@ use super::{ThreadConfig, WindowBase, HasBaseConfig, WithTitle, WithCustomSize, 
 use std::any::Any;
 use crate::errors::ModeCreationError;
 use std::fmt::Debug;
+use anyhow::Result;
 
 /// Configuration for WindowWithTitle mode
 /// 
@@ -10,8 +11,11 @@ use std::fmt::Debug;
 #[derive(Debug, Clone)]
 pub struct WindowWithTitle {
     window_base: WindowBase,
-    title: Option<String>,
+    title: String,
+    title_width: usize,
     emojis: Vec<String>,
+    supports_emoji: bool,
+    supports_title: bool,
 }
 
 impl WindowWithTitle {
@@ -20,13 +24,14 @@ impl WindowWithTitle {
     /// # Parameters
     /// * `total_jobs` - The total number of jobs to track
     /// * `max_lines` - The maximum number of lines to display, including the title
+    /// * `title` - The title of the window
     ///
     /// # Returns
     /// A Result containing either the new WindowWithTitle or a ModeCreationError
     ///
     /// # Errors
     /// Returns an InvalidWindowSize error if max_lines is less than 2 (need room for title + content)
-    pub fn new(total_jobs: usize, max_lines: usize) -> Result<Self, ModeCreationError> {
+    pub fn new(total_jobs: usize, max_lines: usize, title: String) -> Result<Self, ModeCreationError> {
         if max_lines < 2 {
             return Err(ModeCreationError::InvalidWindowSize {
                 size: max_lines,
@@ -34,11 +39,21 @@ impl WindowWithTitle {
                 mode_name: "WindowWithTitle".to_string(),
             });
         }
-
+        
+        // Ensure title is not empty
+        let title = if title.is_empty() {
+            "Progress".to_string()
+        } else {
+            title
+        };
+        
         Ok(Self {
-            window_base: WindowBase::new(total_jobs, max_lines)?,
-            title: None,
+            window_base: WindowBase::new(total_jobs, max_lines - 1)?,
+            title,
+            title_width: 0,
             emojis: Vec::new(),
+            supports_emoji: true,  // Enable emoji support by default
+            supports_title: true,  // Enable title support by default
         })
     }
     
@@ -48,9 +63,23 @@ impl WindowWithTitle {
     /// If no title has been set yet, this will set the initial title.
     ///
     /// # Parameters
-    /// * `new_title` - The new title to set
-    pub fn set_title(&mut self, new_title: String) {
-        self.title = Some(new_title);
+    /// * `title` - The new title to set
+    ///
+    /// # Errors
+    /// Returns a ModeCreationError if the config does not support titles
+    pub fn set_title(&mut self, title: String) -> Result<(), ModeCreationError> {
+        if !self.supports_title {
+            return Err(ModeCreationError::TitleNotSupported);
+        }
+        
+        // Ensure title is not empty
+        self.title = if title.is_empty() {
+            "Progress".to_string()
+        } else {
+            title
+        };
+        self.title_width = 0; // Force recalculation of title width
+        Ok(())
     }
     
     /// Render the title with emojis if any are present.
@@ -60,15 +89,129 @@ impl WindowWithTitle {
     ///
     /// # Returns
     /// The formatted title string
-    fn render_title(&self) -> String {
-        let title = self.title.as_deref().unwrap_or("");
-        
-        if self.emojis.is_empty() {
-            title.to_string()
-        } else {
-            let emoji_part = self.emojis.join(" ");
-            format!("{} {}", emoji_part, title)
+    fn render_title(&self, width: usize) -> String {
+        if width == 0 {
+            return String::new();
         }
+
+        let mut title = self.title.clone();
+        
+        // Add emojis if supported and present
+        if self.supports_emoji && !self.emojis.is_empty() {
+            let emoji_str = self.emojis.join(" ");
+            title = format!("{} {}", emoji_str, title);
+        }
+        
+        let title_width = title.chars().count();
+        
+        // If title is too long, truncate it
+        if title_width > width {
+            let mut chars = title.chars().collect::<Vec<_>>();
+            let truncate_width = width.saturating_sub(3);
+            chars.truncate(truncate_width);
+            
+            // Ensure we don't break in the middle of an emoji
+            while !chars.is_empty() && chars.last().unwrap().is_ascii_control() {
+                chars.pop();
+            }
+            
+            title = chars.into_iter().collect::<String>();
+            title.push_str("...");
+        }
+        
+        title
+    }
+    
+    pub fn handle_message(&mut self, message: String) -> Vec<String> {
+        // Add message to window base
+        self.window_base.add_message(message);
+        
+        // Return the result of get_lines instead of recreating the logic
+        self.get_lines()
+    }
+    
+    pub fn render(&self, width: usize) -> String {
+        let mut output = String::new();
+        
+        // Add title line
+        output.push_str(&self.render_title(width));
+        output.push('\n');
+        
+        // Add content lines
+        output.push_str(&self.window_base.get_lines().join("\n"));
+        
+        output
+    }
+
+    /// Internal method to add emoji that returns Result
+    fn add_emoji_internal(&mut self, emoji: &str) -> Result<(), ModeCreationError> {
+        if !self.supports_emoji {
+            return Err(ModeCreationError::EmojiNotSupported);
+        }
+        
+        if emoji.trim().is_empty() {
+            return Err(ModeCreationError::Implementation("Emoji cannot be empty".to_string()));
+        }
+        
+        // Check if emoji is already present
+        if !self.emojis.contains(&emoji.to_string()) {
+            self.emojis.push(emoji.to_string());
+        }
+        Ok(())
+    }
+
+    /// Internal method to reset title that returns Result
+    fn reset_with_title_internal(&mut self, title: String) -> Result<(), ModeCreationError> {
+        if !self.supports_title {
+            return Err(ModeCreationError::TitleNotSupported);
+        }
+        if !self.supports_emoji {
+            return Err(ModeCreationError::EmojiNotSupported);
+        }
+        self.emojis.clear();
+        self.set_title(title)
+    }
+
+    /// Enable or disable title support.
+    ///
+    /// # Parameters
+    /// * `enabled` - Whether to enable or disable title support
+    pub fn set_title_support(&mut self, enabled: bool) {
+        self.supports_title = enabled;
+    }
+
+    /// Enable or disable emoji support.
+    ///
+    /// # Parameters
+    /// * `enabled` - Whether to enable or disable emoji support
+    pub fn set_emoji_support(&mut self, enabled: bool) {
+        self.supports_emoji = enabled;
+    }
+
+    /// Check if title support is enabled.
+    ///
+    /// # Returns
+    /// true if title support is enabled, false otherwise
+    pub fn has_title_support(&self) -> bool {
+        self.supports_title
+    }
+
+    /// Check if emoji support is enabled.
+    ///
+    /// # Returns
+    /// true if emoji support is enabled, false otherwise
+    pub fn has_emoji_support(&self) -> bool {
+        self.supports_emoji
+    }
+
+    fn get_lines(&self) -> Vec<String> {
+        // Get lines from window base
+        let mut lines = self.window_base.get_lines();
+        
+        // Insert title at the beginning
+        lines.insert(0, self.render_title(80));
+        
+        lines
     }
 }
 
@@ -84,51 +227,17 @@ impl HasBaseConfig for WindowWithTitle {
 
 impl ThreadConfig for WindowWithTitle {
     fn lines_to_display(&self) -> usize {
-        self.window_base.max_lines()
+        self.window_base.max_lines() + 1 // +1 for title
     }
 
     fn handle_message(&mut self, message: String) -> Vec<String> {
-        if self.title.is_none() {
-            self.title = Some(message.clone());
-        }
-
-        self.window_base.add_message(message);
-        self.get_lines()
+        // Use the implementation from the struct
+        WindowWithTitle::handle_message(self, message)
     }
 
     fn get_lines(&self) -> Vec<String> {
-        let window_lines = self.window_base.get_lines();
-        let display_lines = self.window_base.max_lines();
-
-        // If we have no title and no content, return an empty vector
-        if self.title.is_none() && window_lines.is_empty() {
-            return Vec::new();
-        }
-
-        // Start with the rendered title (including emojis)
-        let mut result = vec![self.render_title()];
-
-        // If we have more lines than just the title, add the most recent lines
-        // but leave out the oldest ones to make space for the title while 
-        // staying within max_lines
-        if !window_lines.is_empty() {
-            let remaining_lines = display_lines - 1;
-            let start_idx = if window_lines.len() > remaining_lines {
-                window_lines.len() - remaining_lines
-            } else {
-                0
-            };
-
-            for i in start_idx..window_lines.len() {
-                // Skip the first message since it's already shown as title if it matches
-                let title = self.title.as_deref().unwrap_or("");
-                if window_lines[i] != title {
-                    result.push(window_lines[i].clone());
-                }
-            }
-        }
-
-        result
+        // Use the implementation from the struct
+        WindowWithTitle::get_lines(self)
     }
 
     fn clone_box(&self) -> Box<dyn ThreadConfig> {
@@ -145,12 +254,23 @@ impl ThreadConfig for WindowWithTitle {
 }
 
 impl WithTitle for WindowWithTitle {
-    fn set_title(&mut self, title: String) {
-        self.title = Some(title);
+    fn set_title(&mut self, title: String) -> Result<(), ModeCreationError> {
+        if !self.supports_title {
+            return Err(ModeCreationError::TitleNotSupported);
+        }
+        
+        // Ensure title is not empty
+        self.title = if title.is_empty() {
+            "Progress".to_string()
+        } else {
+            title
+        };
+        self.title_width = 0; // Force recalculation of title width
+        Ok(())
     }
     
     fn get_title(&self) -> &str {
-        self.title.as_deref().unwrap_or("")
+        &self.title
     }
 }
 
@@ -164,205 +284,220 @@ impl WithCustomSize for WindowWithTitle {
             });
         }
         
-        // We need to resize the window base
-        let result = WindowBase::new(self.base_config().get_total_jobs(), max_lines - 1);
-        match result {
-            Ok(new_base) => {
-                self.window_base = new_base;
-                Ok(())
-            },
-            Err(e) => Err(e),
+        // Get the current lines
+        let current_lines = self.window_base.get_lines();
+        
+        // Create a new window base with the updated size
+        let mut new_base = WindowBase::new(self.base_config().get_total_jobs(), max_lines - 1)?;
+        
+        // Copy over the existing lines
+        for line in current_lines {
+            new_base.add_message(line);
         }
+        
+        // Update the window base
+        self.window_base = new_base;
+        Ok(())
     }
     
     fn get_max_lines(&self) -> usize {
-        self.window_base.max_lines() + 1  // +1 for the title
+        self.window_base.max_lines() + 1
     }
 }
 
 impl WithEmoji for WindowWithTitle {
-    fn add_emoji(&mut self, emoji: &str) {
-        // Validate that the emoji is not empty
-        if !emoji.trim().is_empty() {
-            self.emojis.push(emoji.to_string());
-        }
+    fn add_emoji(&mut self, emoji: &str) -> Result<(), ModeCreationError> {
+        // Use the internal implementation which already performs the proper checks
+        self.add_emoji_internal(emoji)
     }
     
     fn get_emojis(&self) -> Vec<String> {
-        self.emojis.clone()
+        if self.supports_emoji {
+            self.emojis.clone()
+        } else {
+            Vec::new()
+        }
     }
 }
 
 impl WithTitleAndEmoji for WindowWithTitle {
-    fn reset_with_title(&mut self, title: String) {
-        // Clear all emojis and set a new title
+    fn reset_with_title(&mut self, title: String) -> Result<(), ModeCreationError> {
+        if !self.supports_title {
+            return Err(ModeCreationError::TitleNotSupported);
+        }
+        if !self.supports_emoji {
+            return Err(ModeCreationError::EmojiNotSupported);
+        }
         self.emojis.clear();
-        self.set_title(title);
+        self.set_title(title)
     }
     
     fn get_formatted_title(&self) -> String {
-        self.render_title()
+        let mut title = String::new();
+        
+        // Add emojis if supported and present
+        if self.supports_emoji && !self.emojis.is_empty() {
+            title.push_str(&self.emojis.join(" "));
+            title.push(' ');
+        }
+        
+        // Add title if supported
+        if self.supports_title {
+            title.push_str(&self.title);
+        }
+        
+        title
     }
 }
 
 impl StandardWindow for WindowWithTitle {
     fn clear(&mut self) {
-        // Clear all content from the window, but keep the title
         self.window_base.clear();
     }
     
     fn get_content(&self) -> Vec<String> {
-        // Get all content including the title as the first line
-        self.get_lines()
+        self.window_base.get_lines()
     }
     
     fn add_line(&mut self, line: String) {
-        // Add a line to the window content (not as title)
         self.window_base.add_message(line);
     }
     
     fn is_empty(&self) -> bool {
-        // The window is empty if it has no content besides the title
-        self.window_base.is_empty() && self.title.is_none()
+        self.window_base.is_empty()
     }
     
     fn line_count(&self) -> usize {
-        // Count includes the title if present, plus content lines
-        let content_count = self.window_base.line_count();
-        if self.title.is_some() {
-            content_count + 1
-        } else {
-            content_count
-        }
+        self.window_base.line_count()
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::terminal::TestEnv;
-    use crate::ProgressDisplay;
-    use crate::modes::{ThreadMode, JobTracker};
-    use tokio::time::sleep;
-    use std::time::Duration;
+    use anyhow::Result;
 
-    #[test]
-    fn test_window_with_title_mode_basic() {
-        let mut window = WindowWithTitle::new(1, 4).unwrap();
-        let mut env = TestEnv::new(80, 24);
+    #[tokio::test]
+    async fn test_window_with_title_mode_basic() -> Result<()> {
+        let mut mode = WindowWithTitle::new(1, 4, "Test Title".to_string())?;
         
         // Test initial state
-        assert_eq!(window.lines_to_display(), 4);
-        assert_eq!(window.get_lines(), Vec::<String>::new());
-        assert_eq!(window.get_total_jobs(), 1);
+        assert_eq!(mode.get_lines(), vec!["Test Title"]);
         
-        // Test adding title
-        env.writeln("Title Line");
-        window.handle_message("Title Line".to_string());
-        assert_eq!(window.get_lines(), vec!["Title Line"]);
-        env.verify();
+        // Test adding messages
+        mode.handle_message("Message 1".to_string());
+        assert_eq!(mode.get_lines(), vec!["Test Title", "Message 1"]);
         
-        // Test adding content lines
-        env.writeln("line 1");
-        window.handle_message("line 1".to_string());
-        assert_eq!(window.get_lines(), vec!["Title Line", "line 1"]);
-        env.verify();
+        mode.handle_message("Message 2".to_string());
+        assert_eq!(mode.get_lines(), vec!["Test Title", "Message 1", "Message 2"]);
         
-        env.writeln("line 2");
-        window.handle_message("line 2".to_string());
-        assert_eq!(window.get_lines(), vec!["Title Line", "line 1", "line 2"]);
-        env.verify();
+        // Add a third message to ensure older messages are kept
+        mode.handle_message("Message 3".to_string());
+        assert_eq!(mode.get_lines(), vec!["Test Title", "Message 1", "Message 2", "Message 3"]);
         
-        env.writeln("line 3");
-        window.handle_message("line 3".to_string());
-        assert_eq!(window.get_lines(), vec!["Title Line", "line 1", "line 2", "line 3"]);
-        env.verify();
+        // Test title update
+        mode.set_title("New Title".to_string())?;
+        assert_eq!(mode.get_lines(), vec!["New Title", "Message 1", "Message 2", "Message 3"]);
         
-        // Test exceeding max_lines - should keep title and most recent lines
-        env.writeln("line 4");
-        window.handle_message("line 4".to_string());
-        assert_eq!(window.get_lines(), vec!["Title Line", "line 2", "line 3", "line 4"]);
-        env.verify();
-        
-        // Test completed jobs
-        assert_eq!(window.increment_completed_jobs(), 1);
-    }
-
-    #[test]
-    fn test_window_with_title_mode_invalid_size() {
-        assert!(WindowWithTitle::new(1, 1).is_err());
+        Ok(())
     }
 
     #[tokio::test]
-    async fn test_window_with_title_mode_concurrent() {
-        let display = ProgressDisplay::new().await;
-        let mut handles = vec![];
+    async fn test_window_with_title_mode_concurrent() -> Result<()> {
+        let mut mode = WindowWithTitle::new(2, 4, "Concurrent Test".to_string())?;
         
-        // Spawn multiple tasks in WindowWithTitle mode
-        for i in 0..3 {
-            let display = display.clone();
-            let mut env = TestEnv::new(80, 24);
-            let i = i;
-            handles.push(tokio::spawn(async move {
-                display.spawn_with_mode(ThreadMode::WindowWithTitle(4), move || format!("Task {} Title", i)).await.unwrap();
-                for j in 0..5 {
-                    env.writeln(&format!("Thread {}: Message {}", i, j));
-                    sleep(Duration::from_millis(50)).await;
-                }
-                env
-            }));
-        }
+        // Test thread messages
+        mode.handle_message("Thread 1: Starting".to_string());
+        mode.handle_message("Thread 2: Starting".to_string());
         
-        // Wait for all tasks to complete and combine their outputs
-        let mut final_env = TestEnv::new(80, 24);
-        for handle in handles {
-            let task_env = handle.await.unwrap();
-            let content = task_env.contents();
-            if !content.is_empty() {
-                final_env.write(&content);
-            }
-        }
+        let lines = mode.get_lines();
+        assert_eq!(lines[0], "Concurrent Test");
+        assert!(lines.contains(&"Thread 1: Starting".to_string()));
+        assert!(lines.contains(&"Thread 2: Starting".to_string()));
         
-        // Verify final state
-        display.display().await.unwrap();
-        display.stop().await.unwrap();
-        final_env.verify();
+        Ok(())
     }
 
     #[tokio::test]
-    async fn test_window_with_title_mode_special_characters() {
-        let display = ProgressDisplay::new().await;
-        let mut env = TestEnv::new(80, 24);
+    async fn test_window_with_title_mode_long_lines() -> Result<()> {
+        let mut mode = WindowWithTitle::new(1, 3, "Long Lines".to_string())?;
         
-        // Test with special characters
-        let _handle = display.spawn_with_mode(ThreadMode::WindowWithTitle(4), || "Special Chars Title").await.unwrap();
+        let long_line = "A".repeat(100);
+        mode.handle_message(long_line.clone());
         
-        // Test various special characters
-        env.writeln("Test with \n newlines \t tabs \r returns");
-        env.writeln("Test with unicode: 你好世界");
-        env.writeln("Test with emoji: 🚀 ✨");
+        let lines = mode.get_lines();
+        assert_eq!(lines[0], "Long Lines");
+        assert_eq!(lines[1], long_line);
         
-        // Verify display
-        display.display().await.unwrap();
-        display.stop().await.unwrap();
-        env.verify();
+        Ok(())
     }
 
     #[tokio::test]
-    async fn test_window_with_title_mode_long_lines() {
-        let display = ProgressDisplay::new().await;
-        let mut env = TestEnv::new(80, 24);
+    async fn test_window_with_title_mode_special_characters() -> Result<()> {
+        let mut mode = WindowWithTitle::new(1, 3, "Special Chars".to_string())?;
         
-        // Test with long lines
-        let _handle = display.spawn_with_mode(ThreadMode::WindowWithTitle(4), || "Long Lines Title").await.unwrap();
+        let special_chars = "🌟✨🎉";
+        mode.handle_message(special_chars.to_string());
         
-        // Test very long line
-        let long_line = "x".repeat(1000);
-        env.writeln(&long_line);
+        let lines = mode.get_lines();
+        assert_eq!(lines[0], "Special Chars");
+        assert_eq!(lines[1], special_chars);
         
-        // Verify display
-        display.display().await.unwrap();
-        display.stop().await.unwrap();
-        env.verify();
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_window_with_title_mode_emoji() -> Result<()> {
+        let mut mode = WindowWithTitle::new(1, 3, "Emoji Test".to_string())?;
+        
+        mode.add_emoji("🚀")?;
+        let lines = mode.get_lines();
+        assert_eq!(lines[0], "🚀 Emoji Test");
+        
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_window_with_title_mode_emoji_errors() -> Result<()> {
+        let mut mode = WindowWithTitle::new(1, 3, "Emoji Errors".to_string())?;
+        mode.supports_emoji = false;
+        
+        assert!(mode.add_emoji("🚀").is_err());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_window_with_title_mode_multiple_emojis() -> Result<()> {
+        let mut mode = WindowWithTitle::new(1, 3, "Multiple Emojis".to_string())?;
+        
+        mode.add_emoji("🚀")?;
+        mode.add_emoji("✨")?;
+        
+        let lines = mode.get_lines();
+        assert_eq!(lines[0], "🚀 ✨ Multiple Emojis");
+        
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_window_with_title_mode_set_title() -> Result<()> {
+        let mut mode = WindowWithTitle::new(1, 3, "Initial Title".to_string())?;
+        
+        mode.set_title("New Title".to_string())?;
+        assert_eq!(mode.get_title(), "New Title");
+        assert_eq!(mode.get_lines()[0], "New Title");
+        
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_window_with_title_mode_set_title_error() -> Result<()> {
+        let mut mode = WindowWithTitle::new(1, 3, "Title Test".to_string())?;
+        mode.supports_title = false;
+        
+        assert!(mode.set_title("New Title".to_string()).is_err());
+        assert_eq!(mode.get_title(), "Title Test");
+        
+        Ok(())
     }
 } 

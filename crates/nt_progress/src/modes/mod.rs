@@ -1,16 +1,16 @@
 use std::sync::Arc;
 use std::sync::atomic::AtomicUsize;
 use std::fmt::Debug;
-use std::collections::{VecDeque, HashSet};
+use std::collections::{VecDeque, HashSet, HashMap};
 use std::any::Any;
 use crate::errors::ModeCreationError;
 use std::any::TypeId;
 
-mod limited;
-mod capturing;
-mod window;
-mod window_with_title;
-mod factory;
+pub mod limited;
+pub mod capturing;
+pub mod window;
+pub mod window_with_title;
+pub mod factory;
 
 pub use limited::Limited;
 pub use capturing::Capturing;
@@ -147,7 +147,7 @@ pub trait HasBaseConfig {
 /// such as WindowWithTitle mode.
 pub trait WithTitle: Send + Sync {
     /// Set the title for this config.
-    fn set_title(&mut self, title: String);
+    fn set_title(&mut self, title: String) -> Result<(), ModeCreationError>;
     
     /// Get the current title.
     fn get_title(&self) -> &str;
@@ -170,7 +170,7 @@ pub trait WithCustomSize: Send + Sync {
 /// This capability is implemented by modes that can display emoji characters.
 pub trait WithEmoji: Send + Sync {
     /// Add an emoji to the display.
-    fn add_emoji(&mut self, emoji: &str);
+    fn add_emoji(&mut self, emoji: &str) -> Result<(), ModeCreationError>;
     
     /// Get the current emojis.
     fn get_emojis(&self) -> Vec<String>;
@@ -190,9 +190,9 @@ pub trait WithTitleAndEmoji: WithTitle + WithEmoji {
     /// # Parameters
     /// * `title` - The new title to set
     /// * `emoji` - The emoji to add
-    fn set_title_with_emoji(&mut self, title: String, emoji: &str) {
-        self.set_title(title);
-        self.add_emoji(emoji);
+    fn set_title_with_emoji(&mut self, title: String, emoji: &str) -> Result<(), ModeCreationError> {
+        self.set_title(title)?;
+        self.add_emoji(emoji)
     }
     
     /// Clear all emojis and set a new title.
@@ -201,7 +201,7 @@ pub trait WithTitleAndEmoji: WithTitle + WithEmoji {
     ///
     /// # Parameters
     /// * `title` - The new title to set
-    fn reset_with_title(&mut self, title: String);
+    fn reset_with_title(&mut self, title: String) -> Result<(), ModeCreationError>;
     
     /// Get the fully formatted title with emojis.
     ///
@@ -467,6 +467,8 @@ pub struct WindowBase {
     base: BaseConfig,
     lines: VecDeque<String>,
     max_lines: usize,
+    thread_buffers: HashMap<String, VecDeque<String>>,
+    is_threaded_mode: bool,
 }
 
 impl WindowBase {
@@ -489,10 +491,13 @@ impl WindowBase {
                 mode_name: "WindowBase".to_string(),
             });
         }
+        
         Ok(Self {
             base: BaseConfig::new(total_jobs),
             lines: VecDeque::with_capacity(max_lines),
             max_lines,
+            thread_buffers: HashMap::new(),
+            is_threaded_mode: false,
         })
     }
     
@@ -504,10 +509,34 @@ impl WindowBase {
     /// # Parameters
     /// * `message` - The message to add to the window
     pub fn add_message(&mut self, message: String) {
-        // Add new line to the end
-        self.lines.push_back(message);
+        // Check if the message is a thread message (Thread X: ...)
+        if let Some(thread_id) = message.split(':').next() {
+            if thread_id.starts_with("Thread ") {
+                // Enable threaded mode on first thread message
+                if !self.is_threaded_mode {
+                    self.is_threaded_mode = true;
+                    self.lines.clear();
+                }
+                
+                // Get or create buffer for this thread
+                let buffer = self.thread_buffers
+                    .entry(thread_id.to_string())
+                    .or_insert_with(VecDeque::new);
+                
+                // Add message to thread buffer
+                buffer.push_back(message.clone());
+                
+                // Ensure buffer doesn't exceed max_lines
+                while buffer.len() > self.max_lines {
+                    buffer.pop_front();
+                }
+                
+                return;
+            }
+        }
         
-        // Remove lines from the front if we exceed max_lines
+        // For non-thread messages or if not in threaded mode
+        self.lines.push_back(message);
         while self.lines.len() > self.max_lines {
             self.lines.pop_front();
         }
@@ -518,7 +547,25 @@ impl WindowBase {
     /// # Returns
     /// A vector of strings representing the current lines
     pub fn get_lines(&self) -> Vec<String> {
-        self.lines.iter().cloned().collect()
+        if !self.is_threaded_mode {
+            return self.lines.iter().cloned().collect();
+        }
+        
+        // In threaded mode, combine messages from all threads
+        let mut all_lines = Vec::new();
+        
+        // Sort thread IDs to ensure consistent ordering
+        let mut thread_ids: Vec<_> = self.thread_buffers.keys().cloned().collect();
+        thread_ids.sort();
+        
+        // Add messages from each thread
+        for thread_id in thread_ids {
+            if let Some(buffer) = self.thread_buffers.get(&thread_id) {
+                all_lines.extend(buffer.iter().cloned());
+            }
+        }
+        
+        all_lines
     }
     
     /// Get the maximum number of lines this window can display.
@@ -528,31 +575,39 @@ impl WindowBase {
     pub fn max_lines(&self) -> usize {
         self.max_lines
     }
-
-    /// Clear all content from the window.
-    ///
-    /// This method removes all lines from the window, leaving it empty.
+    
+    /// Clear all lines from the window.
     pub fn clear(&mut self) {
         self.lines.clear();
+        self.thread_buffers.clear();
+        self.is_threaded_mode = false;
     }
     
     /// Check if the window is empty.
     ///
     /// # Returns
-    /// true if the window has no content, false otherwise
+    /// true if the window is empty, false otherwise
     pub fn is_empty(&self) -> bool {
-        self.lines.is_empty()
+        if self.is_threaded_mode {
+            self.thread_buffers.values().all(|b| b.is_empty())
+        } else {
+            self.lines.is_empty()
+        }
     }
     
-    /// Get the number of lines currently displayed.
+    /// Get the current number of lines in the window.
     ///
     /// # Returns
-    /// The current line count
+    /// The number of lines currently in the window
     pub fn line_count(&self) -> usize {
-        self.lines.len()
+        if self.is_threaded_mode {
+            self.thread_buffers.values().map(|b| b.len()).sum()
+        } else {
+            self.lines.len()
+        }
     }
     
-    /// Access the internal BaseConfig.
+    /// Get a reference to the base configuration.
     ///
     /// # Returns
     /// A reference to the BaseConfig
@@ -560,7 +615,7 @@ impl WindowBase {
         &self.base
     }
     
-    /// Access the internal BaseConfig mutably.
+    /// Get a mutable reference to the base configuration.
     ///
     /// # Returns
     /// A mutable reference to the BaseConfig
@@ -760,8 +815,7 @@ impl Config {
     /// Set the title for this config if it supports titles
     pub fn set_title(&mut self, title: String) -> Result<(), ModeCreationError> {
         if let Some(with_title) = self.config.as_title_mut() {
-            with_title.set_title(title);
-            Ok(())
+            with_title.set_title(title)
         } else {
             Err(ModeCreationError::Implementation(
                 format!("Config does not support titles")
@@ -803,8 +857,7 @@ impl Config {
     /// Add an emoji to the display if the config supports emojis
     pub fn add_emoji(&mut self, emoji: &str) -> Result<(), ModeCreationError> {
         if let Some(with_emoji) = self.config.as_emoji_mut() {
-            with_emoji.add_emoji(emoji);
-            Ok(())
+            with_emoji.add_emoji(emoji)
         } else {
             Err(ModeCreationError::Implementation(
                 format!("Config does not support emojis")

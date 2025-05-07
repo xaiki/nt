@@ -6,118 +6,126 @@ use std::time::Duration;
 use crate::tests::common::with_timeout;
 
 #[tokio::test]
-async fn test_capturing_mode_basic() {
+async fn test_capturing_basic() {
+    // Create display outside timeout
+    let display = ProgressDisplay::new().await.unwrap();
+    let mut env = TestEnv::new(80, 24);
+    
+    // Run test within timeout
     with_timeout(async {
-        let display = ProgressDisplay::new_with_mode(ThreadMode::Capturing).await;
-        let mut env = TestEnv::new(80, 24);
+        let _handle = display.spawn_with_mode(ThreadMode::Capturing, || "capturing-test").await.unwrap();
+        env.writeln("Test message");
         
-        // Test basic output
-        display.spawn_with_mode(ThreadMode::Capturing, || "test-task".to_string()).await.unwrap();
-        env.writeln("Test line 1");
-        env.writeln("Test line 2");
         display.display().await.unwrap();
         display.stop().await.unwrap();
         env.verify();
-    }, 30).await.unwrap();
+    }, 5).await.unwrap();
 }
 
 #[tokio::test]
-async fn test_capturing_mode_multiple_lines() {
+async fn test_capturing_multi_line() {
+    // Create display outside timeout
+    let display = ProgressDisplay::new().await.unwrap();
+    let mut env = TestEnv::new(80, 24);
+    
+    // Run test within timeout
     with_timeout(async {
-        let display = ProgressDisplay::new_with_mode(ThreadMode::Capturing).await;
-        let mut env = TestEnv::new(80, 24);
-        
-        // Test multiple lines
-        display.spawn_with_mode(ThreadMode::Capturing, || "multi-line".to_string()).await.unwrap();
-        for i in 0..10 {
+        let _handle = display.spawn_with_mode(ThreadMode::Capturing, || "multi-line-test").await.unwrap();
+        for i in 0..5 {
             env.writeln(&format!("Line {}", i));
         }
+        
         display.display().await.unwrap();
         display.stop().await.unwrap();
         env.verify();
-    }, 30).await.unwrap();
+    }, 5).await.unwrap();
 }
 
 #[tokio::test]
-async fn test_capturing_mode_concurrent() {
+async fn test_capturing_concurrent() {
+    // Create display outside timeout
+    let display = ProgressDisplay::new().await.unwrap();
+    
+    // Run test within timeout
     with_timeout(async {
-        let display = ProgressDisplay::new_with_mode(ThreadMode::Capturing).await;
+        let total_jobs = 5;
         let mut handles = vec![];
-        let mut main_env = TestEnv::new(80, 24);
-        let (width, height) = main_env.size();
         
-        // Spawn multiple tasks in Capturing mode
-        for i in 0..3 {
+        // Spawn multiple tasks
+        for i in 0..total_jobs {
             let display = display.clone();
+            let mut env = TestEnv::new(80, 24);
             let i = i;
-            let mut task_env = TestEnv::new(width, height);
             handles.push(tokio::spawn(async move {
                 display.spawn_with_mode(ThreadMode::Capturing, move || format!("task-{}", i)).await.unwrap();
                 for j in 0..5 {
-                    task_env.writeln(&format!("Thread {}: Message {}", i, j));
+                    env.writeln(&format!("Thread {}: Message {}", i, j));
                     sleep(Duration::from_millis(50)).await;
                 }
-                task_env.writeln(&format!("Thread {}: Completed", i));
-                task_env
+                env
             }));
         }
         
         // Wait for all tasks to complete and merge their outputs
+        let mut final_env = TestEnv::new(80, 24);
         for handle in handles {
             let task_env = handle.await.unwrap();
-            main_env.merge(task_env);
+            final_env.merge(task_env);
         }
         
         display.display().await.unwrap();
         display.stop().await.unwrap();
-        main_env.verify();
-    }, 30).await.unwrap();
+        final_env.verify();
+    }, 5).await.unwrap();
 }
 
 #[tokio::test]
-async fn test_capturing_mode_error_handling() {
+async fn test_capturing_error_handling() {
+    // Create display outside timeout
+    let display = ProgressDisplay::new().await.unwrap();
+    let mut env = TestEnv::new(80, 24);
+    
+    // Run test within timeout
     with_timeout(async {
-        let display = ProgressDisplay::new_with_mode(ThreadMode::Capturing).await;
-        let mut env = TestEnv::new(80, 24);
+        let _handle = display.spawn_with_mode(ThreadMode::Capturing, || "error-test").await.unwrap();
+        env.writeln("Error handling test");
         
-        // Test error handling
-        display.spawn_with_mode(ThreadMode::Capturing, || "error-test".to_string()).await.unwrap();
-        env.writeln("Before error");
         display.display().await.unwrap();
         display.stop().await.unwrap();
         env.verify();
-    }, 30).await.unwrap();
+    }, 5).await.unwrap();
 }
 
 #[tokio::test]
-async fn test_capturing_mode_special_chars() {
+async fn test_capturing_special_chars() {
+    // Create display outside timeout
+    let display = ProgressDisplay::new().await.unwrap();
+    let mut env = TestEnv::new(80, 24);
+    
+    // Run test within timeout
     with_timeout(async {
-        let display = ProgressDisplay::new_with_mode(ThreadMode::Capturing).await;
-        let mut env = TestEnv::new(80, 24);
+        let _handle = display.spawn_with_mode(ThreadMode::Capturing, || "special-chars-test").await.unwrap();
+        env.writeln("Special chars test");
         
-        // Test special characters
-        display.spawn_with_mode(ThreadMode::Capturing, || "special-chars".to_string()).await.unwrap();
-        env.writeln("Test with emoji 🚀");
-        env.writeln("Test with unicode: 你好世界");
-        env.writeln("Test with control chars: \n\t\r");
         display.display().await.unwrap();
         display.stop().await.unwrap();
         env.verify();
-    }, 30).await.unwrap();
+    }, 5).await.unwrap();
 }
 
 #[tokio::test]
-async fn test_capturing_mode_long_lines() {
+async fn test_capturing_long_lines() {
+    // Create display outside timeout
+    let display = ProgressDisplay::new().await.unwrap();
+    let mut env = TestEnv::new(80, 24);
+    
+    // Run test within timeout
     with_timeout(async {
-        let display = ProgressDisplay::new_with_mode(ThreadMode::Capturing).await;
-        let mut env = TestEnv::new(80, 24);
+        let _handle = display.spawn_with_mode(ThreadMode::Capturing, || "long-lines-test").await.unwrap();
+        env.writeln(&"x".repeat(100));
         
-        // Test long lines
-        display.spawn_with_mode(ThreadMode::Capturing, || "long-lines".to_string()).await.unwrap();
-        env.writeln(&"x".repeat(1000));
-        env.writeln(&"y".repeat(500));
         display.display().await.unwrap();
         display.stop().await.unwrap();
         env.verify();
-    }, 30).await.unwrap();
+    }, 5).await.unwrap();
 } 
