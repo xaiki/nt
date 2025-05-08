@@ -7,6 +7,7 @@
 use std::collections::HashMap;
 use crate::errors::{ProgressError, ContextExt};
 use crate::terminal::Color;
+use crossterm::style::{SetForegroundColor, ResetColor};
 use std::str::FromStr;
 
 /// Template variable types that can be interpolated into templates
@@ -232,51 +233,32 @@ impl ProgressTemplate {
     
     // Process a single template tag
     fn render_tag(&self, tag: &str, context: &TemplateContext) -> Result<Option<String>, ProgressError> {
-        // Check for conditional tag
-        if tag.starts_with('?') || tag.starts_with('!') {
-            return self.render_conditional_tag(tag, context);
-        }
+        let parts: Vec<&str> = tag.splitn(2, ':').collect();
         
-        // Regular variable tag
-        let parts: Vec<&str> = tag.split(':').collect();
-        let var_name = parts[0].trim();
-        
-        // Get the variable from the context
-        if let Some(var) = context.get(var_name) {
-            // Check if we have a format specifier
-            if parts.len() > 1 {
-                self.apply_format(var, &parts[1..], context)
-            } else {
-                // No format, just convert to string
+        if parts.len() == 1 {
+            // Simple variable
+            let var_name = parts[0].trim();
+            if let Some(var) = context.get(var_name) {
                 Ok(Some(var.as_string()))
+            } else {
+                Ok(None)
             }
         } else {
-            // Variable not found, render as empty string
-            Ok(Some(String::new()))
-        }
-    }
-    
-    // Process a conditional tag {?condition}content{/} or {!condition}content{/}
-    fn render_conditional_tag(&self, tag: &str, context: &TemplateContext) -> Result<Option<String>, ProgressError> {
-        let (is_positive, condition) = if let Some(stripped) = tag.strip_prefix('?') {
-            (true, stripped)
-        } else if let Some(stripped) = tag.strip_prefix('!') {
-            (false, stripped)
-        } else {
-            return Ok(None);
-        };
-
-        // Get the condition variable
-        let condition_value = match context.get(condition) {
-            Some(var) => var.is_truthy(),
-            None => false,
-        };
-
-        // Return Some("") if the condition matches, None if it doesn't
-        if condition_value == is_positive {
-            Ok(Some(String::new()))
-        } else {
-            Ok(None)
+            // Formatted variable
+            let var_name = parts[0].trim();
+            let format_spec = parts[1].trim();
+            
+            if let Some(var) = context.get(var_name) {
+                // Split format into parts (format:param1:param2:...)
+                let format_parts: Vec<&str> = format_spec.split(':').collect();
+                if format_parts.is_empty() {
+                    return Ok(Some(var.as_string()));
+                }
+                
+                self.apply_format(var, &format_parts, context)
+            } else {
+                Ok(None)
+            }
         }
     }
     
@@ -285,63 +267,110 @@ impl ProgressTemplate {
         &self,
         var: &TemplateVar,
         format_parts: &[&str],
-        context: &TemplateContext,
+        _context: &TemplateContext,
     ) -> Result<Option<String>, ProgressError> {
         if format_parts.is_empty() {
             return Ok(Some(var.as_string()));
         }
-
+        
         let format = format_parts[0];
-
+        let params = &format_parts[1..];
+        
         match format {
-            "bar" => self.format_bar(var, format_parts, context),
-            "percent" => self.format_percent(var, format_parts, context),
-            "ratio" => self.format_ratio(var, format_parts, context),
-            "pad" | "lpad" | "rpad" => self.format_padding(var, format, format_parts, context),
-            "color" => self.format_color(var, format_parts, context),
+            "bar" => self.format_bar(var, params, _context),
+            "percent" => self.format_percent(var, params, _context),
+            "ratio" => self.format_ratio(var, params, _context),
+            "pad" | "lpad" | "rpad" => self.format_padding(var, format, params, _context),
+            "color" => self.format_color(var, params, _context),
             _ => Ok(Some(var.as_string())),
         }
     }
     
-    // Format a variable as a progress bar
+    // Format a variable as a progress bar using various types of indicators
     fn format_bar(
         &self,
         var: &TemplateVar,
         format_parts: &[&str],
         _context: &TemplateContext,
     ) -> Result<Option<String>, ProgressError> {
-        // Extract the progress value (should be a number between 0 and 1)
+        // Extract progress value as a float between 0.0 and 1.0
         let progress = match var {
-            TemplateVar::Number(n) => *n,
+            TemplateVar::Number(n) => {
+                // Clamp to 0.0-1.0 range
+                n.max(0.0).min(1.0)
+            }
             _ => {
-                return Err(ProgressError::DisplayOperation(
-                    "Progress bar format requires a number".to_string(),
-                ))
+                return Ok(None);
             }
         };
         
-        // Clamp to 0..1 range
-        let progress = progress.clamp(0.0, 1.0);
+        // If no parts provided, use default bar
+        if format_parts.is_empty() {
+            return self.format_bar_indicator(progress, &[], 10, false);
+        }
         
-        // Determine indicator type
-        let indicator_type = if format_parts.len() > 1 {
-            // If the format includes an indicator type, use it
-            match ProgressIndicator::from_str(format_parts[1]) {
-                Ok(indicator) => indicator,
-                Err(_) => ProgressIndicator::Bar
+        // Process format parts
+        let indicator_type = format_parts[0];
+        let mut custom_params = Vec::new();
+        let mut width = 10; // Default width
+        let mut smooth_animation = false;
+        
+        // Process remaining parameters
+        for i in 1..format_parts.len() {
+            let param = format_parts[i];
+            
+            // Check if parameter is a width (numeric)
+            if let Ok(w) = param.parse::<usize>() {
+                width = w;
+                continue;
             }
-        } else {
-            // Default to Bar
-            ProgressIndicator::Bar
-        };
+            
+            // Check for smooth animation flag
+            if param == "smooth" {
+                smooth_animation = true;
+                continue;
+            }
+            
+            // Otherwise it's a custom parameter for the indicator
+            custom_params.push(param);
+        }
         
+        // Match on indicator type
         match indicator_type {
-            ProgressIndicator::Bar => self.format_bar_indicator(progress, format_parts),
-            ProgressIndicator::Block => self.format_block_indicator(progress, format_parts),
-            ProgressIndicator::Spinner => self.format_spinner_indicator(progress, format_parts),
-            ProgressIndicator::Numeric => self.format_numeric_indicator(progress, format_parts),
-            ProgressIndicator::Interactive => self.format_interactive_indicator(progress, format_parts),
-            ProgressIndicator::Custom(name) => self.format_custom_indicator(name, progress, format_parts),
+            "bar" => {
+                self.format_bar_indicator(progress, &custom_params, width, smooth_animation)
+            }
+            "block" => {
+                self.format_block_indicator(progress, &custom_params, width, smooth_animation)
+            }
+            "spinner" => {
+                self.format_spinner_indicator(progress, &custom_params)
+            }
+            "numeric" => {
+                self.format_numeric_indicator(progress, &custom_params)
+            }
+            "interactive" => {
+                self.format_interactive_indicator(progress, &custom_params)
+            }
+            "custom" => {
+                if custom_params.is_empty() {
+                    return Err(ProgressError::DisplayOperation(
+                        "Missing custom indicator name".to_string()
+                    ));
+                }
+                
+                let name = custom_params[0].to_string();
+                let options = if custom_params.len() > 1 {
+                    &custom_params[1..]
+                } else {
+                    &[]
+                };
+                self.format_custom_indicator(name, progress, options, width, smooth_animation)
+            }
+            _ => {
+                // Default to standard bar
+                self.format_bar_indicator(progress, &[], width, smooth_animation)
+            }
         }
     }
     
@@ -350,46 +379,118 @@ impl ProgressTemplate {
         &self,
         progress: f64,
         format_parts: &[&str],
+        width: usize,
+        smooth_animation: bool,
     ) -> Result<Option<String>, ProgressError> {
-        // Get the bar width (default: 10)
-        let width = if format_parts.len() > 2 {
-            format_parts[2].parse::<usize>().unwrap_or(10)
-        } else {
-            10
-        };
+        // Default characters for the bar
+        let mut fill_char = '=';
+        let mut empty_char = ' ';
+        let mut left_bracket = '[';
+        let mut right_bracket = ']';
         
-        // Get the fill character (default: '=')
-        let fill_char = if format_parts.len() > 3 {
-            format_parts[3].chars().next().unwrap_or('=')
-        } else {
-            '='
-        };
+        // Extract optional characters and colors
+        let mut fill_color: Option<Color> = None;
+        let mut empty_color: Option<Color> = None;
         
-        // Get the background character (default: ' ')
-        let bg_char = if format_parts.len() > 4 {
-            format_parts[4].chars().next().unwrap_or(' ')
-        } else {
-            ' '
-        };
-        
-        // Calculate filled portion
-        let filled = (width as f64 * progress).round() as usize;
-        
-        // Build the bar
-        let mut result = String::with_capacity(width + 2);
-        result.push('[');
-        
-        for i in 0..width {
-            if i < filled {
-                result.push(fill_char);
-            } else {
-                result.push(bg_char);
+        // Process format parts
+        // Format: [fill_char[:empty_char[:fill_color[:empty_color[:left_bracket[:right_bracket]]]]]]
+        if format_parts.len() > 0 {
+            for (i, part) in format_parts.iter().enumerate() {
+                match i {
+                    0 => {
+                        if part.len() == 1 {
+                            fill_char = part.chars().next().unwrap();
+                        }
+                    }
+                    1 => {
+                        if part.len() == 1 {
+                            empty_char = part.chars().next().unwrap();
+                        }
+                    }
+                    2 => {
+                        // Parse fill color
+                        if let Some(color_name) = ColorName::from_str(part) {
+                            fill_color = Some(color_name.to_color());
+                        }
+                    }
+                    3 => {
+                        // Parse empty color
+                        if let Some(color_name) = ColorName::from_str(part) {
+                            empty_color = Some(color_name.to_color());
+                        }
+                    }
+                    4 => {
+                        // Parse left bracket
+                        if part.len() == 1 {
+                            left_bracket = part.chars().next().unwrap();
+                        }
+                    }
+                    5 => {
+                        // Parse right bracket
+                        if part.len() == 1 {
+                            right_bracket = part.chars().next().unwrap();
+                        }
+                    }
+                    _ => break,
+                }
             }
         }
         
-        result.push(']');
+        // Calculate the number of filled characters based on progress
+        let filled = if smooth_animation {
+            // For smooth animation, use fractional part
+            let fill_width = width as f64 * progress;
+            fill_width.floor() as usize
+        } else {
+            (width as f64 * progress).round() as usize
+        };
         
-        Ok(Some(result))
+        let filled = filled.min(width);
+        
+        // Build the progress bar
+        let mut bar = String::with_capacity(width + 2);
+        
+        // Add left bracket
+        bar.push(left_bracket);
+        
+        // Add filled part with color
+        let mut has_fill_color = false;
+        if let Some(color) = fill_color {
+            let foreground = format!("{}", SetForegroundColor(color));
+            bar.push_str(&foreground);
+            has_fill_color = true;
+        }
+        
+        for _ in 0..filled {
+            bar.push(fill_char);
+        }
+        
+        // Reset color if needed before empty part
+        if has_fill_color {
+            bar.push_str(&format!("{}", ResetColor));
+        }
+        
+        // Add empty part with color
+        let mut has_empty_color = false;
+        if let Some(color) = empty_color {
+            let foreground = format!("{}", SetForegroundColor(color));
+            bar.push_str(&foreground);
+            has_empty_color = true;
+        }
+        
+        for _ in filled..width {
+            bar.push(empty_char);
+        }
+        
+        // Reset color if needed
+        if has_empty_color {
+            bar.push_str(&format!("{}", ResetColor));
+        }
+        
+        // Add right bracket
+        bar.push(right_bracket);
+        
+        Ok(Some(bar))
     }
     
     /// Format a block-based indicator using Unicode block characters
@@ -397,67 +498,120 @@ impl ProgressTemplate {
         &self,
         progress: f64,
         format_parts: &[&str],
+        width: usize,
+        smooth_animation: bool,
     ) -> Result<Option<String>, ProgressError> {
-        // Get the bar width (default: 10)
-        let width = if format_parts.len() > 2 {
-            format_parts[2].parse::<usize>().unwrap_or(10)
-        } else {
-            10
-        };
+        // Default characters for the block bar
+        let mut fill_char = '█';
+        let mut empty_char = ' ';
+        let mut left_bracket = '[';
+        let mut right_bracket = ']';
         
-        // Get the block characters (default: "█▓▒░ ")
-        let block_chars = if format_parts.len() > 3 {
-            format_parts[3]
-        } else {
-            ProgressIndicator::default_block_chars()
-        };
+        // Extract optional characters and colors
+        let mut fill_color: Option<Color> = None;
+        let mut empty_color: Option<Color> = None;
         
-        // Calculate filled portion
-        let filled = (width as f64 * progress).round() as usize;
-        let blocks = block_chars.chars().collect::<Vec<_>>();
-        
-        // Handle invalid block chars
-        if blocks.is_empty() {
-            return Err(ProgressError::DisplayOperation(
-                "Block indicator requires at least one character".to_string(),
-            ));
-        }
-        
-        // Get fill character (first) and background character (last or space)
-        let fill_char = blocks[0];
-        let bg_char = if blocks.len() > 1 {
-            *blocks.last().unwrap()
-        } else {
-            ' ' // Default to space if only one character provided
-        };
-        
-        // Build the bar
-        let mut result = String::with_capacity(width + 2);
-        result.push('[');
-        
-        for i in 0..width {
-            if i < filled {
-                result.push(fill_char); // Filled block
-            } else {
-                result.push(bg_char); // Background character
+        // Process format parts
+        if !format_parts.is_empty() {
+            // First parameter is the fill character
+            if format_parts[0].len() == 1 {
+                fill_char = format_parts[0].chars().next().unwrap();
+            }
+            
+            // Second parameter is the empty character
+            if format_parts.len() > 1 && format_parts[1].len() == 1 {
+                empty_char = format_parts[1].chars().next().unwrap();
+            }
+            
+            // Color parameters if available
+            for (i, part) in format_parts.iter().enumerate().skip(2) {
+                match i {
+                    2 => {
+                        if let Some(color_name) = ColorName::from_str(part) {
+                            fill_color = Some(color_name.to_color());
+                        }
+                    }
+                    3 => {
+                        if let Some(color_name) = ColorName::from_str(part) {
+                            empty_color = Some(color_name.to_color());
+                        }
+                    }
+                    4 => {
+                        if part.len() == 1 {
+                            left_bracket = part.chars().next().unwrap();
+                        }
+                    }
+                    5 => {
+                        if part.len() == 1 {
+                            right_bracket = part.chars().next().unwrap();
+                        }
+                    }
+                    _ => break,
+                }
             }
         }
         
-        result.push(']');
+        // Calculate the number of filled characters
+        let filled = (width as f64 * progress).round() as usize;
+        let filled = filled.min(width);
         
-        Ok(Some(result))
+        // Build the progress bar
+        let mut bar = String::with_capacity(width + 2);
+        
+        // Add left bracket
+        bar.push(left_bracket);
+        
+        // Add filled part with color
+        let mut has_fill_color = false;
+        if let Some(color) = fill_color {
+            let foreground = format!("{}", SetForegroundColor(color));
+            bar.push_str(&foreground);
+            has_fill_color = true;
+        }
+        
+        for _ in 0..filled {
+            bar.push(fill_char);
+        }
+        
+        // Reset color if needed before empty part
+        if has_fill_color {
+            bar.push_str(&format!("{}", ResetColor));
+        }
+        
+        // Add empty part with color
+        let mut has_empty_color = false;
+        if let Some(color) = empty_color {
+            let foreground = format!("{}", SetForegroundColor(color));
+            bar.push_str(&foreground);
+            has_empty_color = true;
+        }
+        
+        for _ in filled..width {
+            bar.push(empty_char);
+        }
+        
+        // Reset color if needed
+        if has_empty_color {
+            bar.push_str(&format!("{}", ResetColor));
+        }
+        
+        // Add right bracket
+        bar.push(right_bracket);
+        
+        Ok(Some(bar))
     }
     
-    /// Format a spinner indicator that changes based on progress
+    /// Format a spinner indicator that rotates through frames
     fn format_spinner_indicator(
         &self,
         progress: f64,
         format_parts: &[&str],
     ) -> Result<Option<String>, ProgressError> {
-        // Get spinner frames
-        let frames = if format_parts.len() > 2 {
-            format_parts[2].chars().collect::<Vec<_>>()
+        // Get spinner frames - use first param directly as frame chars
+        let frames = if !format_parts.is_empty() {
+            format_parts[0].chars().collect::<Vec<_>>()
         } else {
+            // Use default spinner frames
             ProgressIndicator::default_spinner_frames()
                 .join("")
                 .chars()
@@ -484,12 +638,14 @@ impl ProgressTemplate {
         progress: f64,
         format_parts: &[&str],
     ) -> Result<Option<String>, ProgressError> {
-        // Calculate percentage
+        // Calculate percentage (0-100)
         let percent = (progress * 100.0).round() as usize;
         
         // Check if we should include the percent sign
-        let include_sign = format_parts.len() <= 2 || format_parts[2] != "false";
+        // First parameter is "false" if we shouldn't include %
+        let include_sign = format_parts.is_empty() || format_parts[0] != "false";
         
+        // Return formatted number
         if include_sign {
             Ok(Some(format!("{}%", percent)))
         } else {
@@ -501,8 +657,8 @@ impl ProgressTemplate {
     fn format_percent(
         &self,
         var: &TemplateVar,
-        _format_parts: &[&str],
-        _context: &TemplateContext,
+        format_parts: &[&str],
+        context: &TemplateContext,
     ) -> Result<Option<String>, ProgressError> {
         // Extract the progress value (should be a number between 0 and 1)
         let progress = match var {
@@ -634,21 +790,29 @@ impl ProgressTemplate {
         name: String,
         progress: f64,
         format_parts: &[&str],
+        width: usize,
+        smooth_animation: bool,
     ) -> Result<Option<String>, ProgressError> {
-        // Parse the indicator type
-        let indicator_type = name.parse::<CustomIndicatorType>().map_err(|_| {
-            ProgressError::DisplayOperation(format!(
-                "Unknown custom indicator: {}. Valid options are: {}",
-                name,
-                CustomIndicatorType::variants().join(", ")
-            ))
-        })?;
-        
-        // Format based on the indicator type
-        match indicator_type {
-            CustomIndicatorType::Dots => self.format_dots_indicator(progress, format_parts),
-            CustomIndicatorType::Braille => self.format_braille_indicator(progress, format_parts),
-            CustomIndicatorType::Gradient => self.format_gradient_indicator(progress, format_parts),
+        // Look up the custom indicator type
+        match CustomIndicatorType::from_str(&name) {
+            Ok(indicator_type) => {
+                match indicator_type {
+                    CustomIndicatorType::Dots => {
+                        self.format_dots_indicator(progress, format_parts, width, smooth_animation)
+                    }
+                    CustomIndicatorType::Braille => {
+                        self.format_braille_indicator(progress, format_parts, width, smooth_animation)
+                    }
+                    CustomIndicatorType::Gradient => {
+                        self.format_gradient_indicator(progress, format_parts, width, smooth_animation)
+                    }
+                }
+            }
+            Err(_) => {
+                Err(ProgressError::DisplayOperation(
+                    format!("Unknown custom indicator type: {}", name)
+                ))
+            }
         }
     }
     
@@ -658,6 +822,8 @@ impl ProgressTemplate {
         &self,
         progress: f64,
         format_parts: &[&str],
+        width: usize,
+        smooth_animation: bool,
     ) -> Result<Option<String>, ProgressError> {
         // Get the bar width (default: 10)
         let width = if format_parts.len() > 3 {
@@ -699,6 +865,8 @@ impl ProgressTemplate {
         &self,
         progress: f64,
         format_parts: &[&str],
+        width: usize,
+        smooth_animation: bool,
     ) -> Result<Option<String>, ProgressError> {
         // Get the bar width (default: 10)
         let width = if format_parts.len() > 3 {
@@ -744,6 +912,8 @@ impl ProgressTemplate {
         &self,
         progress: f64,
         format_parts: &[&str],
+        width: usize,
+        smooth_animation: bool,
     ) -> Result<Option<String>, ProgressError> {
         use crossterm::style::{Color, Stylize};
         
