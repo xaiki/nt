@@ -2,13 +2,18 @@ use std::sync::{Arc, Mutex};
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicUsize};
 use std::time::{Duration, Instant};
 use std::fmt::Debug;
+use std::fs::{self, File};
+use std::io::{self, Read, Write};
+use std::path::Path;
+
+use serde::{Serialize, Deserialize};
 
 use super::job_traits::HasBaseConfig;
 use super::job_statistics::JobStatistics;
 use crate::config::capabilities::WithProgress;
 
 /// Represents the current status of a job.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum JobStatus {
     /// Job is waiting to be started
     Pending,
@@ -78,6 +83,10 @@ pub struct BaseConfig {
     cancelled: Arc<AtomicBool>,
     /// Reason for cancellation, if any
     cancellation_reason: Arc<Mutex<Option<String>>>,
+    /// Unique identifier for persistence
+    persistence_id: Arc<Mutex<Option<String>>>,
+    /// Whether this job should be persisted
+    has_persistence: Arc<AtomicBool>,
 }
 
 impl BaseConfig {
@@ -109,6 +118,8 @@ impl BaseConfig {
             start_time: Arc::new(Mutex::new(Instant::now())),
             cancelled: Arc::new(AtomicBool::new(false)),
             cancellation_reason: Arc::new(Mutex::new(None)),
+            persistence_id: Arc::new(Mutex::new(None)),
+            has_persistence: Arc::new(AtomicBool::new(false)),
         }
     }
     
@@ -662,6 +673,39 @@ impl BaseConfig {
     pub fn get_cancellation_reason(&self) -> Option<String> {
         self.cancellation_reason.lock().unwrap().clone()
     }
+    
+    /// Get the persistence ID for this job.
+    ///
+    /// # Returns
+    /// The persistence ID, or None if no ID has been set
+    pub fn get_persistence_id(&self) -> Option<String> {
+        self.persistence_id.lock().unwrap().clone()
+    }
+    
+    /// Set the persistence ID for this job.
+    ///
+    /// # Parameters
+    /// * `id` - The new persistence ID
+    pub fn set_persistence_id(&mut self, id: String) {
+        *self.persistence_id.lock().unwrap() = Some(id);
+        self.has_persistence.store(true, std::sync::atomic::Ordering::SeqCst);
+    }
+    
+    /// Check if this job has a persistence ID.
+    ///
+    /// # Returns
+    /// `true` if the job has a persistence ID, `false` otherwise
+    pub fn has_persistence_id(&self) -> bool {
+        self.has_persistence.load(std::sync::atomic::Ordering::SeqCst)
+    }
+    
+    /// Clear the persistence ID for this job.
+    ///
+    /// This will remove the persistence ID and set has_persistence to false.
+    pub fn clear_persistence_id(&mut self) {
+        *self.persistence_id.lock().unwrap() = None;
+        self.has_persistence.store(false, std::sync::atomic::Ordering::SeqCst);
+    }
 }
 
 impl HasBaseConfig for BaseConfig {
@@ -733,6 +777,223 @@ impl WithProgress for BaseConfig {
     
     fn get_progress_format(&self) -> &str {
         self.get_progress_format()
+    }
+}
+
+/// Serializable representation of job state for persistence.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct JobState {
+    /// Job persistence identifier
+    pub persistence_id: String,
+    /// Total number of jobs
+    pub total_jobs: usize,
+    /// Number of completed jobs
+    pub completed_jobs: usize,
+    /// Progress format string
+    pub progress_format: String,
+    /// Parent job ID
+    pub parent_job_id: Option<usize>,
+    /// Child job IDs
+    pub child_job_ids: Vec<usize>,
+    /// Whether the job is paused
+    pub paused: bool,
+    /// Job priority
+    pub priority: u32,
+    /// Job dependencies
+    pub dependencies: Vec<usize>,
+    /// Number of failures
+    pub failure_count: usize,
+    /// Error message
+    pub error_message: Option<String>,
+    /// Number of retries
+    pub retry_count: usize,
+    /// Maximum retries
+    pub max_retries: usize,
+    /// Job status
+    pub status: JobStatus,
+    /// Progress speed
+    pub progress_speed: Option<f64>,
+    /// Estimated time remaining in milliseconds
+    pub estimated_time_remaining_ms: Option<u64>,
+    /// Elapsed time in milliseconds
+    pub elapsed_time_ms: u64,
+    /// Whether the job is cancelled
+    pub cancelled: bool,
+    /// Cancellation reason
+    pub cancellation_reason: Option<String>,
+}
+
+impl JobState {
+    /// Creates a new JobState from a BaseConfig.
+    pub fn from_base_config(config: &BaseConfig) -> io::Result<Self> {
+        let persistence_id = config.get_persistence_id()
+            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "No persistence ID set"))?;
+        
+        let estimated_time_remaining_ms = config.get_estimated_time_remaining()
+            .map(|d| d.as_millis() as u64);
+        
+        Ok(Self {
+            persistence_id,
+            total_jobs: config.total_jobs,
+            completed_jobs: config.get_completed_jobs(),
+            progress_format: config.progress_format.clone(),
+            parent_job_id: config.parent_job_id,
+            child_job_ids: config.get_child_job_ids(),
+            paused: config.is_paused(),
+            priority: config.get_priority(),
+            dependencies: config.get_dependencies(),
+            failure_count: config.get_failure_count(),
+            error_message: config.get_error_message(),
+            retry_count: config.get_retry_count(),
+            max_retries: config.get_max_retries(),
+            status: *config.status.lock().unwrap(),
+            progress_speed: *config.progress_speed.lock().unwrap(),
+            estimated_time_remaining_ms,
+            elapsed_time_ms: config.get_elapsed_time().as_millis() as u64,
+            cancelled: config.is_cancelled(),
+            cancellation_reason: config.get_cancellation_reason(),
+        })
+    }
+    
+    /// Applies this JobState to a BaseConfig.
+    pub fn apply_to_base_config(&self, config: &mut BaseConfig) {
+        config.set_persistence_id(self.persistence_id.clone());
+        config.set_total_jobs(self.total_jobs);
+        config.set_completed_jobs(self.completed_jobs);
+        config.set_progress_format(&self.progress_format);
+        
+        if let Some(parent_id) = self.parent_job_id {
+            config.set_parent_job_id(parent_id);
+        }
+        
+        // Reset child jobs and re-add them
+        {
+            let mut children = config.child_job_ids.lock().unwrap();
+            children.clear();
+            children.extend_from_slice(&self.child_job_ids);
+        }
+        
+        // Set paused state
+        if self.paused {
+            config.pause();
+        } else {
+            config.resume();
+        }
+        
+        config.set_priority(self.priority);
+        
+        // Reset dependencies and re-add them
+        {
+            let mut deps = config.dependencies.lock().unwrap();
+            deps.clear();
+            deps.extend_from_slice(&self.dependencies);
+        }
+        
+        // Set failure information
+        if self.failure_count > 0 {
+            // Set failure count
+            config.failure_count.store(self.failure_count, std::sync::atomic::Ordering::SeqCst);
+            
+            // Set error message if available
+            if let Some(error) = &self.error_message {
+                *config.error_message.lock().unwrap() = Some(error.clone());
+            }
+        }
+        
+        // Set retry information
+        config.retry_count.store(self.retry_count, std::sync::atomic::Ordering::SeqCst);
+        config.set_max_retries(self.max_retries);
+        
+        // Set job status
+        *config.status.lock().unwrap() = self.status;
+        
+        // Set progress speed
+        *config.progress_speed.lock().unwrap() = self.progress_speed;
+        
+        // Set estimated time remaining
+        if let Some(ms) = self.estimated_time_remaining_ms {
+            *config.estimated_time_remaining.lock().unwrap() = Some(Duration::from_millis(ms));
+        } else {
+            *config.estimated_time_remaining.lock().unwrap() = None;
+        }
+        
+        // Set cancellation status
+        if self.cancelled {
+            config.set_cancelled(self.cancellation_reason.clone());
+        }
+    }
+}
+
+impl BaseConfig {
+    /// Save the current job state to the specified path.
+    ///
+    /// # Parameters
+    /// * `path` - The path to save the job state to
+    ///
+    /// # Returns
+    /// `Ok(())` if the job state was successfully saved, or an error otherwise
+    pub fn save_state(&self, path: &str) -> io::Result<()> {
+        // Check if we have a persistence ID
+        if !self.has_persistence_id() {
+            return Err(io::Error::new(io::ErrorKind::InvalidData, "No persistence ID set"));
+        }
+        
+        // Create the job state
+        let state = JobState::from_base_config(self)?;
+        
+        // Serialize to JSON
+        let json = serde_json::to_string_pretty(&state)
+            .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+        
+        // Ensure the directory exists
+        if let Some(parent) = Path::new(path).parent() {
+            fs::create_dir_all(parent)?;
+        }
+        
+        // Write to file
+        let mut file = File::create(path)?;
+        file.write_all(json.as_bytes())?;
+        
+        Ok(())
+    }
+    
+    /// Load job state from the specified path.
+    ///
+    /// # Parameters
+    /// * `path` - The path to load the job state from
+    ///
+    /// # Returns
+    /// `Ok(())` if the job state was successfully loaded, or an error otherwise
+    pub fn load_state(&mut self, path: &str) -> io::Result<()> {
+        // Check if the file exists
+        if !Path::new(path).exists() {
+            return Err(io::Error::new(io::ErrorKind::NotFound, "Job state file not found"));
+        }
+        
+        // Read the file
+        let mut file = File::open(path)?;
+        let mut contents = String::new();
+        file.read_to_string(&mut contents)?;
+        
+        // Deserialize from JSON
+        let state: JobState = serde_json::from_str(&contents)
+            .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+        
+        // Apply the state
+        state.apply_to_base_config(self);
+        
+        Ok(())
+    }
+    
+    /// Check if a job state exists at the specified path.
+    ///
+    /// # Parameters
+    /// * `path` - The path to check for existing job state
+    ///
+    /// # Returns
+    /// `true` if job state exists at the path, `false` otherwise
+    pub fn state_exists(path: &str) -> bool {
+        Path::new(path).exists()
     }
 }
 

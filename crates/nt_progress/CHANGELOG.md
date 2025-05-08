@@ -2,6 +2,18 @@
 
 This file contains completed tasks and improvements moved from the TODO.md file.
 
+## v0.1.40 (2025-05-11)
+
+### Added Job Persistence for Long-Running Operations
+- Implemented job persistence capabilities for long-running operations
+  - Added PersistentJob trait for saving and loading job state
+  - Created JobState serializable structure using serde for JSON serialization
+  - Added persistence_id and storage functionality to BaseConfig
+  - Implemented methods to save and load job state to/from files
+  - Added comprehensive tests for job persistence functionality
+  - Maintained backward compatibility with existing job tracking systems
+  - Added generic implementation for all types that implement HasBaseConfig
+
 ## v0.1.39 (2025-05-10)
 
 ### Added Job Statistics and Reporting

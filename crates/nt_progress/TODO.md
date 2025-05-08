@@ -113,7 +113,7 @@ The `nt_progress` library provides a flexible and thread-safe progress display f
   - [x] Estimated time remaining calculations
   - [x] Job cancellation
   - [x] Job statistics and reporting
-  - [ ] Job persistence for long-running operations
+  - [x] Job persistence for long-running operations
 - [x] Add support for custom progress indicators
 - [ ] Implement progress bar customization
 - [ ] Add support for multiple progress bars
@@ -205,6 +205,7 @@ The `nt_progress` library provides a flexible and thread-safe progress display f
   - Added comprehensive job status tracking system
   - Added retry limits and error message tracking
   - Added job statistics and reporting capabilities
+  - Added job persistence for long-running operations
 - Code cleanup and maintenance
   - Fixed dead code and linter warnings
   - Removed unused methods and improved code quality

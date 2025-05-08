@@ -376,6 +376,64 @@ pub trait TimeTrackingJob: JobTracker {
     fn update_time_estimates(&self) -> f64;
 }
 
+/// Trait for jobs that can be persisted to storage for long-running operations.
+///
+/// This trait extends JobTracker to support persistence operations,
+/// allowing job state to be saved to and loaded from storage for use
+/// across multiple program executions or restarts.
+pub trait PersistentJob: 
+    JobTracker + 
+    JobStatusTracker + 
+    TimeTrackingJob + 
+    FailureHandlingJob +
+    HierarchicalJobTracker
+{
+    /// Save the current job state to the specified path.
+    ///
+    /// # Parameters
+    /// * `path` - The path to save the job state to
+    ///
+    /// # Returns
+    /// `Ok(())` if the job state was successfully saved, or an error otherwise
+    fn save_state(&self, path: &str) -> std::io::Result<()>;
+    
+    /// Load job state from the specified path.
+    ///
+    /// # Parameters
+    /// * `path` - The path to load the job state from
+    ///
+    /// # Returns
+    /// `Ok(())` if the job state was successfully loaded, or an error otherwise
+    fn load_state(&mut self, path: &str) -> std::io::Result<()>;
+    
+    /// Check if a job state exists at the specified path.
+    ///
+    /// # Parameters
+    /// * `path` - The path to check for existing job state
+    ///
+    /// # Returns
+    /// `true` if job state exists at the path, `false` otherwise
+    fn state_exists(path: &str) -> bool;
+    
+    /// Generate a unique identifier for the job for persistence purposes.
+    ///
+    /// # Returns
+    /// A string identifier for the job
+    fn get_persistence_id(&self) -> String;
+    
+    /// Set the persistence identifier for the job.
+    ///
+    /// # Parameters
+    /// * `id` - The new identifier for the job
+    fn set_persistence_id(&mut self, id: String);
+    
+    /// Check if the job has a persistence identifier.
+    ///
+    /// # Returns
+    /// `true` if the job has a persistence ID, `false` otherwise
+    fn has_persistence_id(&self) -> bool;
+}
+
 // Generic implementations for base traits
 
 impl<T: HasBaseConfig + Send + Sync + Debug> JobTracker for T {
@@ -583,11 +641,40 @@ impl<T: HasBaseConfig + Send + Sync + Debug> TimeTrackingJob for T {
     }
 }
 
+impl<T: HasBaseConfig + Send + Sync + Debug> PersistentJob for T {
+    fn save_state(&self, path: &str) -> std::io::Result<()> {
+        self.base_config().save_state(path)
+    }
+    
+    fn load_state(&mut self, path: &str) -> std::io::Result<()> {
+        self.base_config_mut().load_state(path)
+    }
+    
+    fn state_exists(path: &str) -> bool {
+        super::base_config::BaseConfig::state_exists(path)
+    }
+    
+    fn get_persistence_id(&self) -> String {
+        self.base_config().get_persistence_id()
+            .unwrap_or_default()
+    }
+    
+    fn set_persistence_id(&mut self, id: String) {
+        self.base_config_mut().set_persistence_id(id);
+    }
+    
+    fn has_persistence_id(&self) -> bool {
+        self.base_config().has_persistence_id()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use super::super::base_config::{BaseConfig, JobStatus};
     use std::time::Duration;
+    use std::fs;
+    use std::path::Path;
     
     // Simple test struct that implements HasBaseConfig
     #[derive(Debug)]
@@ -811,6 +898,70 @@ mod tests {
         // ETA should be None or very small after completion
         if let Some(time) = tracker.get_estimated_time_remaining() {
             assert!(time.as_secs() < 1, "ETA should be very small after completion");
+        }
+    }
+    
+    #[test]
+    fn test_persistent_job_impl() {
+        // Create a temporary file path for testing
+        let test_dir = std::env::temp_dir().join("nt_progress_test");
+        fs::create_dir_all(&test_dir).unwrap();
+        let test_file = test_dir.join("test_job_state.json").to_str().unwrap().to_string();
+        
+        // Clean up from any previous test runs
+        if Path::new(&test_file).exists() {
+            fs::remove_file(&test_file).unwrap();
+        }
+        
+        // Create a test job with BaseConfig
+        let mut job = TestTracker::new(100);
+        
+        // Set a persistence ID
+        job.set_persistence_id("test-job-123".to_string());
+        assert!(job.has_persistence_id());
+        assert_eq!(job.get_persistence_id(), "test-job-123");
+        
+        // Modify job state
+        job.set_total_jobs(150);
+        job.increment_completed_jobs();
+        job.increment_completed_jobs();
+        job.mark_running();
+        job.add_child_job(1);
+        job.add_child_job(2);
+        job.set_priority(5);
+        job.add_dependency(10);
+        job.set_max_retries(5);
+        
+        // Save state
+        job.save_state(&test_file).unwrap();
+        
+        // Verify file exists
+        assert!(Path::new(&test_file).exists());
+        assert!(BaseConfig::state_exists(&test_file));
+        
+        // Create a new job and load state
+        let mut new_job = TestTracker::new(0);
+        
+        // Load state into the new job
+        new_job.load_state(&test_file).unwrap();
+        
+        // Verify state was loaded correctly
+        assert_eq!(new_job.get_persistence_id(), "test-job-123");
+        assert_eq!(new_job.get_total_jobs(), 150);
+        assert_eq!(new_job.base_config().get_completed_jobs(), 2);
+        assert_eq!(new_job.get_status(), JobStatus::Running);
+        assert_eq!(new_job.get_child_job_ids().len(), 2);
+        assert!(new_job.get_child_job_ids().contains(&1));
+        assert!(new_job.get_child_job_ids().contains(&2));
+        assert_eq!(new_job.get_priority(), 5);
+        assert_eq!(new_job.get_dependencies().len(), 1);
+        assert!(new_job.get_dependencies().contains(&10));
+        assert_eq!(new_job.get_max_retries(), 5);
+        
+        // Clean up
+        fs::remove_file(&test_file).unwrap();
+        if Path::new(&test_dir).exists() {
+            fs::remove_dir_all(&test_dir).unwrap();
         }
     }
 } 
