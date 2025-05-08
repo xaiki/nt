@@ -11,7 +11,7 @@ use crate::modes::factory::ModeFactory;
 use crate::ThreadMessage;
 use tokio::task::JoinHandle;
 use tokio::sync::mpsc;
-use crate::progress_bar::{ProgressBar, ProgressBarConfig, ProgressBarStyle};
+use crate::progress_bar::{ProgressBar, ProgressBarConfig, ProgressBarStyle, MultiProgressBar};
 
 /// Manages progress tracking and state across multiple threads/tasks
 pub struct ProgressManager {
@@ -23,6 +23,8 @@ pub struct ProgressManager {
     factory: Arc<ModeFactory>,
     /// Sender for ThreadMessage channel
     message_tx: mpsc::Sender<ThreadMessage>,
+    /// Collection of multi-progress bars for grouped display
+    multi_bars: Arc<Mutex<HashMap<String, MultiProgressBar>>>,
 }
 
 impl ProgressManager {
@@ -33,6 +35,7 @@ impl ProgressManager {
             thread_manager: Arc::new(ThreadManager::new()),
             factory,
             message_tx,
+            multi_bars: Arc::new(Mutex::new(HashMap::new())),
         }
     }
     
@@ -632,5 +635,180 @@ impl ProgressManager {
         }
         
         Ok(())
+    }
+    
+    /// Create a new multi-progress bar group
+    ///
+    /// # Parameters
+    /// * `group_id` - The ID for the new multi-progress bar group
+    ///
+    /// # Returns
+    /// Ok(()) if the group was created successfully
+    pub async fn create_multi_progress_bar_group(&self, group_id: impl Into<String>) -> Result<()> {
+        let group_id = group_id.into();
+        let mut multi_bars = self.multi_bars.lock().await;
+        
+        if multi_bars.contains_key(&group_id) {
+            let ctx = ErrorContext::new("creating multi-progress bar group", "ProgressManager")
+                .with_details(format!("Group ID '{}' already exists", &group_id));
+            
+            let error_msg = format!("Multi-progress bar group '{}' already exists", group_id);
+            let error = ProgressError::DisplayOperation(error_msg).into_context(ctx);
+            return Err(anyhow::anyhow!(error));
+        }
+        
+        multi_bars.insert(group_id, MultiProgressBar::new());
+        Ok(())
+    }
+    
+    /// Add a progress bar to a multi-progress bar group
+    ///
+    /// # Parameters
+    /// * `group_id` - The ID of the multi-progress bar group
+    /// * `bar_id` - The ID for the new progress bar
+    /// * `config` - Configuration for the progress bar
+    ///
+    /// # Returns
+    /// Ok(()) if the progress bar was added successfully
+    pub async fn add_progress_bar(&self, group_id: &str, bar_id: impl Into<String>, config: ProgressBarConfig) -> Result<()> {
+        let bar_id = bar_id.into();
+        let mut multi_bars = self.multi_bars.lock().await;
+        
+        if let Some(group) = multi_bars.get_mut(group_id) {
+            let bar = ProgressBar::new(config);
+            group.add(bar_id, bar);
+            Ok(())
+        } else {
+            let ctx = ErrorContext::new("adding progress bar", "ProgressManager")
+                .with_details(format!("Group ID '{}' does not exist", group_id));
+            
+            let error_msg = format!("Multi-progress bar group '{}' not found", group_id);
+            let error = ProgressError::DisplayOperation(error_msg).into_context(ctx);
+            Err(anyhow::anyhow!(error))
+        }
+    }
+    
+    /// Update a progress bar in a multi-progress bar group
+    ///
+    /// # Parameters
+    /// * `group_id` - The ID of the multi-progress bar group
+    /// * `bar_id` - The ID of the progress bar to update
+    /// * `current` - The current value
+    /// * `total` - The total value
+    ///
+    /// # Returns
+    /// Ok(()) if the progress bar was updated successfully
+    pub async fn update_multi_progress_bar(&self, group_id: &str, bar_id: &str, current: usize, total: usize) -> Result<()> {
+        let mut multi_bars = self.multi_bars.lock().await;
+        
+        if let Some(group) = multi_bars.get_mut(group_id) {
+            group.update_with_values(bar_id, current, total);
+            Ok(())
+        } else {
+            let ctx = ErrorContext::new("updating multi-progress bar", "ProgressManager")
+                .with_details(format!("Group ID '{}' does not exist", group_id));
+            
+            let error_msg = format!("Multi-progress bar group '{}' not found", group_id);
+            let error = ProgressError::DisplayOperation(error_msg).into_context(ctx);
+            Err(anyhow::anyhow!(error))
+        }
+    }
+    
+    /// Remove a progress bar from a multi-progress bar group
+    ///
+    /// # Parameters
+    /// * `group_id` - The ID of the multi-progress bar group
+    /// * `bar_id` - The ID of the progress bar to remove
+    ///
+    /// # Returns
+    /// Ok(()) if the progress bar was removed successfully
+    pub async fn remove_progress_bar(&self, group_id: &str, bar_id: &str) -> Result<()> {
+        let mut multi_bars = self.multi_bars.lock().await;
+        
+        if let Some(group) = multi_bars.get_mut(group_id) {
+            group.remove(bar_id);
+            Ok(())
+        } else {
+            let ctx = ErrorContext::new("removing progress bar", "ProgressManager")
+                .with_details(format!("Group ID '{}' does not exist", group_id));
+            
+            let error_msg = format!("Multi-progress bar group '{}' not found", group_id);
+            let error = ProgressError::DisplayOperation(error_msg).into_context(ctx);
+            Err(anyhow::anyhow!(error))
+        }
+    }
+    
+    /// Remove a multi-progress bar group
+    ///
+    /// # Parameters
+    /// * `group_id` - The ID of the multi-progress bar group to remove
+    ///
+    /// # Returns
+    /// Ok(()) if the group was removed successfully
+    pub async fn remove_multi_progress_bar_group(&self, group_id: &str) -> Result<()> {
+        let mut multi_bars = self.multi_bars.lock().await;
+        
+        if multi_bars.remove(group_id).is_some() {
+            Ok(())
+        } else {
+            let ctx = ErrorContext::new("removing multi-progress bar group", "ProgressManager")
+                .with_details(format!("Group ID '{}' does not exist", group_id));
+            
+            let error_msg = format!("Multi-progress bar group '{}' not found", group_id);
+            let error = ProgressError::DisplayOperation(error_msg).into_context(ctx);
+            Err(anyhow::anyhow!(error))
+        }
+    }
+    
+    /// Get the rendered output of a multi-progress bar group
+    ///
+    /// # Parameters
+    /// * `group_id` - The ID of the multi-progress bar group
+    ///
+    /// # Returns
+    /// The rendered output of the multi-progress bar group
+    pub async fn render_multi_progress_bar_group(&self, group_id: &str) -> Result<String> {
+        let multi_bars = self.multi_bars.lock().await;
+        
+        if let Some(group) = multi_bars.get(group_id) {
+            Ok(group.render())
+        } else {
+            let ctx = ErrorContext::new("rendering multi-progress bar group", "ProgressManager")
+                .with_details(format!("Group ID '{}' does not exist", group_id));
+            
+            let error_msg = format!("Multi-progress bar group '{}' not found", group_id);
+            let error = ProgressError::DisplayOperation(error_msg).into_context(ctx);
+            Err(anyhow::anyhow!(error))
+        }
+    }
+    
+    /// Display a multi-progress bar group on a specific task
+    ///
+    /// # Parameters
+    /// * `thread_id` - The ID of the thread to display on
+    /// * `group_id` - The ID of the multi-progress bar group
+    ///
+    /// # Returns
+    /// Ok(()) if the multi-progress bar group was displayed successfully
+    pub async fn display_multi_progress_bar_group(&self, thread_id: usize, group_id: &str) -> Result<()> {
+        let rendered = self.render_multi_progress_bar_group(group_id).await?;
+        
+        if let Some(mut handle) = self.thread_manager.get_task(thread_id).await {
+            handle.capture_stdout(rendered).await?;
+            Ok(())
+        } else {
+            let ctx = ErrorContext::new("displaying multi-progress bar group", "ProgressManager")
+                .with_thread_id(thread_id)
+                .with_details("Thread not found");
+            
+            let error_msg = format!("Thread {} not found", thread_id);
+            let error = ProgressError::TaskOperation(error_msg).into_context(ctx);
+            Err(anyhow::anyhow!(error))
+        }
+    }
+    
+    /// Get a reference to the multi-progress bar map
+    pub fn multi_bars(&self) -> &Arc<Mutex<HashMap<String, MultiProgressBar>>> {
+        &self.multi_bars
     }
 } 

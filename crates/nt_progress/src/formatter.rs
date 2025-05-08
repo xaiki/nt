@@ -267,7 +267,7 @@ impl ProgressTemplate {
         &self,
         var: &TemplateVar,
         format_parts: &[&str],
-        _context: &TemplateContext,
+        context: &TemplateContext,
     ) -> Result<Option<String>, ProgressError> {
         if format_parts.is_empty() {
             return Ok(Some(var.as_string()));
@@ -277,11 +277,11 @@ impl ProgressTemplate {
         let params = &format_parts[1..];
         
         match format {
-            "bar" => self.format_bar(var, params, _context),
-            "percent" => self.format_percent(var, params, _context),
-            "ratio" => self.format_ratio(var, params, _context),
-            "pad" | "lpad" | "rpad" => self.format_padding(var, format, params, _context),
-            "color" => self.format_color(var, params, _context),
+            "bar" => self.format_bar(var, params, context),
+            "percent" => self.format_percent(var, params, context),
+            "ratio" => self.format_ratio(var, params, context),
+            "pad" | "lpad" | "rpad" => self.format_padding(var, format, params, context),
+            "color" => self.format_color(var, params, context),
             _ => Ok(Some(var.as_string())),
         }
     }
@@ -693,20 +693,13 @@ impl ProgressTemplate {
             }
         };
         
-        // Get the denominator from format or context
-        let denominator = if format_parts.len() > 1 {
-            // Try to parse directly
-            if let Ok(n) = format_parts[1].parse::<usize>() {
-                n
-            } else {
-                // Try to get from context
-                match context.get(format_parts[1]) {
-                    Some(TemplateVar::Number(n)) => *n as usize,
-                    _ => 100, // Default
-                }
-            }
+        // Get the denominator from context or format_parts
+        let denominator = if !format_parts.is_empty() {
+            format_parts[0].parse::<usize>().unwrap_or(10)
+        } else if let Some(TemplateVar::Number(n)) = context.get("total") {
+            *n as usize
         } else {
-            100 // Default
+            100
         };
         
         Ok(Some(format!("{}/{}", numerator, denominator)))
@@ -720,68 +713,84 @@ impl ProgressTemplate {
         format_parts: &[&str],
         _context: &TemplateContext,
     ) -> Result<Option<String>, ProgressError> {
-        let text = var.as_string();
-        
-        // Get the padding width (default: text length)
-        let width = if format_parts.len() > 1 {
-            format_parts[1].parse::<usize>().unwrap_or(text.len())
+        // Get the width parameter or default to 10
+        let width = if !format_parts.is_empty() {
+            format_parts[0].parse::<usize>().unwrap_or(10)
         } else {
-            text.len()
+            10
         };
         
+        let text = var.as_string();
+        
         match format {
-            "lpad" => Ok(Some(format!("{:>width$}", text, width = width))),
-            "rpad" => Ok(Some(format!("{:<width$}", text, width = width))),
-            _ => Ok(Some(format!("{:^width$}", text, width = width))), // Center padding
+            "pad" => {
+                // Center padding
+                let padding = width.saturating_sub(text.len());
+                let left_padding = padding / 2;
+                let right_padding = padding - left_padding;
+                let padded = format!("{}{}{}", 
+                    " ".repeat(left_padding), 
+                    text, 
+                    " ".repeat(right_padding)
+                );
+                Ok(Some(padded))
+            },
+            "lpad" => {
+                // Left padding (right-aligned)
+                let padding = width.saturating_sub(text.len());
+                let padded = format!("{}{}", " ".repeat(padding), text);
+                Ok(Some(padded))
+            },
+            "rpad" => {
+                // Right padding (left-aligned)
+                let padding = width.saturating_sub(text.len());
+                let padded = format!("{}{}", text, " ".repeat(padding));
+                Ok(Some(padded))
+            },
+            _ => Ok(Some(text)),
         }
     }
     
-    /// Format a variable with color
+    // Format a variable with a color
     fn format_color(
         &self,
         var: &TemplateVar,
         format_parts: &[&str],
         _context: &TemplateContext,
     ) -> Result<Option<String>, ProgressError> {
-        // Extract the text value
-        let text = var.as_string();
-        
-        // Get the color from format
-        if format_parts.len() < 2 {
+        if format_parts.is_empty() {
             return Err(ProgressError::DisplayOperation(
                 "Color format requires a color name".to_string(),
             ));
         }
         
-        let color_name = format_parts[1].trim();
+        let color_name = format_parts[0];
         let color = match ColorName::from_str(color_name) {
             Some(c) => c,
-            None => {
-                return Err(ProgressError::DisplayOperation(
-                    format!("Unknown color: {}", color_name),
-                ));
-            }
+            None => return Err(ProgressError::DisplayOperation(
+                format!("Unknown color: {}", color_name),
+            )),
         };
         
         // Convert to crossterm Color and then to ANSI code
         let crossterm_color = color.to_color();
         let color_code = match crossterm_color {
-            Color::Black => "\x1B[30m",
-            Color::Red => "\x1B[31m",
-            Color::Green => "\x1B[32m",
-            Color::Yellow => "\x1B[33m", 
-            Color::Blue => "\x1B[34m",
-            Color::Magenta => "\x1B[35m",
-            Color::Cyan => "\x1B[36m",
-            Color::White => "\x1B[37m",
-            Color::Reset => "\x1B[0m",
-            _ => "\x1B[0m", // Default to reset for other colors
+            Color::Black => "30",
+            Color::Red => "31",
+            Color::Green => "32",
+            Color::Yellow => "33", 
+            Color::Blue => "34",
+            Color::Magenta => "35",
+            Color::Cyan => "36",
+            Color::White => "37",
+            Color::Reset => "0",
+            _ => "0", // Default to reset for other colors
         };
         
-        // Apply color to text and reset after
-        let colored_text = format!("{}{}\x1B[0m", color_code, text);
+        let text = var.as_string();
         
-        Ok(Some(colored_text))
+        // Apply color to text and reset after
+        Ok(Some(format!("\x1B[{}m{}\x1B[0m", color_code, text)))
     }
     
     /// Format a custom indicator defined by the user

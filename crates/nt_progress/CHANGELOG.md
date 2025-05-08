@@ -2,6 +2,16 @@
 
 This file contains completed tasks and improvements moved from the TODO.md file.
 
+## v0.1.42 (2025-05-12)
+
+### Features
+- Added support for multiple progress bars
+  - Implemented MultiProgressBar struct for managing groups of progress bars
+  - Added methods to ProgressManager for handling multi-progress bars
+  - Added convenience methods to ProgressDisplay for working with multi-progress bars
+  - Created tests for the new functionality
+  - Can display multiple bars with different styles and progress in a single view
+
 ## v0.1.41 (2025-05-12)
 
 ### Bug Fixes

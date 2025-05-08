@@ -1,5 +1,5 @@
 use anyhow::Result;
-use nt_progress::{ProgressDisplay, ThreadMode};
+use nt_progress::{ProgressDisplay, ThreadMode, ProgressBarConfig, ProgressBarStyle};
 use std::time::Duration;
 use tokio::time::sleep;
 
@@ -160,6 +160,79 @@ async fn test_get_elapsed_time() -> Result<()> {
            "Elapsed time should continue increasing");
     
     // Properly clean up
+    display.stop().await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_multi_progress_bar() -> anyhow::Result<()> {
+    // Create the progress display
+    let display = ProgressDisplay::new().await?;
+    
+    // Create a window mode task to display the multi-progress bars
+    let task = display.create_task(nt_progress::ThreadMode::Window(10), 1).await?;
+    
+    // Create a multi-progress bar group
+    display.create_multi_progress_bar_group("downloads").await?;
+    
+    // Add several progress bars with different styles
+    display.add_progress_bar(
+        "downloads", 
+        "file1", 
+        ProgressBarConfig::new()
+            .prefix("File 1")
+            .width(20)
+            .style(ProgressBarStyle::Standard)
+    ).await?;
+    
+    display.add_progress_bar(
+        "downloads", 
+        "file2", 
+        ProgressBarConfig::new()
+            .prefix("File 2")
+            .width(20)
+            .style(ProgressBarStyle::Block)
+    ).await?;
+    
+    display.add_progress_bar(
+        "downloads", 
+        "file3", 
+        ProgressBarConfig::new()
+            .prefix("File 3")
+            .width(20)
+            .style(ProgressBarStyle::Gradient)
+            .show_speed(true)
+            .show_eta(true)
+    ).await?;
+    
+    // Display the multi-progress bar group on the task
+    display.display_multi_progress_bar_group(task.thread_id(), "downloads").await?;
+    
+    // Update progress bars over time
+    for i in 0..=10 {
+        let progress = i * 10;
+        
+        // Update each progress bar with different progress levels
+        display.update_multi_progress_bar("downloads", "file1", progress, 100).await?;
+        display.update_multi_progress_bar("downloads", "file2", progress / 2, 100).await?;
+        display.update_multi_progress_bar("downloads", "file3", progress * 2, 200).await?;
+        
+        // Display updated progress
+        display.display_multi_progress_bar_group(task.thread_id(), "downloads").await?;
+        
+        // Short pause to see the progress
+        sleep(Duration::from_millis(200)).await;
+    }
+    
+    // Remove one progress bar
+    display.remove_progress_bar("downloads", "file2").await?;
+    display.display_multi_progress_bar_group(task.thread_id(), "downloads").await?;
+    sleep(Duration::from_millis(500)).await;
+    
+    // Remove the entire group
+    display.remove_multi_progress_bar_group("downloads").await?;
+    
+    // Clean up
     display.stop().await?;
     Ok(())
 } 

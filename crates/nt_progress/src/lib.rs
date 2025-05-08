@@ -15,9 +15,7 @@ use tokio::{
 use anyhow::{Result, anyhow};
 use std::fmt::Debug;
 use std::cell::RefCell;
-use crate::errors::{ErrorContext, ProgressError};
 use crate::modes::factory::ModeFactory;
-use crate::thread::TaskHandle;
 use crate::renderer::Renderer;
 use crate::progress_manager::ProgressManager;
 pub mod io;
@@ -38,10 +36,14 @@ pub mod tests;
 pub use modes::{ModeRegistry, ModeCreator};
 pub use core::ThreadConfig;
 pub use config::{Config, ModeParameters, ThreadMode};
-pub use errors::ModeCreationError;
+pub use errors::{ModeCreationError, ProgressError, ErrorContext};
 pub use formatter::{ProgressTemplate, TemplateContext, TemplateVar, TemplatePreset, ColorName, ProgressIndicator};
 pub use io::{ProgressWriter, OutputBuffer, TeeWriter};
 pub use io::custom::{CustomWriter, WriterCapabilities, WriterRegistry};
+pub use thread::TaskHandle;
+pub use core::job_traits::{JobTracker, HierarchicalJobTracker, JobStatusTracker};
+pub use core::job_traits::{FailureHandlingJob, PausableJob, PrioritizedJob, DependentJob, PersistentJob};
+pub use progress_bar::{ProgressBar, ProgressBarConfig, ProgressBarStyle, MultiProgressBar};
 
 thread_local! {
     static CURRENT_THREAD_ID: AtomicUsize = const { AtomicUsize::new(0) };
@@ -490,6 +492,79 @@ impl ProgressDisplay {
     /// A Result indicating success or an error
     pub async fn resume_all(&self) -> Result<()> {
         self.progress_manager.resume_all().await
+    }
+
+    /// Create a new multi-progress bar group
+    ///
+    /// # Parameters
+    /// * `group_id` - The ID for the new multi-progress bar group
+    ///
+    /// # Returns
+    /// A Result containing () or an error
+    pub async fn create_multi_progress_bar_group(&self, group_id: impl Into<String>) -> Result<()> {
+        self.progress_manager.create_multi_progress_bar_group(group_id).await
+    }
+
+    /// Add a progress bar to a multi-progress bar group
+    ///
+    /// # Parameters
+    /// * `group_id` - The ID of the multi-progress bar group
+    /// * `bar_id` - The ID for the new progress bar
+    /// * `config` - Configuration for the progress bar
+    ///
+    /// # Returns
+    /// A Result containing () or an error
+    pub async fn add_progress_bar(&self, group_id: &str, bar_id: impl Into<String>, config: ProgressBarConfig) -> Result<()> {
+        self.progress_manager.add_progress_bar(group_id, bar_id, config).await
+    }
+
+    /// Update a progress bar in a multi-progress bar group
+    ///
+    /// # Parameters
+    /// * `group_id` - The ID of the multi-progress bar group
+    /// * `bar_id` - The ID of the progress bar to update
+    /// * `current` - The current value
+    /// * `total` - The total value
+    ///
+    /// # Returns
+    /// A Result containing () or an error
+    pub async fn update_multi_progress_bar(&self, group_id: &str, bar_id: &str, current: usize, total: usize) -> Result<()> {
+        self.progress_manager.update_multi_progress_bar(group_id, bar_id, current, total).await
+    }
+
+    /// Remove a progress bar from a multi-progress bar group
+    ///
+    /// # Parameters
+    /// * `group_id` - The ID of the multi-progress bar group
+    /// * `bar_id` - The ID of the progress bar to remove
+    ///
+    /// # Returns
+    /// A Result containing () or an error
+    pub async fn remove_progress_bar(&self, group_id: &str, bar_id: &str) -> Result<()> {
+        self.progress_manager.remove_progress_bar(group_id, bar_id).await
+    }
+
+    /// Remove a multi-progress bar group
+    ///
+    /// # Parameters
+    /// * `group_id` - The ID of the multi-progress bar group to remove
+    ///
+    /// # Returns
+    /// A Result containing () or an error
+    pub async fn remove_multi_progress_bar_group(&self, group_id: &str) -> Result<()> {
+        self.progress_manager.remove_multi_progress_bar_group(group_id).await
+    }
+
+    /// Display a multi-progress bar group on a specific task
+    ///
+    /// # Parameters
+    /// * `thread_id` - The ID of the thread to display on
+    /// * `group_id` - The ID of the multi-progress bar group
+    ///
+    /// # Returns
+    /// A Result containing () or an error
+    pub async fn display_multi_progress_bar_group(&self, thread_id: usize, group_id: &str) -> Result<()> {
+        self.progress_manager.display_multi_progress_bar_group(thread_id, group_id).await
     }
 }
 
