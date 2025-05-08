@@ -1,4 +1,4 @@
-use crate::modes::ThreadMode;
+use crate::ThreadMode;
 use crate::terminal::TestEnv;
 use crate::ProgressDisplay;
 use tokio::time::sleep;
@@ -283,7 +283,7 @@ async fn test_window_with_title_edge_cases() -> Result<()> {
     // Run test logic INSIDE timeout
     let _ = with_timeout(async {
         // Enable error propagation for this test
-        crate::modes::set_error_propagation(true);
+        crate::modes::factory::set_error_propagation(true);
         
         // Test edge cases
         let mut task = display.spawn_with_mode(ThreadMode::WindowWithTitle(3), || "edge-case").await?;

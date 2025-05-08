@@ -1,6 +1,7 @@
-use super::{ThreadConfig, WindowBase, HasBaseConfig, WithCustomSize, StandardWindow};
-use super::capabilities::{WithWrappedText, WithProgress};
-use super::job_traits::JobTracker;
+use crate::core::{ThreadConfig, HasBaseConfig, BaseConfig};
+use super::window_base::WindowBase;
+use crate::config::capabilities::{WithCustomSize, StandardWindow, WithWrappedText, WithProgress};
+use crate::core::job_traits::JobTracker;
 use std::any::Any;
 use crate::errors::ModeCreationError;
 use std::fmt::Debug;
@@ -35,11 +36,11 @@ impl Window {
 }
 
 impl HasBaseConfig for Window {
-    fn base_config(&self) -> &super::BaseConfig {
+    fn base_config(&self) -> &BaseConfig {
         self.window_base.base_config()
     }
     
-    fn base_config_mut(&mut self) -> &mut super::BaseConfig {
+    fn base_config_mut(&mut self) -> &mut BaseConfig {
         self.window_base.base_config_mut()
     }
 }
@@ -162,9 +163,9 @@ impl WithProgress for Window {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::ThreadMode;
     use crate::terminal::TestEnv;
     use crate::ProgressDisplay;
-    use crate::modes::{ThreadMode, JobTracker};
     use tokio::time::sleep;
     use std::time::Duration;
     use crate::tests::common::with_timeout;
@@ -347,5 +348,12 @@ mod tests {
         let lines = window.get_lines();
         assert!(lines.contains(&"Another long line that would be wrapped if wrapping was enabled".to_string()),
                "With wrapping disabled, line should be preserved as-is");
+    }
+
+    #[test]
+    fn test_window_has_job_tracker() {
+        let window = Window::new(10, 5).unwrap();
+        assert_eq!(window.get_total_jobs(), 10);
+        assert_eq!(window.get_completed_jobs(), 0);
     }
 } 

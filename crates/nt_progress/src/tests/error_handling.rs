@@ -1,5 +1,5 @@
 use crate::{
-    modes::{WithEmoji, WithTitle},
+    config::capabilities::{WithEmoji, WithTitle},
     errors::{ProgressError, ModeCreationError, ErrorContext, ContextExt, format_error_debug}
 };
 use std::error::Error;

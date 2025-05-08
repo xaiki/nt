@@ -5,8 +5,8 @@ use anyhow::Result;
 
 use crate::errors::{ErrorContext, ProgressError};
 use crate::thread::{ThreadManager, TaskHandle, ThreadState};
-use crate::modes::Config;
-use crate::modes::ThreadMode;
+use crate::config::Config;
+use crate::config::ThreadMode;
 use crate::modes::factory::ModeFactory;
 use crate::ThreadMessage;
 use tokio::task::JoinHandle;

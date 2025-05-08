@@ -1,10 +1,11 @@
-use super::{ThreadConfig, WindowBase, HasBaseConfig, WithCustomSize, StandardWindow};
-use super::capabilities::{WithTitle, WithEmoji, WithTitleAndEmoji, WithWrappedText, WithProgress};
+use crate::core::{ThreadConfig, HasBaseConfig, BaseConfig};
+use super::window_base::WindowBase;
+use crate::config::capabilities::{WithTitle, WithCustomSize, WithEmoji, WithTitleAndEmoji, StandardWindow, WithWrappedText, WithProgress};
+use crate::core::job_traits::JobTracker;
 use std::any::Any;
 use crate::errors::ModeCreationError;
 use std::fmt::Debug;
 use anyhow::Result;
-use super::job_traits::JobTracker;
 
 /// Configuration for WindowWithTitle mode
 /// 
@@ -145,11 +146,11 @@ impl WindowWithTitle {
 }
 
 impl HasBaseConfig for WindowWithTitle {
-    fn base_config(&self) -> &super::BaseConfig {
+    fn base_config(&self) -> &BaseConfig {
         self.window_base.base_config()
     }
     
-    fn base_config_mut(&mut self) -> &mut super::BaseConfig {
+    fn base_config_mut(&mut self) -> &mut BaseConfig {
         self.window_base.base_config_mut()
     }
 }

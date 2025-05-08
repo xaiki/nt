@@ -1,11 +1,12 @@
 use std::time::Duration;
 use tokio::time::sleep;
 use crate::ProgressDisplay;
-use crate::modes::ThreadMode;
+use crate::ThreadMode;
 use crate::terminal::TestEnv;
 use crate::tests::common::with_timeout;
 use anyhow::Result;
 use crate::formatter::{ProgressTemplate, TemplateContext};
+use crate::modes::factory::set_error_propagation;
 
 /**
  * IMPORTANT: Testing Pattern to Prevent Test Hangs
@@ -110,7 +111,7 @@ async fn test_progress_display_error_handling() -> Result<()> {
     // Run test logic INSIDE timeout
     let _ = with_timeout(async {
         // Enable error propagation for this test
-        crate::modes::set_error_propagation(true);
+        set_error_propagation(true);
         
         // Test invalid mode configuration
         let result = display.spawn_with_mode(ThreadMode::Window(0), || "invalid".to_string()).await;
@@ -122,7 +123,7 @@ async fn test_progress_display_error_handling() -> Result<()> {
     display.stop().await?;
     
     // Reset error propagation
-    crate::modes::set_error_propagation(false);
+    set_error_propagation(false);
     Ok(())
 }
 

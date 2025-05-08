@@ -17,7 +17,7 @@ pub mod io_factory;
 #[cfg(test)]
 pub mod progress {
     use crate::ProgressDisplay;
-    use crate::modes::ThreadMode;
+    use crate::ThreadMode;
     use crate::terminal::TestEnv;
     use crate::tests::common::with_timeout;
     use anyhow::Result;

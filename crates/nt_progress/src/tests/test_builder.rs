@@ -1,4 +1,4 @@
-use crate::modes::ThreadMode;
+use crate::ThreadMode;
 use crate::ProgressDisplay;
 use crate::terminal::TestEnv;
 use std::sync::Arc;

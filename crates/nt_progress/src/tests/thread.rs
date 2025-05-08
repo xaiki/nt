@@ -1,6 +1,6 @@
 use crate::thread::{ThreadManager, ThreadState, TaskHandle};
-use crate::modes::Config;
-use crate::modes::ThreadMode;
+use crate::Config;
+use crate::ThreadMode;
 use crate::io::OutputBuffer;
 use tokio::time::sleep;
 use std::time::Duration;

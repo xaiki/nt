@@ -7,7 +7,7 @@ use std::collections::HashMap;
 use tokio::task::JoinHandle;
 use anyhow::Result;
 use crate::errors::{ErrorContext, ProgressError};
-use crate::modes::{Config, ThreadMode};
+use crate::config::{Config, ThreadMode};
 use tokio::sync::mpsc;
 use std::io::Write;
 use crate::io::{ProgressWriter, OutputBuffer};

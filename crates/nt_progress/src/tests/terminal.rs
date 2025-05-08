@@ -1,5 +1,5 @@
 use crate::ProgressDisplay;
-use crate::modes::ThreadMode;
+use crate::ThreadMode;
 use crate::terminal::TestEnv;
 use crate::tests::common::with_timeout;
 use crossterm::style::Color;

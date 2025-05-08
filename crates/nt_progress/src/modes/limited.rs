@@ -1,4 +1,5 @@
-use super::{ThreadConfig, SingleLineBase, HasBaseConfig, BaseConfig, WithPassthrough};
+use crate::core::{ThreadConfig, HasBaseConfig, BaseConfig};
+use super::window_base::{SingleLineBase, WithPassthrough};
 use std::any::Any;
 use crate::io::ProgressWriter;
 use crate::errors::ModeCreationError;
@@ -107,8 +108,8 @@ impl HasBaseConfig for Limited {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::ThreadMode;
     use crate::ProgressDisplay;
-    use crate::modes::ThreadMode;
     use crate::tests::common::{TestEnv, with_timeout};
     use anyhow::Result;
 

@@ -1,37 +1,46 @@
-use super::{ThreadConfig, SingleLineBase, HasBaseConfig};
+use crate::core::{ThreadConfig, HasBaseConfig, BaseConfig};
+use super::window_base::SingleLineBase;
 use std::any::Any;
+use std::fmt::Debug;
 
 /// Configuration for Capturing mode
-/// 
-/// In Capturing mode, only the last line is displayed,
-/// and output is not passed through to stdout/stderr.
+///
+/// Capturing mode captures output without displaying it in the terminal.
+/// This is useful for saving output for later use or for automated testing.
 #[derive(Debug, Clone)]
 pub struct Capturing {
-    single_line_base: SingleLineBase,
+    base: SingleLineBase,
+    capture: Vec<String>,
 }
 
 impl Capturing {
-    /// Create a new Capturing mode configuration.
-    ///
+    /// Creates a new Capturing mode configuration
+    /// 
     /// # Parameters
     /// * `total_jobs` - The total number of jobs to track
-    ///
+    /// 
     /// # Returns
-    /// A new Capturing instance
+    /// A new Capturing configuration
     pub fn new(total_jobs: usize) -> Self {
         Self {
-            single_line_base: SingleLineBase::new(total_jobs, false), // false = no passthrough
+            base: SingleLineBase::new(total_jobs, false),
+            capture: Vec::new(),
         }
+    }
+    
+    /// Get captured output
+    pub fn captured(&self) -> &[String] {
+        &self.capture
     }
 }
 
 impl HasBaseConfig for Capturing {
-    fn base_config(&self) -> &super::BaseConfig {
-        self.single_line_base.base_config()
+    fn base_config(&self) -> &BaseConfig {
+        self.base.base_config()
     }
     
-    fn base_config_mut(&mut self) -> &mut super::BaseConfig {
-        self.single_line_base.base_config_mut()
+    fn base_config_mut(&mut self) -> &mut BaseConfig {
+        self.base.base_config_mut()
     }
 }
 
@@ -44,12 +53,12 @@ impl ThreadConfig for Capturing {
 
     fn handle_message(&mut self, message: String) -> Vec<String> {
         // In Capturing mode, we just replace the current line, no stdout
-        self.single_line_base.update_line(message);
+        self.base.update_line(message);
         self.get_lines()
     }
 
     fn get_lines(&self) -> Vec<String> {
-        vec![self.single_line_base.get_line()]
+        vec![self.base.get_line()]
     }
 
     fn clone_box(&self) -> Box<dyn ThreadConfig> {
@@ -68,7 +77,7 @@ impl ThreadConfig for Capturing {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::modes::JobTracker;
+    use crate::core::job_traits::JobTracker;
 
     #[test]
     fn test_capturing_mode() {

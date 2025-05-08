@@ -7,7 +7,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use crate::io::custom::{CustomWriter, WriterCapabilities, WriterRegistry};
 use crate::io::ProgressWriter;
 use crate::thread::TaskHandle;
-use crate::modes::Config;
+use crate::Config;
 use crate::io::OutputBuffer;
 
 /// A test writer that formats output with a prefix
@@ -418,7 +418,7 @@ mod tests {
         rt.block_on(async {
             // Create a mode config for the task handle
             let limited = Limited::new(1);
-            let config = Config::from(Box::new(limited) as Box<dyn crate::modes::ThreadConfig>);
+            let config = Config::from(Box::new(limited) as Box<dyn crate::ThreadConfig>);
             
             // Create a message channel for task handles
             let (message_tx, _message_rx) = tokio::sync::mpsc::channel(100);
@@ -629,7 +629,7 @@ mod tests {
     #[tokio::test]
     async fn test_task_handle_direct_writer() {
         use tokio::sync::mpsc;
-        use crate::modes::Config;
+        use crate::Config;
         use crate::thread::TaskHandle;
         use crate::io::OutputBuffer;
         
@@ -693,7 +693,7 @@ mod tests {
     #[tokio::test]
     async fn test_task_handle_passthrough() {
         use tokio::sync::mpsc;
-        use crate::modes::{Config, ThreadMode};
+        use crate::{Config, ThreadMode};
         use crate::thread::TaskHandle;
         use crate::io::ProgressWriter;
         

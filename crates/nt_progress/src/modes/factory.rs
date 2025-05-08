@@ -1,8 +1,11 @@
+use std::sync::Arc;
 use std::collections::HashMap;
-use super::{ThreadConfig, ThreadMode, Limited, Capturing, Window, WindowWithTitle, ModeParameters};
+use crate::core::ThreadConfig;
+use crate::config::ThreadMode;
+use super::{Limited, Capturing, Window, WindowWithTitle};
+use crate::config::ModeParameters;
 use crate::errors::ModeCreationError;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
 use std::fmt::Debug;
 
 // Flag to control error propagation behavior - false means recover with fallbacks (default),

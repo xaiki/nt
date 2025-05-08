@@ -16,7 +16,6 @@ use anyhow::{Result, anyhow};
 use std::fmt::Debug;
 use std::cell::RefCell;
 use crate::errors::{ErrorContext, ProgressError};
-use crate::modes::Config;
 use crate::modes::factory::ModeFactory;
 use crate::thread::TaskHandle;
 use crate::renderer::Renderer;
@@ -24,6 +23,8 @@ use crate::progress_manager::ProgressManager;
 pub mod io;
 
 pub mod modes;
+pub mod core;
+pub mod config;
 pub mod errors;
 pub mod formatter;
 pub mod terminal;
@@ -34,7 +35,9 @@ pub mod progress_bar;
 #[cfg(test)]
 pub mod tests;
 
-pub use modes::{ModeRegistry, ModeCreator, ThreadMode};
+pub use modes::{ModeRegistry, ModeCreator};
+pub use core::ThreadConfig;
+pub use config::{Config, ModeParameters, ThreadMode};
 pub use errors::ModeCreationError;
 pub use formatter::{ProgressTemplate, TemplateContext, TemplateVar, TemplatePreset, ColorName, ProgressIndicator};
 pub use io::{ProgressWriter, OutputBuffer, TeeWriter};
