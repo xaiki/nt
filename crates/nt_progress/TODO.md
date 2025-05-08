@@ -96,6 +96,7 @@ The `nt_progress` library provides a flexible and thread-safe progress display f
   - [x] Direct writer functionality for TaskHandle
   - [x] Output passthrough functionality
   - [x] Terminal size customization in TestBuilder
+  - [x] Hierarchical job tracking
 - [ ] Add display enhancements
   - [x] Color support for highlighting
   - [x] Line wrapping for long messages
@@ -104,7 +105,7 @@ The `nt_progress` library provides a flexible and thread-safe progress display f
 - [ ] Expand job tracking capabilities
   - [x] Percentage calculation and display
   - [x] Progress bar visualization
-  - [ ] Nested/hierarchical job tracking
+  - [x] Nested/hierarchical job tracking
   - [ ] Pause/resume functionality
   - [ ] Job priority and sorting
   - [ ] Job dependencies system

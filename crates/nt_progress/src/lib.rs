@@ -351,6 +351,89 @@ impl ProgressDisplay {
             }
         }
     }
+
+    /// Create a child task that is linked to a parent task.
+    ///
+    /// This method creates a new task that is a child of the specified parent task.
+    /// The child task's progress will be included in the parent task's cumulative progress.
+    ///
+    /// # Parameters
+    /// * `parent_id` - The ID of the parent task
+    /// * `mode` - The display mode for the child task
+    /// * `total_jobs` - The total number of jobs for the child task
+    ///
+    /// # Returns
+    /// A Result containing the new TaskHandle, or an error if the operation failed
+    pub async fn create_child_task(&self, parent_id: usize, mode: ThreadMode, total_jobs: usize) -> Result<TaskHandle> {
+        self.progress_manager.create_child_task(parent_id, mode, total_jobs).await
+    }
+    
+    /// Create a child task with a title that is linked to a parent task.
+    ///
+    /// This method creates a new task with the specified title that is a child of the specified parent task.
+    /// The child task's progress will be included in the parent task's cumulative progress.
+    ///
+    /// # Parameters
+    /// * `parent_id` - The ID of the parent task
+    /// * `mode` - The display mode for the child task
+    /// * `title` - The title for the child task
+    /// * `total_jobs` - The total number of jobs for the child task (defaults to 1 if not specified)
+    ///
+    /// # Returns
+    /// A Result containing the new TaskHandle, or an error if the operation failed
+    pub async fn create_child_task_with_title(&self, parent_id: usize, mode: ThreadMode, title: String, total_jobs: Option<usize>) -> Result<TaskHandle> {
+        self.progress_manager.create_child_task_with_title(parent_id, mode, title, total_jobs).await
+    }
+    
+    /// Get the child tasks of a parent task.
+    ///
+    /// # Parameters
+    /// * `parent_id` - The ID of the parent task
+    ///
+    /// # Returns
+    /// A Result containing a vector of child TaskHandles, or an error if the operation failed
+    pub async fn get_child_tasks(&self, parent_id: usize) -> Result<Vec<TaskHandle>> {
+        self.progress_manager.get_child_tasks(parent_id).await
+    }
+    
+    /// Calculate the cumulative progress of a task including all its child tasks.
+    ///
+    /// # Parameters
+    /// * `thread_id` - The ID of the task
+    ///
+    /// # Returns
+    /// A Result containing the cumulative progress as a percentage between 0.0 and 100.0
+    pub async fn get_cumulative_progress(&self, thread_id: usize) -> Result<f64> {
+        self.progress_manager.get_cumulative_progress(thread_id).await
+    }
+    
+    /// Spawn a child task with specified parent, mode, and closure.
+    ///
+    /// This is a convenience method that combines task creation and execution.
+    /// The spawned task will be a child of the specified parent task.
+    ///
+    /// # Parameters
+    /// * `parent_id` - The ID of the parent task
+    /// * `mode` - The display mode for the child task
+    /// * `f` - A closure that returns a string (used as the initial message)
+    /// * `total_jobs` - The total number of jobs for the child task (defaults to 1 if not specified)
+    ///
+    /// # Returns
+    /// A Result containing the new TaskHandle, or an error if the operation failed
+    pub async fn spawn_child<F, R>(&self, parent_id: usize, mode: ThreadMode, f: F, total_jobs: Option<usize>) -> Result<TaskHandle>
+    where
+        F: FnOnce() -> R + Send + 'static,
+        R: Into<String> + Send + 'static,
+    {
+        if !self.running.load(Ordering::SeqCst) {
+            let ctx = ErrorContext::new("spawning child task", "ProgressDisplay")
+                .with_details("Display is not running");
+            return Err(anyhow::Error::from(ProgressError::DisplayOperation("Display is not running".to_string()).into_context(ctx)));
+        }
+        
+        let title = f().into();
+        self.progress_manager.create_child_task_with_title(parent_id, mode, title, total_jobs).await
+    }
 }
 
 impl Drop for ProgressDisplay {

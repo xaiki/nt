@@ -369,4 +369,163 @@ impl ProgressManager {
         
         Ok(handle)
     }
+    
+    /// Create a child task that is linked to a parent task.
+    ///
+    /// This method creates a new task that is a child of the specified parent task.
+    /// The child task's progress will be included in the parent task's cumulative progress.
+    ///
+    /// # Parameters
+    /// * `parent_id` - The ID of the parent task
+    /// * `mode` - The display mode for the child task
+    /// * `total_jobs` - The total number of jobs for the child task
+    ///
+    /// # Returns
+    /// A Result containing the new TaskHandle, or an error if the operation failed
+    pub async fn create_child_task(&self, parent_id: usize, mode: ThreadMode, total_jobs: usize) -> Result<TaskHandle> {
+        // Verify parent exists
+        if let Some(parent_handle) = self.thread_manager.get_task(parent_id).await {
+            // Create new task
+            let child_handle = self.create_task(mode, total_jobs).await?;
+            let child_id = child_handle.thread_id();
+            
+            // Set parent-child relationship
+            child_handle.set_parent_job_id(parent_id).await?;
+            parent_handle.add_child_job(child_id).await?;
+            
+            Ok(child_handle)
+        } else {
+            let ctx = ErrorContext::new("creating child task", "ProgressManager")
+                .with_thread_id(parent_id)
+                .with_details("Parent thread not found");
+            let error = ProgressError::TaskOperation(format!("Parent thread {} not found", parent_id))
+                .into_context(ctx);
+            Err(anyhow::anyhow!(error))
+        }
+    }
+    
+    /// Create a child task with a title that is linked to a parent task.
+    ///
+    /// This method creates a new task with the specified title that is a child of the specified parent task.
+    /// The child task's progress will be included in the parent task's cumulative progress.
+    ///
+    /// # Parameters
+    /// * `parent_id` - The ID of the parent task
+    /// * `mode` - The display mode for the child task
+    /// * `title` - The title for the child task
+    /// * `total_jobs` - The total number of jobs for the child task (defaults to 1 if not specified)
+    ///
+    /// # Returns
+    /// A Result containing the new TaskHandle, or an error if the operation failed
+    pub async fn create_child_task_with_title(&self, parent_id: usize, mode: ThreadMode, title: String, total_jobs: Option<usize>) -> Result<TaskHandle> {
+        // Verify parent exists
+        if let Some(parent_handle) = self.thread_manager.get_task(parent_id).await {
+            // Create new task with title
+            let child_handle = self.create_task_with_title(mode, title).await?;
+            let child_id = child_handle.thread_id();
+            
+            // Set total jobs if specified
+            if let Some(total) = total_jobs {
+                child_handle.set_total_jobs(total).await?;
+            }
+            
+            // Set parent-child relationship
+            child_handle.set_parent_job_id(parent_id).await?;
+            parent_handle.add_child_job(child_id).await?;
+            
+            Ok(child_handle)
+        } else {
+            let ctx = ErrorContext::new("creating child task with title", "ProgressManager")
+                .with_thread_id(parent_id)
+                .with_details("Parent thread not found");
+            let error = ProgressError::TaskOperation(format!("Parent thread {} not found", parent_id))
+                .into_context(ctx);
+            Err(anyhow::anyhow!(error))
+        }
+    }
+    
+    /// Get the child tasks of a parent task.
+    ///
+    /// # Parameters
+    /// * `parent_id` - The ID of the parent task
+    ///
+    /// # Returns
+    /// A Result containing a vector of child TaskHandles, or an error if the operation failed
+    pub async fn get_child_tasks(&self, parent_id: usize) -> Result<Vec<TaskHandle>> {
+        if let Some(parent_handle) = self.thread_manager.get_task(parent_id).await {
+            let child_ids = parent_handle.get_child_job_ids().await?;
+            let mut child_tasks = Vec::new();
+            
+            for child_id in child_ids {
+                if let Some(child_handle) = self.thread_manager.get_task(child_id).await {
+                    child_tasks.push(child_handle);
+                }
+            }
+            
+            Ok(child_tasks)
+        } else {
+            let ctx = ErrorContext::new("getting child tasks", "ProgressManager")
+                .with_thread_id(parent_id)
+                .with_details("Parent thread not found");
+            let error = ProgressError::TaskOperation(format!("Parent thread {} not found", parent_id))
+                .into_context(ctx);
+            Err(anyhow::anyhow!(error))
+        }
+    }
+    
+    /// Calculate the cumulative progress of a task including all its child tasks.
+    ///
+    /// # Parameters
+    /// * `thread_id` - The ID of the task
+    ///
+    /// # Returns
+    /// A Result containing the cumulative progress as a percentage between 0.0 and 100.0
+    pub async fn get_cumulative_progress(&self, thread_id: usize) -> Result<f64> {
+        if let Some(handle) = self.thread_manager.get_task(thread_id).await {
+            // Get child IDs
+            let child_ids = handle.get_child_job_ids().await?;
+            
+            if child_ids.is_empty() {
+                // No children, just return this task's progress
+                return handle.get_progress_percentage().await;
+            }
+            
+            // Get all child tasks that exist
+            let mut child_task_ids = Vec::new();
+            for child_id in child_ids {
+                if self.thread_manager.get_task(child_id).await.is_some() {
+                    child_task_ids.push(child_id);
+                }
+            }
+            
+            if child_task_ids.is_empty() {
+                // No active children, just return this task's progress
+                return handle.get_progress_percentage().await;
+            }
+            
+            // Calculate weighted progress
+            let parent_progress = handle.get_progress_percentage().await?;
+            let mut total_progress = parent_progress;
+            let num_children = child_task_ids.len() as f64;
+            
+            // Add each child's progress (including their children recursively)
+            // Using boxed future to address recursion in async fn
+            for child_id in child_task_ids {
+                let child_progress_future = Box::pin(self.get_cumulative_progress(child_id));
+                let child_progress = child_progress_future.await?;
+                total_progress += child_progress;
+            }
+            
+            // Average the progress (parent + all children)
+            let average_progress = total_progress / (1.0 + num_children);
+            Ok(average_progress)
+        } else {
+            let ctx = ErrorContext::new("getting cumulative progress", "ProgressManager")
+                .with_thread_id(thread_id)
+                .with_details("Thread not found");
+            let error = ProgressError::TaskOperation(format!("Thread {} not found", thread_id))
+                .into_context(ctx);
+            Err(anyhow::anyhow!(error))
+        }
+    }
 } 
