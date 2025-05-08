@@ -30,6 +30,7 @@ pub mod terminal;
 pub mod thread;
 pub mod renderer;
 pub mod progress_manager;
+pub mod progress_bar;
 #[cfg(test)]
 pub mod tests;
 
@@ -44,10 +45,14 @@ thread_local! {
     static CURRENT_WRITER: RefCell<Option<ThreadLogger>> = const { RefCell::new(None) };
 }
 
+/// Message sent from a thread to the progress display
 #[derive(Debug, Clone)]
 pub struct ThreadMessage {
+    /// The ID of the thread that sent the message
     pub thread_id: usize,
+    /// The lines of output from the thread
     pub lines: Vec<String>,
+    /// The configuration for the thread
     pub config: Config,
 }
 

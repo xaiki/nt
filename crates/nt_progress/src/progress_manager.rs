@@ -11,6 +11,7 @@ use crate::modes::factory::ModeFactory;
 use crate::ThreadMessage;
 use tokio::task::JoinHandle;
 use tokio::sync::mpsc;
+use crate::progress_bar::{ProgressBar, ProgressBarConfig, ProgressBarStyle};
 
 /// Manages progress tracking and state across multiple threads/tasks
 pub struct ProgressManager {
@@ -231,20 +232,20 @@ impl ProgressManager {
         }
     }
     
-    /// Update the progress bar for a specific thread
+    /// Update the progress bar display for a specific thread.
     ///
-    /// This is a convenience method that combines setting progress and generating a
-    /// formatted progress bar message.
+    /// This method renders a customizable progress bar based on the provided
+    /// configuration and current progress values.
     ///
     /// # Parameters
-    /// * `thread_id` - The ID of the thread to update
+    /// * `thread_id` - The ID of the thread to update the progress bar for
     /// * `current` - The current number of completed items
     /// * `total` - The total number of items
-    /// * `prefix` - A prefix to display before the progress bar
+    /// * `config` - The progress bar configuration to use
     ///
     /// # Returns
     /// Result with () if successful
-    pub async fn update_progress_bar(&self, thread_id: usize, current: usize, total: usize, prefix: &str) -> Result<()> {
+    pub async fn update_progress_bar_with_config(&self, thread_id: usize, current: usize, total: usize, config: &ProgressBarConfig) -> Result<()> {
         if total == 0 {
             return Err(ProgressError::DisplayOperation("Total jobs cannot be zero".to_string()).into());
         }
@@ -254,12 +255,30 @@ impl ProgressManager {
             handle.set_total_jobs(total).await?;
             handle.set_progress(current).await?;
             
-            // Generate a progress bar display
-            let progress_percent = ((current * 100) / total).min(100);
-            let bar_width = 50;
-            let filled = (progress_percent * bar_width) / 100;
-            let bar = "▉".repeat(filled) + &"▏".repeat(bar_width - filled);
-            let message = format!("{:<12} {}%|{}| {}/{}", prefix, progress_percent, bar, current, total);
+            // Create and update a progress bar
+            let mut progress_bar = ProgressBar::new(config.clone());
+            progress_bar.update_with_values(current, total);
+            
+            // Get the template to use for formatting
+            let template = progress_bar.template();
+            
+            // Set the progress display format
+            handle.set_progress_format(&template).await?;
+            
+            // Generate a progress display message
+            let mut ctx = crate::formatter::TemplateContext::new();
+            ctx.set("progress", progress_bar.progress())
+               .set("completed", current)
+               .set("total", total)
+               .set("percent", format!("{}%", progress_bar.percentage()));
+            
+            if let Some(prefix) = &config.prefix {
+                ctx.set("prefix", prefix.clone());
+            }
+            
+            // Create a template for rendering
+            let template = crate::formatter::ProgressTemplate::new(template);
+            let message = template.render(&ctx)?;
             
             // Update the display
             handle.capture_stdout(message).await?;
@@ -273,6 +292,46 @@ impl ProgressManager {
             let error = ProgressError::TaskOperation(error_msg).into_context(ctx);
             Err(anyhow::anyhow!(error))
         }
+    }
+    
+    /// Update the progress bar with default configuration.
+    ///
+    /// This is a convenience method that uses a standard progress bar configuration.
+    ///
+    /// # Parameters
+    /// * `thread_id` - The ID of the thread to update the progress bar for
+    /// * `current` - The current number of completed items
+    /// * `total` - The total number of items
+    /// * `prefix` - Optional prefix to display before the progress bar
+    ///
+    /// # Returns
+    /// Result with () if successful
+    pub async fn update_progress_bar(&self, thread_id: usize, current: usize, total: usize, prefix: &str) -> Result<()> {
+        let config = ProgressBarConfig::new()
+            .width(50)
+            .style(ProgressBarStyle::Block);
+        
+        let config = if prefix.is_empty() {
+            config
+        } else {
+            config.prefix(prefix)
+        };
+        
+        self.update_progress_bar_with_config(thread_id, current, total, &config).await
+    }
+    
+    /// Create a progress bar with the specified configuration.
+    ///
+    /// # Parameters
+    /// * `thread_id` - The ID of the thread to create the progress bar for
+    /// * `total` - The total number of items
+    /// * `config` - The progress bar configuration
+    ///
+    /// # Returns
+    /// Result with () if successful
+    pub async fn create_progress_bar(&self, thread_id: usize, total: usize, config: &ProgressBarConfig) -> Result<()> {
+        // Initial update with 0 progress
+        self.update_progress_bar_with_config(thread_id, 0, total, config).await
     }
     
     /// Handle a message from a thread

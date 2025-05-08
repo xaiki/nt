@@ -1,8 +1,0 @@
-feat(progress): Implement percentage calculation and display
-
-- Add WithProgress capability trait for supporting progress tracking
-- Add implementation for Window and WindowWithTitle modes
-- Fix unicode character issues in test_progress_bar_display
-- Update CHANGELOG.md with feature details
-- Mark feature as completed in TODO.md
-- Bump version to 0.1.25

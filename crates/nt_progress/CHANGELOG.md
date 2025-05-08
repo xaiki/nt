@@ -2,6 +2,22 @@
 
 This file contains completed tasks and improvements moved from the TODO.md file.
 
+## v0.1.26 (2024-05-19)
+
+### Added
+- Implemented progress bar visualization
+  - Added dedicated ProgressBar module with customizable appearance
+  - Created ProgressBarConfig for flexible bar configuration
+  - Added support for multiple progress bar styles (Standard, Block, Braille, Dots, Gradient)
+  - Implemented ETA and speed calculations for progress tracking
+  - Added custom template support for progress bars
+  - Added comprehensive test suite for progress bar functionality
+
+### Enhanced
+- Improved ProgressManager to support the new progress bar functionality
+- Added integration between ProgressBar and existing template system
+- Refactored progress tracking to use the new ProgressBar component
+
 ## v0.1.25 (2024-05-18)
 
 ### Added

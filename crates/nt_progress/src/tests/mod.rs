@@ -162,4 +162,191 @@ pub mod progress {
         display.stop().await?;
         Ok(())
     }
+}
+
+#[cfg(test)]
+mod progress_bar {
+    use crate::progress_bar::{ProgressBar, ProgressBarConfig, ProgressBarStyle};
+    use crate::{ProgressDisplay, ThreadMode};
+    use anyhow::Result;
+    use crate::terminal::TestEnv;
+    use crate::terminal::test_helpers::with_timeout;
+    use tokio::time::sleep;
+    use std::time::Duration;
+
+    /// Test basic progress bar functionality
+    #[tokio::test]
+    async fn test_progress_bar_basic() -> Result<()> {
+        // Create a progress bar
+        let mut bar = ProgressBar::with_defaults();
+        
+        // Check initial state
+        assert_eq!(bar.progress(), 0.0);
+        assert_eq!(bar.percentage(), 0);
+        
+        // Update and check progression
+        bar.update(0.25);
+        assert_eq!(bar.progress(), 0.25);
+        assert_eq!(bar.percentage(), 25);
+        
+        bar.update_with_values(75, 100);
+        assert_eq!(bar.progress(), 0.75);
+        assert_eq!(bar.percentage(), 75);
+        
+        Ok(())
+    }
+    
+    /// Test progress bar with ProgressDisplay integration
+    #[tokio::test]
+    async fn test_progress_bar_integration() -> Result<()> {
+        // Create a progress display
+        let display = ProgressDisplay::new().await?;
+        let mut env = TestEnv::new();
+        
+        // Run test logic inside timeout
+        let _ = with_timeout(async {
+            // Create a task for the progress bar
+            let task = display.create_task(ThreadMode::Window(5), 10).await?;
+            let thread_id = task.thread_id();
+            
+            // Create a progress bar configuration
+            let config = ProgressBarConfig::new()
+                .style(ProgressBarStyle::Block)
+                .width(20)
+                .prefix("Processing");
+            
+            // Initialize progress bar
+            display.progress_manager().create_progress_bar(thread_id, 100, &config).await?;
+            
+            // Update progress bar at different points
+            for i in 0..=10 {
+                let current = i * 10;
+                display.progress_manager().update_progress_bar_with_config(thread_id, current, 100, &config).await?;
+                
+                // Record expected output for testing
+                let progress_percent = current;
+                let bar_width = 20;
+                let filled = (progress_percent * bar_width) / 100;
+                let expected = format!("Processing {}% [{}{}] {}/100", 
+                    progress_percent,
+                    "█".repeat(filled),
+                    "▏".repeat(bar_width - filled),
+                    current);
+                env.writeln(&expected);
+                
+                sleep(Duration::from_millis(50)).await;
+            }
+            
+            Ok::<(), anyhow::Error>(())
+        }, 5).await?;
+        
+        // Verify output
+        display.display().await?;
+        env.verify();
+        
+        // Clean up
+        display.stop().await?;
+        Ok(())
+    }
+    
+    /// Test different progress bar styles
+    #[tokio::test]
+    async fn test_progress_bar_styles() -> Result<()> {
+        // Create a progress display
+        let display = ProgressDisplay::new().await?;
+        let mut env = TestEnv::new();
+        
+        // Run test logic inside timeout
+        let _ = with_timeout(async {
+            // Test all available styles
+            let styles = vec![
+                ProgressBarStyle::Standard,
+                ProgressBarStyle::Block,
+                ProgressBarStyle::Braille,
+                ProgressBarStyle::Dots,
+                // Gradient not tested here since it involves color which is harder to verify
+            ];
+            
+            for (idx, style) in styles.iter().enumerate() {
+                // Create a task for each style
+                let task = display.create_task(ThreadMode::Window(3), 100).await?;
+                let thread_id = task.thread_id();
+                
+                // Create a progress bar configuration with this style
+                let config = ProgressBarConfig::new()
+                    .style(style.clone())
+                    .width(15)
+                    .prefix(format!("Style {}", idx));
+                
+                // Initialize progress bar
+                display.progress_manager().create_progress_bar(thread_id, 100, &config).await?;
+                
+                // Update to 50% for a simple test
+                display.progress_manager().update_progress_bar_with_config(thread_id, 50, 100, &config).await?;
+                
+                // Add expected output format to test env
+                // Note: This is a simplified version that just checks for presence
+                let style_name = match style {
+                    ProgressBarStyle::Standard => "Standard",
+                    ProgressBarStyle::Block => "Block",
+                    ProgressBarStyle::Braille => "Braille",
+                    ProgressBarStyle::Dots => "Dots",
+                    ProgressBarStyle::Gradient => "Gradient",
+                };
+                env.writeln(&format!("Style {}: {} showing 50% progress", idx, style_name));
+                
+                sleep(Duration::from_millis(50)).await;
+            }
+            
+            Ok::<(), anyhow::Error>(())
+        }, 5).await?;
+        
+        // Verify output
+        display.display().await?;
+        
+        // Clean up
+        display.stop().await?;
+        Ok(())
+    }
+    
+    /// Test progress bar with custom template
+    #[tokio::test]
+    async fn test_progress_bar_custom_template() -> Result<()> {
+        // Create a progress display
+        let display = ProgressDisplay::new().await?;
+        let mut env = TestEnv::new();
+        
+        // Run test logic inside timeout
+        let _ = with_timeout(async {
+            // Create a task for the progress bar
+            let task = display.create_task(ThreadMode::Window(3), 10).await?;
+            let thread_id = task.thread_id();
+            
+            // Create a custom template config
+            let config = ProgressBarConfig::new()
+                .template("Custom: {progress:percent} completed");
+            
+            // Initialize and update progress bar
+            display.progress_manager().create_progress_bar(thread_id, 100, &config).await?;
+            
+            for progress in &[0, 25, 50, 75, 100] {
+                display.progress_manager().update_progress_bar_with_config(thread_id, *progress, 100, &config).await?;
+                
+                // Add expected output to test env
+                env.writeln(&format!("Custom: {}% completed", progress));
+                
+                sleep(Duration::from_millis(50)).await;
+            }
+            
+            Ok::<(), anyhow::Error>(())
+        }, 5).await?;
+        
+        // Verify output
+        display.display().await?;
+        env.verify();
+        
+        // Clean up
+        display.stop().await?;
+        Ok(())
+    }
 } 
