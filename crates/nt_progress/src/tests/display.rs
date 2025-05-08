@@ -5,6 +5,7 @@ use crate::modes::ThreadMode;
 use crate::terminal::TestEnv;
 use crate::tests::common::with_timeout;
 use anyhow::Result;
+use crate::formatter::{ProgressTemplate, TemplateContext};
 
 /**
  * IMPORTANT: Testing Pattern to Prevent Test Hangs
@@ -104,6 +105,7 @@ async fn test_progress_display_different_modes() -> Result<()> {
 async fn test_progress_display_error_handling() -> Result<()> {
     // Create display OUTSIDE timeout
     let display = ProgressDisplay::new().await?;
+    let _env = TestEnv::new();
     
     // Run test logic INSIDE timeout
     let _ = with_timeout(async {
@@ -367,5 +369,94 @@ async fn test_progress_display_resource_cleanup() -> Result<()> {
     
     // Clean up OUTSIDE timeout
     display.stop().await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_progress_display_custom_indicators() -> Result<()> {
+    // Create a new TestEnv and ProgressDisplay
+    let env = TestEnv::new();
+    let display = ProgressDisplay::new().await?;
+    
+    // Create a task with Window mode
+    let mut task = display.spawn_with_mode(ThreadMode::Window(5), || "Progress Indicators Test").await?;
+    
+    // Test each progress indicator type
+    let progress_values = [0.0, 0.25, 0.5, 0.75, 1.0];
+    
+    // Traditional bar indicator
+    task.capture_stdout("Bar indicator:".to_string()).await?;
+    for progress in progress_values {
+        let template = ProgressTemplate::new("{progress:bar}");
+        let mut ctx = TemplateContext::new();
+        ctx.set("progress", progress);
+        let message = template.render(&ctx)?;
+        task.capture_stdout(message).await?;
+    }
+    
+    // Block indicator
+    task.capture_stdout("Block indicator:".to_string()).await?;
+    for progress in progress_values {
+        let template = ProgressTemplate::new("{progress:bar:block}");
+        let mut ctx = TemplateContext::new();
+        ctx.set("progress", progress);
+        let message = template.render(&ctx)?;
+        task.capture_stdout(message).await?;
+    }
+    
+    // Spinner indicator
+    task.capture_stdout("Spinner indicator:".to_string()).await?;
+    for progress in progress_values {
+        let template = ProgressTemplate::new("{progress:bar:spinner}");
+        let mut ctx = TemplateContext::new();
+        ctx.set("progress", progress);
+        let message = template.render(&ctx)?;
+        task.capture_stdout(message).await?;
+    }
+    
+    // Numeric indicator
+    task.capture_stdout("Numeric indicator:".to_string()).await?;
+    for progress in progress_values {
+        let template = ProgressTemplate::new("{progress:bar:numeric}");
+        let mut ctx = TemplateContext::new();
+        ctx.set("progress", progress);
+        let message = template.render(&ctx)?;
+        task.capture_stdout(message).await?;
+    }
+    
+    // Custom indicator configurations
+    task.capture_stdout("Custom configurations:".to_string()).await?;
+    
+    // Custom bar width and characters
+    let template = ProgressTemplate::new("Custom bar: {progress:bar:bar:20:#}");
+    let mut ctx = TemplateContext::new();
+    ctx.set("progress", 0.5);
+    task.capture_stdout(template.render(&ctx)?).await?;
+    
+    // Custom block characters
+    let template = ProgressTemplate::new("Custom blocks: {progress:bar:block:10:▮▯}");
+    let mut ctx = TemplateContext::new();
+    ctx.set("progress", 0.5);
+    task.capture_stdout(template.render(&ctx)?).await?;
+    
+    // Custom spinner frames
+    let template = ProgressTemplate::new("Custom spinner: {progress:bar:spinner:▖▘▝▗}");
+    let mut ctx = TemplateContext::new();
+    ctx.set("progress", 0.5);
+    task.capture_stdout(template.render(&ctx)?).await?;
+    
+    // Custom numeric without percent sign
+    let template = ProgressTemplate::new("Custom numeric: {progress:bar:numeric:false}/100");
+    let mut ctx = TemplateContext::new();
+    ctx.set("progress", 0.5);
+    task.capture_stdout(template.render(&ctx)?).await?;
+    
+    // Display and verify output
+    display.display().await?;
+    env.verify();
+    
+    // Clean up
+    display.stop().await?;
+    
     Ok(())
 } 

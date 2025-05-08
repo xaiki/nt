@@ -2,6 +2,16 @@
 
 This file contains completed tasks and improvements moved from the TODO.md file.
 
+## v0.1.21 (2024-05-15)
+
+### Code Cleanup and Refactoring
+- Fixed Clippy warning for ProgressIndicator by implementing FromStr trait
+  - Replaced custom from_str method with standard FromStr trait implementation
+  - Added proper error handling for invalid indicator names
+  - Added comprehensive tests for FromStr implementation
+  - Fixed compiler warnings related to unused variables in tests
+  - Improved code quality and type safety
+
 ## v0.1.20 (2024-05-15)
 
 ### Code Cleanup and Refactoring

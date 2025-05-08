@@ -7,6 +7,7 @@
 use std::collections::HashMap;
 use crate::errors::{ProgressError, ContextExt};
 use crate::terminal::Color;
+use std::str::FromStr;
 
 /// Template variable types that can be interpolated into templates
 #[derive(Debug, Clone)]
@@ -286,8 +287,12 @@ impl ProgressTemplate {
         format_parts: &[&str],
         context: &TemplateContext,
     ) -> Result<Option<String>, ProgressError> {
-        let format = format_parts[0].trim();
-        
+        if format_parts.is_empty() {
+            return Ok(Some(var.as_string()));
+        }
+
+        let format = format_parts[0];
+
         match format {
             "bar" => self.format_bar(var, format_parts, context),
             "percent" => self.format_percent(var, format_parts, context),
@@ -318,23 +323,49 @@ impl ProgressTemplate {
         // Clamp to 0..1 range
         let progress = progress.clamp(0.0, 1.0);
         
+        // Determine indicator type
+        let indicator_type = if format_parts.len() > 1 {
+            // If the format includes an indicator type, use it
+            match ProgressIndicator::from_str(format_parts[1]) {
+                Ok(indicator) => indicator,
+                Err(_) => ProgressIndicator::Bar
+            }
+        } else {
+            // Default to Bar
+            ProgressIndicator::Bar
+        };
+        
+        match indicator_type {
+            ProgressIndicator::Bar => self.format_bar_indicator(progress, format_parts),
+            ProgressIndicator::Block => self.format_block_indicator(progress, format_parts),
+            ProgressIndicator::Spinner => self.format_spinner_indicator(progress, format_parts),
+            ProgressIndicator::Numeric => self.format_numeric_indicator(progress, format_parts),
+        }
+    }
+    
+    /// Format a traditional bar indicator "[====    ]"
+    fn format_bar_indicator(
+        &self,
+        progress: f64,
+        format_parts: &[&str],
+    ) -> Result<Option<String>, ProgressError> {
         // Get the bar width (default: 10)
-        let width = if format_parts.len() > 1 {
-            format_parts[1].parse::<usize>().unwrap_or(10)
+        let width = if format_parts.len() > 2 {
+            format_parts[2].parse::<usize>().unwrap_or(10)
         } else {
             10
         };
         
         // Get the fill character (default: '=')
-        let fill_char = if format_parts.len() > 2 {
-            format_parts[2].chars().next().unwrap_or('=')
+        let fill_char = if format_parts.len() > 3 {
+            format_parts[3].chars().next().unwrap_or('=')
         } else {
             '='
         };
         
         // Get the background character (default: ' ')
-        let bg_char = if format_parts.len() > 3 {
-            format_parts[3].chars().next().unwrap_or(' ')
+        let bg_char = if format_parts.len() > 4 {
+            format_parts[4].chars().next().unwrap_or(' ')
         } else {
             ' '
         };
@@ -357,6 +388,111 @@ impl ProgressTemplate {
         result.push(']');
         
         Ok(Some(result))
+    }
+    
+    /// Format a block-based indicator using Unicode block characters
+    fn format_block_indicator(
+        &self,
+        progress: f64,
+        format_parts: &[&str],
+    ) -> Result<Option<String>, ProgressError> {
+        // Get the bar width (default: 10)
+        let width = if format_parts.len() > 2 {
+            format_parts[2].parse::<usize>().unwrap_or(10)
+        } else {
+            10
+        };
+        
+        // Get the block characters (default: "█▓▒░ ")
+        let block_chars = if format_parts.len() > 3 {
+            format_parts[3]
+        } else {
+            ProgressIndicator::default_block_chars()
+        };
+        
+        // Calculate filled portion
+        let filled = (width as f64 * progress).round() as usize;
+        let blocks = block_chars.chars().collect::<Vec<_>>();
+        
+        // Handle invalid block chars
+        if blocks.is_empty() {
+            return Err(ProgressError::DisplayOperation(
+                "Block indicator requires at least one character".to_string(),
+            ));
+        }
+        
+        // Get fill character (first) and background character (last or space)
+        let fill_char = blocks[0];
+        let bg_char = if blocks.len() > 1 {
+            *blocks.last().unwrap()
+        } else {
+            ' ' // Default to space if only one character provided
+        };
+        
+        // Build the bar
+        let mut result = String::with_capacity(width + 2);
+        result.push('[');
+        
+        for i in 0..width {
+            if i < filled {
+                result.push(fill_char); // Filled block
+            } else {
+                result.push(bg_char); // Background character
+            }
+        }
+        
+        result.push(']');
+        
+        Ok(Some(result))
+    }
+    
+    /// Format a spinner indicator that changes based on progress
+    fn format_spinner_indicator(
+        &self,
+        progress: f64,
+        format_parts: &[&str],
+    ) -> Result<Option<String>, ProgressError> {
+        // Get spinner frames
+        let frames = if format_parts.len() > 2 {
+            format_parts[2].chars().collect::<Vec<_>>()
+        } else {
+            ProgressIndicator::default_spinner_frames()
+                .join("")
+                .chars()
+                .collect::<Vec<_>>()
+        };
+        
+        // Handle invalid frames
+        if frames.is_empty() {
+            return Err(ProgressError::DisplayOperation(
+                "Spinner indicator requires at least one frame".to_string(),
+            ));
+        }
+        
+        // Calculate current frame based on progress
+        let frame_index = (progress * frames.len() as f64).floor() as usize % frames.len();
+        let frame = frames[frame_index];
+        
+        Ok(Some(frame.to_string()))
+    }
+    
+    /// Format a simple numeric indicator showing only the percentage
+    fn format_numeric_indicator(
+        &self,
+        progress: f64,
+        format_parts: &[&str],
+    ) -> Result<Option<String>, ProgressError> {
+        // Calculate percentage
+        let percent = (progress * 100.0).round() as usize;
+        
+        // Check if we should include the percent sign
+        let include_sign = format_parts.len() <= 2 || format_parts[2] != "false";
+        
+        if include_sign {
+            Ok(Some(format!("{}%", percent)))
+        } else {
+            Ok(Some(format!("{}", percent)))
+        }
     }
     
     // Format a variable as a percentage
@@ -576,6 +712,77 @@ impl TemplatePreset {
     }
 }
 
+/// Supported progress indicator types
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ProgressIndicator {
+    /// Traditional progress bar using characters
+    /// Example: "[====    ]"
+    Bar,
+    
+    /// Block-based progress bar using block characters
+    /// Example: "[██████    ]" or "█▓▒░ "
+    Block,
+    
+    /// Animated spinner that rotates through frames
+    /// Example: One of "-\|/" based on progress
+    Spinner,
+    
+    /// Simple numeric display (no visual indicator)
+    /// Example: "50%"
+    Numeric,
+}
+
+impl ProgressIndicator {
+    /// Get the default frames for a spinner indicator
+    ///
+    /// # Returns
+    /// A vector of strings representing the spinner frames
+    pub fn default_spinner_frames() -> Vec<&'static str> {
+        vec!["-", "\\", "|", "/"]
+    }
+    
+    /// Get the default characters for a block indicator
+    ///
+    /// # Returns
+    /// A string containing the block characters from full to empty
+    pub fn default_block_chars() -> &'static str {
+        "█▓▒░ "
+    }
+}
+
+/// Error returned when parsing a string to ProgressIndicator fails
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProgressIndicatorParseError;
+
+impl std::fmt::Display for ProgressIndicatorParseError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Invalid progress indicator name")
+    }
+}
+
+impl std::error::Error for ProgressIndicatorParseError {}
+
+impl FromStr for ProgressIndicator {
+    type Err = ProgressIndicatorParseError;
+    
+    /// Parse a string into a ProgressIndicator
+    ///
+    /// # Parameters
+    /// * `s` - The indicator name as a string
+    ///
+    /// # Returns
+    /// Ok(ProgressIndicator) if the name is valid, Err otherwise
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_lowercase().as_str() {
+            "bar" => Ok(ProgressIndicator::Bar),
+            "block" => Ok(ProgressIndicator::Block),
+            "spinner" => Ok(ProgressIndicator::Spinner),
+            "numeric" => Ok(ProgressIndicator::Numeric),
+            _ => Err(ProgressIndicatorParseError),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -704,5 +911,83 @@ mod tests {
         
         let template = ProgressTemplate::new("Hello, {name:color:invalid}!");
         assert!(template.render(&ctx).is_err());
+    }
+    
+    #[test]
+    fn test_progress_indicator_types() {
+        let template = ProgressTemplate::new("Default: {p:bar} Block: {p:bar:block} Spinner: {p:bar:spinner} Numeric: {p:bar:numeric}");
+        let mut ctx = TemplateContext::new();
+        ctx.set("p", 0.5);
+        
+        let output = template.render(&ctx).unwrap();
+        
+        // Check each indicator type is present
+        assert!(output.contains("Default: [=====     ]"));
+        assert!(output.contains("Block: [█████     ]"));
+        assert!(output.contains("Spinner: "));  // One of the spinner frames will be present
+        assert!(output.contains("Numeric: 50%"));
+    }
+    
+    #[test]
+    fn test_block_indicator_custom_chars() {
+        let template = ProgressTemplate::new("{p:bar:block:10:#}");
+        let mut ctx = TemplateContext::new();
+        ctx.set("p", 0.5);
+        
+        let output = template.render(&ctx).unwrap();
+        assert_eq!(output, "[#####     ]");
+    }
+    
+    #[test]
+    fn test_spinner_indicator_custom_frames() {
+        let template = ProgressTemplate::new("{p:bar:spinner:abcd}");
+        let mut ctx = TemplateContext::new();
+        
+        // Test with different progress values to cycle through frames
+        ctx.set("p", 0.0);
+        let output1 = template.render(&ctx).unwrap();
+        
+        ctx.set("p", 0.25);
+        let output2 = template.render(&ctx).unwrap();
+        
+        ctx.set("p", 0.5);
+        let output3 = template.render(&ctx).unwrap();
+        
+        ctx.set("p", 0.75);
+        let output4 = template.render(&ctx).unwrap();
+        
+        // Each output should be one of the frame characters
+        assert!(["a", "b", "c", "d"].contains(&output1.as_str()));
+        assert!(["a", "b", "c", "d"].contains(&output2.as_str()));
+        assert!(["a", "b", "c", "d"].contains(&output3.as_str()));
+        assert!(["a", "b", "c", "d"].contains(&output4.as_str()));
+        
+        // At least two different frames should be used
+        let outputs = vec![output1, output2, output3, output4];
+        let unique_outputs = outputs.iter().collect::<std::collections::HashSet<_>>();
+        assert!(unique_outputs.len() > 1);
+    }
+    
+    #[test]
+    fn test_numeric_indicator_options() {
+        let template = ProgressTemplate::new("With sign: {p:bar:numeric} Without sign: {p:bar:numeric:false}");
+        let mut ctx = TemplateContext::new();
+        ctx.set("p", 0.75);
+        
+        let output = template.render(&ctx).unwrap();
+        assert_eq!(output, "With sign: 75% Without sign: 75");
+    }
+    
+    #[test]
+    fn test_progress_indicator_parsing() {
+        use std::str::FromStr;
+        
+        assert_eq!(ProgressIndicator::from_str("bar"), Ok(ProgressIndicator::Bar));
+        assert_eq!(ProgressIndicator::from_str("BAR"), Ok(ProgressIndicator::Bar));
+        assert_eq!(ProgressIndicator::from_str("Bar"), Ok(ProgressIndicator::Bar));
+        assert_eq!(ProgressIndicator::from_str("block"), Ok(ProgressIndicator::Block));
+        assert_eq!(ProgressIndicator::from_str("spinner"), Ok(ProgressIndicator::Spinner));
+        assert_eq!(ProgressIndicator::from_str("numeric"), Ok(ProgressIndicator::Numeric));
+        assert!(ProgressIndicator::from_str("unknown").is_err());
     }
 } 
