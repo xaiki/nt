@@ -4,6 +4,7 @@
 pub mod base_config;
 pub mod job_traits;
 pub mod thread_config;
+pub mod job_statistics;
 
 // Re-export key components
 pub use base_config::BaseConfig;

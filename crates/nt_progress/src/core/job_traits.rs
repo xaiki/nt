@@ -373,7 +373,7 @@ pub trait TimeTrackingJob: JobTracker {
     ///
     /// # Returns
     /// The updated progress percentage
-    fn update_time_estimates(&mut self) -> f64;
+    fn update_time_estimates(&self) -> f64;
 }
 
 // Generic implementations for base traits
@@ -578,8 +578,8 @@ impl<T: HasBaseConfig + Send + Sync + Debug> TimeTrackingJob for T {
         self.base_config().get_progress_speed()
     }
     
-    fn update_time_estimates(&mut self) -> f64 {
-        self.base_config_mut().update_time_estimates()
+    fn update_time_estimates(&self) -> f64 {
+        self.base_config().update_time_estimates()
     }
 }
 

@@ -4,6 +4,8 @@ use std::time::{Duration, Instant};
 use std::fmt::Debug;
 
 use super::job_traits::HasBaseConfig;
+use super::job_statistics::JobStatistics;
+use crate::config::capabilities::WithProgress;
 
 /// Represents the current status of a job.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -136,42 +138,8 @@ impl BaseConfig {
         }
         
         // Update time estimates
-        let total = self.total_jobs;
-        if total > 0 {
-            let now = std::time::Instant::now();
-            
-            // Calculate speed and ETA
-            {
-                let mut last_update = self.last_update_time.lock().unwrap();
-                let delta_time = now.duration_since(*last_update);
-                let mut speed = self.progress_speed.lock().unwrap();
-                let mut eta = self.estimated_time_remaining.lock().unwrap();
-                
-                // Only update if some time has passed since the last update
-                if !delta_time.is_zero() && count > 0 {
-                    // Calculate jobs per second
-                    let jobs_per_second = 1.0 / delta_time.as_secs_f64();
-                    
-                    // Update the speed using exponential moving average
-                    *speed = Some(match *speed {
-                        Some(current_speed) => current_speed * 0.7 + jobs_per_second * 0.3,
-                        None => jobs_per_second,
-                    });
-                    
-                    // Calculate estimated time remaining
-                    if let Some(current_speed) = *speed {
-                        let remaining_jobs = total.saturating_sub(count);
-                        if remaining_jobs > 0 && current_speed > 0.0 {
-                            let remaining_seconds = (remaining_jobs as f64) / current_speed;
-                            *eta = Some(std::time::Duration::from_secs_f64(remaining_seconds.max(0.0)));
-                        } else {
-                            *eta = None; // No remaining jobs or zero speed
-                        }
-                    }
-                }
-                
-                *last_update = now;
-            }
+        if self.total_jobs > 0 {
+            self.update_time_estimates();
         }
         
         count
@@ -615,13 +583,11 @@ impl BaseConfig {
         *self.progress_speed.lock().unwrap()
     }
     
-    /// Update the progress speed and estimated time remaining.
-    ///
-    /// This method should be called whenever progress is updated.
+    /// Update the time estimates based on current progress.
     ///
     /// # Returns
     /// The updated progress percentage
-    pub fn update_time_estimates(&mut self) -> f64 {
+    pub fn update_time_estimates(&self) -> f64 {
         let now = std::time::Instant::now();
         let total = self.get_total_jobs();
         let completed = self.get_completed_jobs();
@@ -705,6 +671,68 @@ impl HasBaseConfig for BaseConfig {
     
     fn base_config_mut(&mut self) -> &mut BaseConfig {
         self
+    }
+}
+
+impl JobStatistics for BaseConfig {
+    fn generate_statistics_report(&self) -> super::job_statistics::JobStatisticsReport {
+        super::job_statistics::JobStatisticsReport {
+            total_jobs: self.total_jobs,
+            completed_jobs: self.get_completed_jobs(),
+            status: self.get_status(),
+            elapsed_time: self.get_elapsed_time(),
+            estimated_time_remaining: self.get_estimated_time_remaining(),
+            progress_speed: self.get_progress_speed(),
+            failure_count: self.get_failure_count(),
+            retry_count: self.get_retry_count(),
+            max_retries: self.get_max_retries(),
+            is_cancelled: self.is_cancelled(),
+            parent_job_id: self.get_parent_job_id(),
+            child_job_count: self.get_child_job_ids().len(),
+            progress_percentage: if self.total_jobs > 0 {
+                (self.get_completed_jobs() as f64 / self.total_jobs as f64) * 100.0
+            } else {
+                0.0
+            },
+        }
+    }
+
+    fn get_job_summary(&self) -> String {
+        let report = self.generate_statistics_report();
+        let status = report.status.to_string();
+        let progress = format!("{:.1}%", report.progress_percentage);
+        let elapsed = format!("{:.1}s", report.elapsed_time.as_secs_f64());
+        let remaining = report.estimated_time_remaining
+            .map(|d| format!("{:.1}s", d.as_secs_f64()))
+            .unwrap_or_else(|| "unknown".to_string());
+        let speed = report.progress_speed
+            .map(|s| format!("{:.1} units/s", s))
+            .unwrap_or_else(|| "unknown".to_string());
+
+        format!(
+            "Status: {}, Progress: {} ({}/{}) [{} elapsed, {} remaining, {}]",
+            status,
+            progress,
+            report.completed_jobs,
+            report.total_jobs,
+            elapsed,
+            remaining,
+            speed
+        )
+    }
+}
+
+impl WithProgress for BaseConfig {
+    fn get_completed_jobs(&self) -> usize {
+        self.get_completed_jobs()
+    }
+    
+    fn set_progress_format(&mut self, format: &str) {
+        self.set_progress_format(format)
+    }
+    
+    fn get_progress_format(&self) -> &str {
+        self.get_progress_format()
     }
 }
 
@@ -960,5 +988,78 @@ mod tests {
         let initial_count = base.get_completed_jobs();
         let new_count = base.increment_completed_jobs();
         assert_eq!(initial_count, new_count, "Cancelled job should not increment completed count");
+    }
+    
+    #[test]
+    fn test_job_statistics_report() {
+        let mut config = BaseConfig::new(10);
+        
+        // Set the status to Running
+        config.mark_running();
+        
+        // Simulate some progress
+        config.increment_completed_jobs();
+        config.increment_completed_jobs();
+        
+        // Add a child job
+        config.add_child_job(1);
+        
+        // Generate report
+        let report = config.generate_statistics_report();
+        
+        assert_eq!(report.total_jobs, 10);
+        assert_eq!(report.completed_jobs, 2);
+        assert_eq!(report.status, JobStatus::Running);
+        assert_eq!(report.child_job_count, 1);
+        assert!((report.progress_percentage - 20.0).abs() < 0.1);
+        assert_eq!(report.max_retries, 3); // Default value
+    }
+    
+    #[test]
+    fn test_job_summary() {
+        let mut config = BaseConfig::new(10);
+        
+        // Set the status to Running
+        config.mark_running();
+        
+        // Simulate some progress
+        config.increment_completed_jobs();
+        config.increment_completed_jobs();
+        
+        let summary = config.get_job_summary();
+        assert!(summary.contains("Running"));
+        assert!(summary.contains("20.0%"));
+        assert!(summary.contains("2/10"));
+    }
+    
+    #[test]
+    fn test_job_statistics_with_failures() {
+        let mut config = BaseConfig::new(10);
+        
+        // Simulate a failure and retry
+        config.mark_failed("Test error");
+        config.retry();
+        
+        let report = config.generate_statistics_report();
+        
+        assert_eq!(report.failure_count, 1);
+        assert_eq!(report.retry_count, 1);
+        assert_eq!(report.status, JobStatus::Retry);
+    }
+    
+    #[test]
+    fn test_job_statistics_with_cancellation() {
+        let mut config = BaseConfig::new(10);
+        
+        // Mark the job as failed before cancelling
+        config.mark_failed("Test error");
+        
+        // Cancel the job
+        config.set_cancelled(Some("Test cancellation".to_string()));
+        
+        let report = config.generate_statistics_report();
+        
+        assert!(report.is_cancelled);
+        assert_eq!(report.status, JobStatus::Failed); // Status should be Failed
     }
 } 
