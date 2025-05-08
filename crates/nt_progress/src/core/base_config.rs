@@ -72,6 +72,10 @@ pub struct BaseConfig {
     estimated_time_remaining: Arc<Mutex<Option<Duration>>>,
     /// Time when the progress tracking started
     start_time: Arc<Mutex<Instant>>,
+    /// Whether this job has been cancelled
+    cancelled: Arc<AtomicBool>,
+    /// Reason for cancellation, if any
+    cancellation_reason: Arc<Mutex<Option<String>>>,
 }
 
 impl BaseConfig {
@@ -101,6 +105,8 @@ impl BaseConfig {
             progress_speed: Arc::new(Mutex::new(None)),
             estimated_time_remaining: Arc::new(Mutex::new(None)),
             start_time: Arc::new(Mutex::new(Instant::now())),
+            cancelled: Arc::new(AtomicBool::new(false)),
+            cancellation_reason: Arc::new(Mutex::new(None)),
         }
     }
     
@@ -117,6 +123,11 @@ impl BaseConfig {
     /// # Returns
     /// The new count of completed jobs
     pub fn increment_completed_jobs(&self) -> usize {
+        // If the job is cancelled, don't update the count
+        if self.is_cancelled() {
+            return self.get_completed_jobs();
+        }
+        
         let count = self.completed_jobs.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
         
         // If we've completed all jobs, mark as completed
@@ -656,6 +667,35 @@ impl BaseConfig {
         
         progress * 100.0
     }
+    
+    /// Check if this job has been cancelled.
+    ///
+    /// # Returns
+    /// `true` if the job has been cancelled, `false` otherwise
+    pub fn is_cancelled(&self) -> bool {
+        self.cancelled.load(std::sync::atomic::Ordering::SeqCst)
+    }
+    
+    /// Cancel this job with an optional reason.
+    ///
+    /// # Parameters
+    /// * `reason` - An optional reason for the cancellation
+    pub fn set_cancelled(&mut self, reason: Option<String>) {
+        self.cancelled.store(true, std::sync::atomic::Ordering::SeqCst);
+        
+        if let Some(reason_text) = reason {
+            // Store the cancellation reason
+            *self.cancellation_reason.lock().unwrap() = Some(reason_text);
+        }
+    }
+    
+    /// Get the reason this job was cancelled, if any.
+    ///
+    /// # Returns
+    /// The cancellation reason, or None if the job wasn't cancelled or no reason was provided
+    pub fn get_cancellation_reason(&self) -> Option<String> {
+        self.cancellation_reason.lock().unwrap().clone()
+    }
 }
 
 impl HasBaseConfig for BaseConfig {
@@ -893,5 +933,32 @@ mod tests {
         assert!(after_reset.as_millis() < 10, 
                 "After reset, elapsed time should be small again, got: {:?}", 
                 after_reset);
+    }
+    
+    #[test]
+    fn test_base_config_cancellation() {
+        let mut base = BaseConfig::new(10);
+        
+        // Test initial state
+        assert!(!base.is_cancelled());
+        assert_eq!(base.get_cancellation_reason(), None);
+        
+        // Test cancellation without reason
+        base.set_cancelled(None);
+        assert!(base.is_cancelled());
+        assert_eq!(base.get_cancellation_reason(), None);
+        
+        // Create a new instance for testing with reason
+        let mut base = BaseConfig::new(10);
+        
+        // Test cancellation with reason
+        base.set_cancelled(Some("Testing cancellation".to_string()));
+        assert!(base.is_cancelled());
+        assert_eq!(base.get_cancellation_reason(), Some("Testing cancellation".to_string()));
+        
+        // Test that a cancelled job doesn't increment completed jobs
+        let initial_count = base.get_completed_jobs();
+        let new_count = base.increment_completed_jobs();
+        assert_eq!(initial_count, new_count, "Cancelled job should not increment completed count");
     }
 } 

@@ -52,6 +52,30 @@ pub trait JobTracker: Send + Sync + Debug {
     fn set_total_jobs(&mut self, total: usize);
 }
 
+/// Trait for jobs that can be cancelled.
+///
+/// This trait extends JobTracker to support cancellation operations,
+/// allowing jobs to be cancelled and their cancellation state to be tracked.
+pub trait CancellableJob: JobTracker {
+    /// Check if this job has been cancelled.
+    ///
+    /// # Returns
+    /// `true` if the job has been cancelled, `false` otherwise
+    fn is_cancelled(&self) -> bool;
+    
+    /// Cancel this job with an optional reason.
+    ///
+    /// # Parameters
+    /// * `reason` - An optional reason for the cancellation
+    fn set_cancelled(&mut self, reason: Option<String>);
+    
+    /// Get the reason this job was cancelled, if any.
+    ///
+    /// # Returns
+    /// The cancellation reason, or None if the job wasn't cancelled or no reason was provided
+    fn get_cancellation_reason(&self) -> Option<String>;
+}
+
 /// Trait for jobs that can be paused and resumed.
 ///
 /// This trait extends JobTracker to support pausing and resuming jobs,
@@ -365,6 +389,20 @@ impl<T: HasBaseConfig + Send + Sync + Debug> JobTracker for T {
     
     fn set_total_jobs(&mut self, total: usize) {
         self.base_config_mut().set_total_jobs(total);
+    }
+}
+
+impl<T: HasBaseConfig + Send + Sync + Debug> CancellableJob for T {
+    fn is_cancelled(&self) -> bool {
+        self.base_config().is_cancelled()
+    }
+    
+    fn set_cancelled(&mut self, reason: Option<String>) {
+        self.base_config_mut().set_cancelled(reason);
+    }
+    
+    fn get_cancellation_reason(&self) -> Option<String> {
+        self.base_config().get_cancellation_reason()
     }
 }
 

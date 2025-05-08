@@ -804,6 +804,32 @@ impl Config {
             true
         }
     }
+
+    // CancellableJob delegation methods
+    
+    /// Check if this job has been cancelled.
+    ///
+    /// # Returns
+    /// `true` if the job has been cancelled, `false` otherwise
+    pub fn is_cancelled(&self) -> bool {
+        self.base_config().is_cancelled()
+    }
+    
+    /// Cancel this job with an optional reason.
+    ///
+    /// # Parameters
+    /// * `reason` - An optional reason for the cancellation
+    pub fn set_cancelled(&mut self, reason: Option<String>) {
+        self.base_config_mut().set_cancelled(reason);
+    }
+    
+    /// Get the reason this job was cancelled, if any.
+    ///
+    /// # Returns
+    /// The cancellation reason, or None if the job wasn't cancelled or no reason was provided
+    pub fn get_cancellation_reason(&self) -> Option<String> {
+        self.base_config().get_cancellation_reason()
+    }
 }
 
 impl Default for Config {
@@ -941,5 +967,32 @@ mod tests {
         assert!(config.is_paused());
         config.resume();
         assert!(!config.is_paused());
+    }
+    
+    #[test]
+    fn test_config_cancellation() {
+        let mut config = Config::new(ThreadMode::Limited, 10).unwrap();
+        
+        // Test initial state
+        assert!(!config.is_cancelled());
+        assert_eq!(config.get_cancellation_reason(), None);
+        
+        // Test cancellation without reason
+        config.set_cancelled(None);
+        assert!(config.is_cancelled());
+        assert_eq!(config.get_cancellation_reason(), None);
+        
+        // Test cancellation with reason
+        let mut config = Config::new(ThreadMode::Window(5), 10).unwrap();
+        config.set_cancelled(Some("Testing cancellation".to_string()));
+        assert!(config.is_cancelled());
+        assert_eq!(config.get_cancellation_reason(), Some("Testing cancellation".to_string()));
+        
+        // Verify across different mode types
+        let mut config = Config::new(ThreadMode::WindowWithTitle(5), 10).unwrap();
+        assert!(!config.is_cancelled());
+        config.set_cancelled(Some("WindowWithTitle cancellation".to_string()));
+        assert!(config.is_cancelled());
+        assert_eq!(config.get_cancellation_reason(), Some("WindowWithTitle cancellation".to_string()));
     }
 } 

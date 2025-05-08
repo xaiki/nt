@@ -12,6 +12,7 @@ use tokio::sync::mpsc;
 use std::io::Write;
 use crate::io::{ProgressWriter, OutputBuffer};
 use std::time::Duration;
+use crate::core::job_traits::CancellableJob;
 
 /// Represents the state of a thread in the system
 #[derive(Debug, Clone, PartialEq)]
@@ -668,11 +669,68 @@ impl TaskHandle {
     }
 
     /// Cancel this task.
+    ///
+    /// This will abort the task's execution and mark it as cancelled.
+    ///
+    /// # Returns
+    /// Result containing () on success, or an error if the task cannot be cancelled
     pub async fn cancel(self) -> Result<()> {
+        // First, mark the task as cancelled in the config
+        {
+            let mut config = self.thread_config.lock().await;
+            // Using CancellableJob trait method
+            CancellableJob::set_cancelled(&mut *config, Some("Task cancelled by user".to_string()));
+        }
+        
+        // Then abort the task's execution
         if let Some(handle) = self.join_handle.lock().await.take() {
             handle.abort();
         }
         Ok(())
+    }
+    
+    /// Cancel this task with a specific reason.
+    ///
+    /// This will abort the task's execution and mark it as cancelled with the provided reason.
+    ///
+    /// # Parameters
+    /// * `reason` - The reason for cancellation
+    ///
+    /// # Returns
+    /// Result containing () on success, or an error if the task cannot be cancelled
+    pub async fn cancel_with_reason(self, reason: String) -> Result<()> {
+        // First, mark the task as cancelled in the config with the provided reason
+        {
+            let mut config = self.thread_config.lock().await;
+            // Using CancellableJob trait method
+            CancellableJob::set_cancelled(&mut *config, Some(reason));
+        }
+        
+        // Then abort the task's execution
+        if let Some(handle) = self.join_handle.lock().await.take() {
+            handle.abort();
+        }
+        Ok(())
+    }
+    
+    /// Check if this task has been cancelled.
+    ///
+    /// # Returns
+    /// A Result containing true if the task has been cancelled, false otherwise
+    pub async fn is_cancelled(&self) -> Result<bool> {
+        let config = self.thread_config.lock().await;
+        // Using CancellableJob trait method
+        Ok(CancellableJob::is_cancelled(&*config))
+    }
+    
+    /// Get the reason this task was cancelled, if any.
+    ///
+    /// # Returns
+    /// A Result containing the cancellation reason, or None if not cancelled or no reason provided
+    pub async fn get_cancellation_reason(&self) -> Result<Option<String>> {
+        let config = self.thread_config.lock().await;
+        // Using CancellableJob trait method
+        Ok(CancellableJob::get_cancellation_reason(&*config))
     }
 
     /// Execute a closure with a mutable reference to a specific implementation type.

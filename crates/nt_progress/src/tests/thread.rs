@@ -256,6 +256,60 @@ async fn test_task_handle_pause_resume() -> Result<()> {
 }
 
 #[tokio::test]
+async fn test_task_handle_cancellation() -> Result<()> {
+    // Create a message channel
+    let (message_tx, _message_rx) = mpsc::channel::<ThreadMessage>(100);
+    
+    // Create a task handle
+    let config = Config::new(ThreadMode::Window(3), 10)?;
+    let task_handle = TaskHandle::new(1, config, message_tx.clone());
+    
+    // Check initial cancellation state
+    assert_eq!(task_handle.is_cancelled().await?, false);
+    assert_eq!(task_handle.get_cancellation_reason().await?, None);
+    
+    // Make a clone for testing cancellation
+    let handle1 = task_handle.clone();
+    let handle2 = task_handle.clone();
+    
+    // Track progress to test cancellation behavior
+    handle1.update_progress().await?;
+    handle1.update_progress().await?;
+    assert_eq!(handle1.get_progress_percentage().await?, 20.0); // 2/10 = 20%
+    
+    // Cancel the task with a reason
+    handle2.cancel_with_reason("Testing cancellation".to_string()).await?;
+    
+    // Verify the task is marked as cancelled
+    assert_eq!(handle1.is_cancelled().await?, true);
+    assert_eq!(
+        handle1.get_cancellation_reason().await?, 
+        Some("Testing cancellation".to_string())
+    );
+    
+    // Try to update progress again - should not change since task is cancelled
+    handle1.update_progress().await?;
+    assert_eq!(handle1.get_progress_percentage().await?, 20.0); // Still 2/10 = 20%
+    
+    // Create another task for testing basic cancellation
+    let config = Config::new(ThreadMode::Limited, 5)?;
+    let task_handle = TaskHandle::new(2, config, message_tx.clone());
+    
+    // Cancel without specific reason
+    let handle_clone = task_handle.clone();
+    task_handle.cancel().await?;
+    
+    // Verify cancellation state
+    assert_eq!(handle_clone.is_cancelled().await?, true);
+    assert_eq!(
+        handle_clone.get_cancellation_reason().await?,
+        Some("Task cancelled by user".to_string())
+    );
+    
+    Ok(())
+}
+
+#[tokio::test]
 async fn test_progress_manager_pause_resume() -> Result<()> {
     // Create a message channel
     let (message_tx, _message_rx) = mpsc::channel::<ThreadMessage>(100);
