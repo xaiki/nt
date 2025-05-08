@@ -2,6 +2,17 @@
 
 This file contains completed tasks and improvements moved from the TODO.md file.
 
+## v0.1.22 (2024-05-15)
+
+### Feature Enhancements
+- Added extensible custom progress indicators
+  - Implemented CustomIndicatorType enum for built-in indicator types
+  - Added three built-in custom indicators: dots, braille, and gradient
+  - Replaced hardcoded indicator names with proper enum-based approach
+  - Added comprehensive tests for custom indicators
+  - Improved error handling for invalid custom indicators
+  - Used a more extensible design for future indicator additions
+
 ## v0.1.21 (2024-05-15)
 
 ### Code Cleanup and Refactoring

@@ -340,6 +340,7 @@ impl ProgressTemplate {
             ProgressIndicator::Block => self.format_block_indicator(progress, format_parts),
             ProgressIndicator::Spinner => self.format_spinner_indicator(progress, format_parts),
             ProgressIndicator::Numeric => self.format_numeric_indicator(progress, format_parts),
+            ProgressIndicator::Custom(name) => self.format_custom_indicator(name, progress, format_parts),
         }
     }
     
@@ -625,6 +626,211 @@ impl ProgressTemplate {
         
         Ok(Some(colored_text))
     }
+    
+    /// Format a custom indicator defined by the user
+    fn format_custom_indicator(
+        &self,
+        name: String,
+        progress: f64,
+        format_parts: &[&str],
+    ) -> Result<Option<String>, ProgressError> {
+        // Parse the indicator type
+        let indicator_type = CustomIndicatorType::from_str(&name).ok_or_else(|| {
+            ProgressError::DisplayOperation(format!(
+                "Unknown custom indicator: {}. Valid options are: {}",
+                name,
+                CustomIndicatorType::variants().join(", ")
+            ))
+        })?;
+        
+        // Format based on the indicator type
+        match indicator_type {
+            CustomIndicatorType::Dots => self.format_dots_indicator(progress, format_parts),
+            CustomIndicatorType::Braille => self.format_braille_indicator(progress, format_parts),
+            CustomIndicatorType::Gradient => self.format_gradient_indicator(progress, format_parts),
+        }
+    }
+    
+    /// Format a dots indicator that uses Unicode dots for a more compact representation
+    /// Example: "⣿⣿⣿⣿⣷⣀⣀⣀"
+    fn format_dots_indicator(
+        &self,
+        progress: f64,
+        format_parts: &[&str],
+    ) -> Result<Option<String>, ProgressError> {
+        // Get the bar width (default: 10)
+        let width = if format_parts.len() > 3 {
+            format_parts[3].parse::<usize>().unwrap_or(10)
+        } else {
+            10
+        };
+        
+        // Braille dots pattern (8 levels of fill)
+        let dots = "⠀⡀⣀⣄⣤⣦⣶⣾⣿";
+        let dots_chars: Vec<char> = dots.chars().collect();
+        
+        // Calculate filled portion
+        let filled = (width as f64 * progress).round() as usize;
+        let partial_fill = ((width as f64 * progress * 8.0) as usize) % 8;
+        
+        // Build the dots bar
+        let mut result = String::with_capacity(width);
+        
+        for i in 0..width {
+            if i < filled {
+                // Fully filled
+                result.push(dots_chars[dots_chars.len() - 1]);
+            } else if i == filled && partial_fill > 0 {
+                // Partially filled character
+                result.push(dots_chars[partial_fill]);
+            } else {
+                // Empty
+                result.push(dots_chars[0]);
+            }
+        }
+        
+        Ok(Some(result))
+    }
+    
+    /// Format a braille-based indicator that uses Unicode braille patterns
+    /// Example: "⣿⣿⣿⣿⣿⠿⠄⠄⠄"
+    fn format_braille_indicator(
+        &self,
+        progress: f64,
+        format_parts: &[&str],
+    ) -> Result<Option<String>, ProgressError> {
+        // Get the bar width (default: 10)
+        let width = if format_parts.len() > 3 {
+            format_parts[3].parse::<usize>().unwrap_or(10)
+        } else {
+            10
+        };
+        
+        // Braille patterns (full, partial, empty)
+        let full = "⣿";
+        let partial = "⠿⠷⠯⠟⠻⠛⠙⠉";
+        let empty = "⠄";
+        
+        let partial_chars: Vec<char> = partial.chars().collect();
+        
+        // Calculate filled portion
+        let filled = (width as f64 * progress).round() as usize;
+        let partial_fill = if filled < width {
+            ((width as f64 * progress * partial_chars.len() as f64) as usize) % partial_chars.len()
+        } else {
+            0
+        };
+        
+        // Build the braille bar
+        let mut result = String::with_capacity(width);
+        
+        for i in 0..width {
+            if i < filled {
+                result.push_str(full);
+            } else if i == filled && partial_fill > 0 {
+                result.push(partial_chars[partial_fill]);
+            } else {
+                result.push_str(empty);
+            }
+        }
+        
+        Ok(Some(result))
+    }
+    
+    /// Format a gradient indicator that uses a color gradient for a more visually appealing progress bar
+    /// Example: "[====    ]" with color gradient
+    fn format_gradient_indicator(
+        &self,
+        progress: f64,
+        format_parts: &[&str],
+    ) -> Result<Option<String>, ProgressError> {
+        use crossterm::style::{Color, Stylize};
+        
+        // Get the bar width (default: 10)
+        let width = if format_parts.len() > 3 {
+            format_parts[3].parse::<usize>().unwrap_or(10)
+        } else {
+            10
+        };
+        
+        // Get colors for gradient (default: red to green)
+        let start_color = if format_parts.len() > 4 {
+            match format_parts[4] {
+                "red" => Color::Red,
+                "green" => Color::Green,
+                "blue" => Color::Blue,
+                "yellow" => Color::Yellow,
+                "magenta" => Color::Magenta,
+                "cyan" => Color::Cyan,
+                _ => Color::Red,
+            }
+        } else {
+            Color::Red
+        };
+        
+        let end_color = if format_parts.len() > 5 {
+            match format_parts[5] {
+                "red" => Color::Red,
+                "green" => Color::Green,
+                "blue" => Color::Blue,
+                "yellow" => Color::Yellow,
+                "magenta" => Color::Magenta,
+                "cyan" => Color::Cyan,
+                _ => Color::Green,
+            }
+        } else {
+            Color::Green
+        };
+        
+        // Calculate filled portion
+        let filled = (width as f64 * progress).round() as usize;
+        
+        // Build the bar with gradient
+        let mut result = String::new();
+        result.push('[');
+        
+        for i in 0..width {
+            let char = if i < filled { '=' } else { ' ' };
+            
+            if i < filled {
+                // Calculate a blend of the colors based on position within filled area
+                let color_pos = i as f64 / filled.max(1) as f64;
+                
+                // Choose a color from the gradient
+                let color = match (start_color, end_color) {
+                    (Color::Red, Color::Green) => {
+                        if color_pos < 0.5 {
+                            Color::Red
+                        } else {
+                            Color::Green
+                        }
+                    },
+                    (Color::Blue, Color::Cyan) => {
+                        if color_pos < 0.5 {
+                            Color::Blue
+                        } else {
+                            Color::Cyan
+                        }
+                    },
+                    _ => {
+                        if color_pos < 0.5 {
+                            start_color
+                        } else {
+                            end_color
+                        }
+                    },
+                };
+                
+                result.push_str(&char.to_string().with(color).to_string());
+            } else {
+                result.push(char);
+            }
+        }
+        
+        result.push(']');
+        
+        Ok(Some(result))
+    }
 }
 
 /// Supported color names for formatting
@@ -730,6 +936,12 @@ pub enum ProgressIndicator {
     /// Simple numeric display (no visual indicator)
     /// Example: "50%"
     Numeric,
+    
+    /// Custom indicator defined by the user
+    /// This allows for user-defined progress indicators with 
+    /// custom rendering logic
+    /// Used with {progress:bar:custom:name} in templates
+    Custom(String),
 }
 
 impl ProgressIndicator {
@@ -773,12 +985,50 @@ impl FromStr for ProgressIndicator {
     /// # Returns
     /// Ok(ProgressIndicator) if the name is valid, Err otherwise
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s.to_lowercase().as_str() {
+        let parts: Vec<&str> = s.splitn(2, ':').collect();
+        let base_type = parts[0].to_lowercase();
+        
+        match base_type.as_str() {
             "bar" => Ok(ProgressIndicator::Bar),
             "block" => Ok(ProgressIndicator::Block),
             "spinner" => Ok(ProgressIndicator::Spinner),
             "numeric" => Ok(ProgressIndicator::Numeric),
+            "custom" => {
+                if parts.len() > 1 {
+                    Ok(ProgressIndicator::Custom(parts[1].to_string()))
+                } else {
+                    Err(ProgressIndicatorParseError)
+                }
+            }
             _ => Err(ProgressIndicatorParseError),
+        }
+    }
+}
+
+/// Custom indicator type for formatting progress
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CustomIndicatorType {
+    /// Dots indicator that uses Unicode dots
+    Dots,
+    /// Braille-based indicator that uses Unicode braille patterns
+    Braille,
+    /// Gradient indicator that uses color gradients
+    Gradient,
+}
+
+impl CustomIndicatorType {
+    /// Get a list of all available custom indicator types
+    pub fn variants() -> &'static [&'static str] {
+        &["dots", "braille", "gradient"]
+    }
+    
+    /// Parse a string into a CustomIndicatorType
+    pub fn from_str(s: &str) -> Option<Self> {
+        match s.to_lowercase().as_str() {
+            "dots" => Some(CustomIndicatorType::Dots),
+            "braille" => Some(CustomIndicatorType::Braille),
+            "gradient" => Some(CustomIndicatorType::Gradient),
+            _ => None,
         }
     }
 }
@@ -988,6 +1238,38 @@ mod tests {
         assert_eq!(ProgressIndicator::from_str("block"), Ok(ProgressIndicator::Block));
         assert_eq!(ProgressIndicator::from_str("spinner"), Ok(ProgressIndicator::Spinner));
         assert_eq!(ProgressIndicator::from_str("numeric"), Ok(ProgressIndicator::Numeric));
+        assert_eq!(ProgressIndicator::from_str("custom:dots"), Ok(ProgressIndicator::Custom("dots".to_string())));
+        assert_eq!(ProgressIndicator::from_str("custom:braille"), Ok(ProgressIndicator::Custom("braille".to_string())));
+        assert_eq!(ProgressIndicator::from_str("custom:gradient"), Ok(ProgressIndicator::Custom("gradient".to_string())));
         assert!(ProgressIndicator::from_str("unknown").is_err());
+        assert!(ProgressIndicator::from_str("custom").is_err());
+    }
+    
+    #[test]
+    fn test_custom_indicators() {
+        // Test dots indicator
+        let template = ProgressTemplate::new("{p:bar:custom:dots}");
+        let mut ctx = TemplateContext::new();
+        ctx.set("p", 0.5);
+        
+        let result = template.render(&ctx).unwrap();
+        assert!(!result.is_empty(), "Dots indicator should produce non-empty output");
+        
+        // Test braille indicator
+        let template = ProgressTemplate::new("{p:bar:custom:braille}");
+        let mut ctx = TemplateContext::new();
+        ctx.set("p", 0.5);
+        
+        let result = template.render(&ctx).unwrap();
+        assert!(!result.is_empty(), "Braille indicator should produce non-empty output");
+        
+        // Test gradient indicator
+        let template = ProgressTemplate::new("{p:bar:custom:gradient}");
+        let mut ctx = TemplateContext::new();
+        ctx.set("p", 0.5);
+        
+        let result = template.render(&ctx).unwrap();
+        assert!(result.contains("["), "Result should contain bar brackets");
+        assert!(result.contains("]"), "Result should contain bar brackets");
     }
 } 
