@@ -2,6 +2,15 @@
 
 This file contains completed tasks and improvements moved from the TODO.md file.
 
+## v0.1.41 (2025-05-12)
+
+### Bug Fixes
+- Fixed failing tests in formatter module
+  - Corrected ratio format implementation to properly handle context variables
+  - Fixed padding formats to correctly apply padding with requested width
+  - Fixed color formatting to properly retrieve color names from format parts
+  - Improved tests to verify formatted output against expected format
+
 ## v0.1.40 (2025-05-11)
 
 ### Added Job Persistence for Long-Running Operations
