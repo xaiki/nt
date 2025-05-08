@@ -2,6 +2,31 @@
 
 This file contains completed tasks and improvements moved from the TODO.md file.
 
+## v0.1.27 (2024-05-20)
+
+### Added
+- Implemented job priority system
+  - Added PrioritizedJob trait for job priority management
+  - Implemented ability to set and retrieve job priorities
+  - Added priority field to BaseConfig for centralized priority tracking
+  - Added proper thread-safe access with atomic counters
+  - Extended Config with priority management methods
+  - Added comprehensive tests for job prioritization functionality
+
+- Implemented job pause/resume functionality
+  - Added PausableJob trait for job pause/resume operations
+  - Added pause/resume controls in BaseConfig
+  - Implemented thread-safe pausing with atomic flags
+  - Added proper API across all job tracking interfaces
+  - Added comprehensive tests for pause/resume functionality
+  - Extended Config with pause/resume methods and state checking
+
+### Enhanced
+- Updated all capability checks to include prioritized and pausable job capabilities
+- Implemented these capabilities across all mode types
+- Added unit tests to verify functionality in all modes
+- Fixed and updated capability test cases to account for new features
+
 ## v0.1.26 (2024-05-19)
 
 ### Added

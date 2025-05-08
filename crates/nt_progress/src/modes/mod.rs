@@ -2,7 +2,7 @@ use std::fmt::Debug;
 use std::collections::{VecDeque, HashSet, HashMap};
 use std::any::{Any, TypeId};
 use std::sync::Arc;
-use std::sync::atomic::AtomicUsize;
+use std::sync::atomic::{AtomicUsize, AtomicBool, AtomicU32};
 use std::sync::Mutex;
 
 use crate::errors::ModeCreationError;
@@ -122,6 +122,29 @@ pub trait JobTracker: Send + Sync + Debug {
     /// # Parameters
     /// * `total` - The new total number of jobs
     fn set_total_jobs(&mut self, total: usize);
+}
+
+/// Trait for jobs that can be paused and resumed.
+///
+/// This trait extends JobTracker to support pausing and resuming jobs,
+/// allowing for temporary suspension of progress tracking.
+pub trait PausableJob: JobTracker {
+    /// Pause this job.
+    ///
+    /// When a job is paused, it will stop incrementing its progress counter
+    /// until it is resumed.
+    fn pause(&mut self);
+    
+    /// Resume this job.
+    ///
+    /// When a job is resumed, it will start incrementing its progress counter again.
+    fn resume(&mut self);
+    
+    /// Check if this job is currently paused.
+    ///
+    /// # Returns
+    /// `true` if the job is paused, `false` otherwise
+    fn is_paused(&self) -> bool;
 }
 
 /// Trait for tracking hierarchical job progress.
@@ -451,6 +474,12 @@ pub enum Capability {
     
     /// The mode supports progress tracking and percentage display.
     Progress,
+    
+    /// The mode supports job prioritization.
+    PrioritizedJob,
+    
+    /// The mode supports pausing and resuming jobs.
+    PausableJob,
 }
 
 /// Extension trait providing capability checks and conversions.
@@ -658,6 +687,8 @@ pub trait ThreadConfigExt: ThreadConfig {
             Capability::StandardWindow => self.supports_standard_window(),
             Capability::WrappedText => self.supports_wrapped_text(),
             Capability::Progress => self.supports_progress(),
+            Capability::PrioritizedJob => self.supports_prioritized_job(),
+            Capability::PausableJob => self.supports_pausable_job(),
         }
     }
 
@@ -722,8 +753,98 @@ pub trait ThreadConfigExt: ThreadConfig {
         add_if_supported!(Capability::StandardWindow, self.supports_standard_window());
         add_if_supported!(Capability::WrappedText, self.supports_wrapped_text());
         add_if_supported!(Capability::Progress, self.supports_progress());
+        add_if_supported!(Capability::PrioritizedJob, self.supports_prioritized_job());
+        add_if_supported!(Capability::PausableJob, self.supports_pausable_job());
         
         caps
+    }
+
+    /// Add support for checking if a config supports job prioritization.
+    ///
+    /// # Returns
+    /// `true` if the config supports job prioritization.
+    fn supports_prioritized_job(&self) -> bool {
+        // All of our modes support PrioritizedJob via blanket implementation
+        true
+    }
+
+    /// Try to get this config as a PrioritizedJob.
+    ///
+    /// # Returns
+    /// Some(&dyn PrioritizedJob) if the config supports job prioritization, None otherwise.
+    fn as_prioritized_job(&self) -> Option<&dyn PrioritizedJob> {
+        let any = self.as_any();
+        if let Some(w) = any.downcast_ref::<Window>() {
+            Some(w as &dyn PrioritizedJob)
+        } else if let Some(w) = any.downcast_ref::<WindowWithTitle>() {
+            Some(w as &dyn PrioritizedJob)
+        } else if let Some(l) = any.downcast_ref::<Limited>() {
+            Some(l as &dyn PrioritizedJob)
+        } else {
+            any.downcast_ref::<Capturing>().map(|c| c as &dyn PrioritizedJob)
+        }
+    }
+
+    /// Try to get this config as a mutable PrioritizedJob.
+    ///
+    /// # Returns
+    /// Some(&mut dyn PrioritizedJob) if the config supports job prioritization, None otherwise.
+    fn as_prioritized_job_mut(&mut self) -> Option<&mut dyn PrioritizedJob> {
+        let type_id = self.as_any().type_id();
+        let any = self.as_any_mut();
+        if type_id == TypeId::of::<Window>() {
+            any.downcast_mut::<Window>().map(|w| w as &mut dyn PrioritizedJob)
+        } else if type_id == TypeId::of::<WindowWithTitle>() {
+            any.downcast_mut::<WindowWithTitle>().map(|w| w as &mut dyn PrioritizedJob)
+        } else if type_id == TypeId::of::<Limited>() {
+            any.downcast_mut::<Limited>().map(|l| l as &mut dyn PrioritizedJob)
+        } else {
+            any.downcast_mut::<Capturing>().map(|c| c as &mut dyn PrioritizedJob)
+        }
+    }
+
+    /// Add support for checking if a config supports pausing and resuming jobs.
+    ///
+    /// # Returns
+    /// `true` if the config supports pausing and resuming jobs.
+    fn supports_pausable_job(&self) -> bool {
+        // All of our modes support PausableJob via blanket implementation
+        true
+    }
+
+    /// Try to get this config as a PausableJob.
+    ///
+    /// # Returns
+    /// Some(&dyn PausableJob) if the config supports pausing and resuming jobs, None otherwise.
+    fn as_pausable_job(&self) -> Option<&dyn PausableJob> {
+        let any = self.as_any();
+        if let Some(w) = any.downcast_ref::<Window>() {
+            Some(w as &dyn PausableJob)
+        } else if let Some(w) = any.downcast_ref::<WindowWithTitle>() {
+            Some(w as &dyn PausableJob)
+        } else if let Some(l) = any.downcast_ref::<Limited>() {
+            Some(l as &dyn PausableJob)
+        } else {
+            any.downcast_ref::<Capturing>().map(|c| c as &dyn PausableJob)
+        }
+    }
+
+    /// Try to get this config as a mutable PausableJob.
+    ///
+    /// # Returns
+    /// Some(&mut dyn PausableJob) if the config supports pausing and resuming jobs, None otherwise.
+    fn as_pausable_job_mut(&mut self) -> Option<&mut dyn PausableJob> {
+        let type_id = self.as_any().type_id();
+        let any = self.as_any_mut();
+        if type_id == TypeId::of::<Window>() {
+            any.downcast_mut::<Window>().map(|w| w as &mut dyn PausableJob)
+        } else if type_id == TypeId::of::<WindowWithTitle>() {
+            any.downcast_mut::<WindowWithTitle>().map(|w| w as &mut dyn PausableJob)
+        } else if type_id == TypeId::of::<Limited>() {
+            any.downcast_mut::<Limited>().map(|l| l as &mut dyn PausableJob)
+        } else {
+            any.downcast_mut::<Capturing>().map(|c| c as &mut dyn PausableJob)
+        }
     }
 }
 
@@ -1432,6 +1553,126 @@ impl Config {
         eprintln!("Warning: Could not get child job IDs. Unknown mode type.");
         Vec::new()
     }
+
+    /// Check if this job is currently paused.
+    ///
+    /// # Returns
+    /// `true` if the job is paused, `false` otherwise
+    pub fn is_paused(&self) -> bool {
+        // Try to use any type that implements PausableJob
+        let any = self.config.as_any();
+        
+        macro_rules! try_as_pausable {
+            ($type:ty) => {
+                if let Some(config) = any.downcast_ref::<$type>() {
+                    return config.is_paused();
+                }
+            };
+        }
+        
+        try_as_pausable!(Window);
+        try_as_pausable!(WindowWithTitle);
+        try_as_pausable!(Limited);
+        try_as_pausable!(Capturing);
+        
+        false
+    }
+
+    /// Pause this job.
+    ///
+    /// When a job is paused, it will stop incrementing its progress counter
+    /// until it is resumed.
+    pub fn pause(&mut self) {
+        // Try to use any type that implements PausableJob
+        let any_mut = self.config.as_any_mut();
+        
+        macro_rules! try_as_pausable_mut {
+            ($type:ty) => {
+                if let Some(config) = any_mut.downcast_mut::<$type>() {
+                    config.pause();
+                    return;
+                }
+            };
+        }
+        
+        try_as_pausable_mut!(Window);
+        try_as_pausable_mut!(WindowWithTitle);
+        try_as_pausable_mut!(Limited);
+        try_as_pausable_mut!(Capturing);
+    }
+
+    /// Resume this job.
+    ///
+    /// When a job is resumed, it will start incrementing its progress counter again.
+    pub fn resume(&mut self) {
+        // Try to use any type that implements PausableJob
+        let any_mut = self.config.as_any_mut();
+        
+        macro_rules! try_as_pausable_mut {
+            ($type:ty) => {
+                if let Some(config) = any_mut.downcast_mut::<$type>() {
+                    config.resume();
+                    return;
+                }
+            };
+        }
+        
+        try_as_pausable_mut!(Window);
+        try_as_pausable_mut!(WindowWithTitle);
+        try_as_pausable_mut!(Limited);
+        try_as_pausable_mut!(Capturing);
+    }
+
+    /// Get the priority of this job.
+    ///
+    /// Higher values indicate higher priority.
+    ///
+    /// # Returns
+    /// The priority value of the job
+    pub fn get_priority(&self) -> u32 {
+        // Try to use any type that implements PrioritizedJob
+        let any = self.config.as_any();
+        
+        macro_rules! try_as_prioritized {
+            ($type:ty) => {
+                if let Some(config) = any.downcast_ref::<$type>() {
+                    return config.get_priority();
+                }
+            };
+        }
+        
+        try_as_prioritized!(Window);
+        try_as_prioritized!(WindowWithTitle);
+        try_as_prioritized!(Limited);
+        try_as_prioritized!(Capturing);
+        
+        0
+    }
+
+    /// Set the priority of this job.
+    ///
+    /// Higher values indicate higher priority.
+    ///
+    /// # Parameters
+    /// * `priority` - The new priority value
+    pub fn set_priority(&mut self, priority: u32) {
+        // Try to use any type that implements PrioritizedJob
+        let any_mut = self.config.as_any_mut();
+        
+        macro_rules! try_as_prioritized_mut {
+            ($type:ty) => {
+                if let Some(config) = any_mut.downcast_mut::<$type>() {
+                    config.set_priority(priority);
+                    return;
+                }
+            };
+        }
+        
+        try_as_prioritized_mut!(Window);
+        try_as_prioritized_mut!(WindowWithTitle);
+        try_as_prioritized_mut!(Limited);
+        try_as_prioritized_mut!(Capturing);
+    }
 }
 
 impl Default for Config {
@@ -1729,6 +1970,10 @@ pub struct BaseConfig {
     parent_job_id: Option<usize>,
     /// Child job IDs if this job has children
     child_job_ids: Arc<Mutex<Vec<usize>>>,
+    /// Whether this job is currently paused
+    paused: Arc<AtomicBool>,
+    /// Priority of this job (higher values indicate higher priority)
+    priority: Arc<AtomicU32>,
 }
 
 impl BaseConfig {
@@ -1746,6 +1991,8 @@ impl BaseConfig {
             progress_format: "{current}/{total} ({percent}%)".to_string(),
             parent_job_id: None,
             child_job_ids: Arc::new(Mutex::new(Vec::new())),
+            paused: Arc::new(AtomicBool::new(false)),
+            priority: Arc::new(AtomicU32::new(0)),
         }
     }
 
@@ -1762,6 +2009,11 @@ impl BaseConfig {
     /// # Returns
     /// The new count of completed jobs
     pub fn increment_completed_jobs(&self) -> usize {
+        // If paused, don't increment
+        if self.paused.load(std::sync::atomic::Ordering::SeqCst) {
+            return self.completed_jobs.load(std::sync::atomic::Ordering::SeqCst);
+        }
+        
         self.completed_jobs.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1
     }
     
@@ -1789,6 +2041,7 @@ impl BaseConfig {
     /// # Returns
     /// The new count of completed jobs
     pub fn set_completed_jobs(&mut self, completed: usize) -> usize {
+        // Allow setting completed jobs even if paused
         self.completed_jobs.store(completed, std::sync::atomic::Ordering::SeqCst);
         completed
     }
@@ -1866,6 +2119,49 @@ impl BaseConfig {
     pub fn get_child_job_ids(&self) -> Vec<usize> {
         let children = self.child_job_ids.lock().unwrap();
         children.clone()
+    }
+    
+    /// Pause this job.
+    ///
+    /// When a job is paused, it will stop incrementing its progress counter
+    /// until it is resumed.
+    pub fn pause(&self) {
+        self.paused.store(true, std::sync::atomic::Ordering::SeqCst);
+    }
+    
+    /// Resume this job.
+    ///
+    /// When a job is resumed, it will start incrementing its progress counter again.
+    pub fn resume(&self) {
+        self.paused.store(false, std::sync::atomic::Ordering::SeqCst);
+    }
+    
+    /// Check if this job is currently paused.
+    ///
+    /// # Returns
+    /// `true` if the job is paused, `false` otherwise
+    pub fn is_paused(&self) -> bool {
+        self.paused.load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    /// Get the priority of this job.
+    ///
+    /// Higher values indicate higher priority.
+    ///
+    /// # Returns
+    /// The priority value of the job
+    pub fn get_priority(&self) -> u32 {
+        self.priority.load(std::sync::atomic::Ordering::SeqCst)
+    }
+    
+    /// Set the priority of this job.
+    ///
+    /// Higher values indicate higher priority.
+    ///
+    /// # Parameters
+    /// * `priority` - The new priority value
+    pub fn set_priority(&mut self, priority: u32) {
+        self.priority.store(priority, std::sync::atomic::Ordering::SeqCst);
     }
 }
 
@@ -1994,6 +2290,60 @@ impl<T: HasBaseConfig + Send + Sync + Debug> HierarchicalJobTracker for T {
         // need access to all other tasks to calculate cumulative progress
         // We'll implement this in the ProgressManager
         0.0
+    }
+}
+
+// After the blanket implementation of HierarchicalJobTracker
+
+// Blanket implementation of PausableJob for any type that implements HasBaseConfig
+impl<T: HasBaseConfig + Send + Sync + Debug> PausableJob for T {
+    fn pause(&mut self) {
+        self.base_config().pause();
+    }
+    
+    fn resume(&mut self) {
+        self.base_config().resume();
+    }
+    
+    fn is_paused(&self) -> bool {
+        self.base_config().is_paused()
+    }
+}
+
+// Add this trait after the HierarchicalJobTracker trait definition
+
+/// Trait for jobs with priority.
+///
+/// This trait extends JobTracker to support job priorities, allowing
+/// for sorting and scheduling jobs based on their priority.
+pub trait PrioritizedJob: JobTracker {
+    /// Get the priority of this job.
+    ///
+    /// Higher values indicate higher priority.
+    ///
+    /// # Returns
+    /// The priority value of the job
+    fn get_priority(&self) -> u32;
+    
+    /// Set the priority of this job.
+    ///
+    /// Higher values indicate higher priority.
+    ///
+    /// # Parameters
+    /// * `priority` - The new priority value
+    fn set_priority(&mut self, priority: u32);
+}
+
+// Add this blanket implementation after the implementation of PausableJob
+
+// Blanket implementation of PrioritizedJob for any type that implements HasBaseConfig
+impl<T: HasBaseConfig + Send + Sync + Debug> PrioritizedJob for T {
+    fn get_priority(&self) -> u32 {
+        self.base_config().get_priority()
+    }
+    
+    fn set_priority(&mut self, priority: u32) {
+        self.base_config_mut().set_priority(priority);
     }
 }
 
@@ -2129,11 +2479,19 @@ mod tests {
             assert!(!limited_config.supports_standard_window());
         }
 
-        // Test capability set
+        // Test capability set - now will contain PrioritizedJob and PausableJob
         {
             let limited_config = config.as_type::<Limited>().unwrap();
             let caps = limited_config.capabilities();
-            assert!(caps.is_empty());
+            assert!(caps.contains(&Capability::PrioritizedJob));
+            assert!(caps.contains(&Capability::PausableJob));
+            
+            // Make sure no traditional window capabilities are present
+            assert!(!caps.contains(&Capability::Title));
+            assert!(!caps.contains(&Capability::Emoji));
+            assert!(!caps.contains(&Capability::TitleAndEmoji));
+            assert!(!caps.contains(&Capability::CustomSize));
+            assert!(!caps.contains(&Capability::StandardWindow));
         }
     }
 
@@ -2181,6 +2539,10 @@ mod tests {
         assert!(!window_caps.contains(&Capability::Emoji));
         assert!(!window_caps.contains(&Capability::TitleAndEmoji));
         
+        // New capabilities should be present in all modes
+        assert!(window_caps.contains(&Capability::PrioritizedJob));
+        assert!(window_caps.contains(&Capability::PausableJob));
+        
         // Check WindowWithTitle capabilities
         let window_with_title_caps = window_with_title.capabilities();
         assert!(window_with_title_caps.contains(&Capability::CustomSize));
@@ -2189,9 +2551,23 @@ mod tests {
         assert!(window_with_title_caps.contains(&Capability::Emoji));
         assert!(window_with_title_caps.contains(&Capability::TitleAndEmoji));
         
+        // New capabilities should be present in all modes
+        assert!(window_with_title_caps.contains(&Capability::PrioritizedJob));
+        assert!(window_with_title_caps.contains(&Capability::PausableJob));
+        
         // Check Limited capabilities
         let limited_caps = limited.capabilities();
-        assert!(limited_caps.is_empty());
+        
+        // Limited should not have window capabilities
+        assert!(!limited_caps.contains(&Capability::Title));
+        assert!(!limited_caps.contains(&Capability::Emoji));
+        assert!(!limited_caps.contains(&Capability::TitleAndEmoji));
+        assert!(!limited_caps.contains(&Capability::CustomSize));
+        assert!(!limited_caps.contains(&Capability::StandardWindow));
+        
+        // But should have the new capabilities
+        assert!(limited_caps.contains(&Capability::PrioritizedJob));
+        assert!(limited_caps.contains(&Capability::PausableJob));
     }
 
     #[test]
@@ -2264,5 +2640,125 @@ mod tests {
     fn test_mode_parameters_unknown_mode() {
         let params = ModeParameters::new(10);
         assert!(params.validate_required_params("unknown_mode").is_err());
+    }
+    
+    #[test]
+    fn test_prioritized_job_functionality() {
+        // Test with Window mode
+        {
+            let mut window = Window::new(10, 3).unwrap();
+            
+            // Default priority should be 0
+            assert_eq!(window.get_priority(), 0);
+            
+            // Set priority and verify
+            window.set_priority(5);
+            assert_eq!(window.get_priority(), 5);
+        }
+        
+        // Test with WindowWithTitle mode
+        {
+            let mut window_with_title = WindowWithTitle::new(10, 3, "Test".to_string()).unwrap();
+            
+            // Default priority should be 0
+            assert_eq!(window_with_title.get_priority(), 0);
+            
+            // Set priority and verify
+            window_with_title.set_priority(10);
+            assert_eq!(window_with_title.get_priority(), 10);
+        }
+        
+        // Test with Limited mode
+        {
+            let mut limited = Limited::new(10);
+            
+            // Default priority should be 0
+            assert_eq!(limited.get_priority(), 0);
+            
+            // Set priority and verify
+            limited.set_priority(15);
+            assert_eq!(limited.get_priority(), 15);
+        }
+        
+        // Test with Config wrapper
+        {
+            let window = Window::new(10, 3).unwrap();
+            let mut config = Config::from(Box::new(window) as Box<dyn ThreadConfig>);
+            
+            // Default priority should be 0
+            assert_eq!(config.get_priority(), 0);
+            
+            // Set priority and verify
+            config.set_priority(20);
+            assert_eq!(config.get_priority(), 20);
+        }
+    }
+    
+    #[test]
+    fn test_pausable_job_functionality() {
+        // Test with Window mode
+        {
+            let mut window = Window::new(10, 3).unwrap();
+            
+            // Default paused state should be false
+            assert_eq!(window.is_paused(), false);
+            
+            // Pause and verify
+            window.pause();
+            assert_eq!(window.is_paused(), true);
+            
+            // Resume and verify
+            window.resume();
+            assert_eq!(window.is_paused(), false);
+        }
+        
+        // Test with WindowWithTitle mode
+        {
+            let mut window_with_title = WindowWithTitle::new(10, 3, "Test".to_string()).unwrap();
+            
+            // Default paused state should be false
+            assert_eq!(window_with_title.is_paused(), false);
+            
+            // Pause and verify
+            window_with_title.pause();
+            assert_eq!(window_with_title.is_paused(), true);
+            
+            // Resume and verify
+            window_with_title.resume();
+            assert_eq!(window_with_title.is_paused(), false);
+        }
+        
+        // Test with Limited mode
+        {
+            let mut limited = Limited::new(10);
+            
+            // Default paused state should be false
+            assert_eq!(limited.is_paused(), false);
+            
+            // Pause and verify
+            limited.pause();
+            assert_eq!(limited.is_paused(), true);
+            
+            // Resume and verify
+            limited.resume();
+            assert_eq!(limited.is_paused(), false);
+        }
+        
+        // Test with Config wrapper
+        {
+            let window = Window::new(10, 3).unwrap();
+            let mut config = Config::from(Box::new(window) as Box<dyn ThreadConfig>);
+            
+            // Default paused state should be false
+            assert_eq!(config.is_paused(), false);
+            
+            // Pause and verify
+            config.pause();
+            assert_eq!(config.is_paused(), true);
+            
+            // Resume and verify
+            config.resume();
+            assert_eq!(config.is_paused(), false);
+        }
     }
 }

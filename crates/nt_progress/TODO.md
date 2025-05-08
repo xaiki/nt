@@ -106,8 +106,8 @@ The `nt_progress` library provides a flexible and thread-safe progress display f
   - [x] Percentage calculation and display
   - [x] Progress bar visualization
   - [x] Nested/hierarchical job tracking
-  - [ ] Pause/resume functionality
-  - [ ] Job priority and sorting
+  - [x] Job priority and sorting
+  - [x] Pause/resume functionality
   - [ ] Job dependencies system
   - [ ] Failure handling and retry logic
   - [ ] Estimated time remaining calculations
