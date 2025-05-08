@@ -241,7 +241,6 @@ async fn test_window_with_title_concurrent() -> Result<()> {
         for i in 0..3 {
             let display_ref = display.clone();
             let mut env = TestEnv::new();
-            let i = i;
             handles.push(tokio::spawn(async move {
                 let mut task = display_ref.spawn_with_mode(ThreadMode::WindowWithTitle(3), move || format!("task-{}", i)).await?;
                 for j in 0..5 {

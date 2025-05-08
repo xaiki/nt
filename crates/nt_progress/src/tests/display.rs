@@ -307,7 +307,6 @@ async fn test_progress_display_concurrency() -> Result<()> {
         for i in 0..5 {
             let display_ref = display.clone();
             let mut task_env = TestEnv::new();
-            let i = i;
             handles.push(tokio::spawn(async move {
                 let mut task = display_ref.spawn_with_mode(ThreadMode::Window(3), move || format!("task-{}", i)).await?;
                 for j in 0..5 {

@@ -69,7 +69,6 @@ async fn test_capturing_concurrent() -> Result<()> {
         for i in 0..total_jobs {
             let display_ref = display.clone();
             let mut task_env = TestEnv::new();
-            let i = i;
             handles.push(tokio::spawn(async move {
                 let mut task = display_ref.spawn_with_mode(ThreadMode::Capturing, move || format!("task-{}", i)).await?;
                 for j in 0..5 {

@@ -40,7 +40,6 @@ async fn test_limited_concurrent() -> Result<()> {
         for i in 0..total_jobs {
             let display_ref = display.clone();
             let mut env = TestEnv::new_with_size(80, 24);
-            let i = i;
             handles.push(tokio::spawn(async move {
                 let mut task = display_ref.spawn_with_mode(ThreadMode::Limited, move || format!("task-{}", i)).await?;
                 for j in 0..3 {

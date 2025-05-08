@@ -2,6 +2,17 @@
 
 This file contains completed tasks and improvements moved from the TODO.md file.
 
+## v0.1.29 (2024-05-29)
+
+### Code Cleanup and Refactoring
+- Removed dead code by deleting ignored test that was replaced by direct test
+  - Removed `test_window_mode_line_wrapping` as it was replaced by `test_window_direct_line_wrapping`
+  - Fixed related test harness to no longer show ignored tests
+- Fixed Clippy warnings throughout the codebase
+  - Replaced boolean equality assertions with more idiomatic `assert!`/`assert!(!)`
+  - Removed redundant variable redefinitions in test code
+  - Improved code quality and maintainability
+
 ## v0.1.28 (2024-05-28)
 
 ### Added

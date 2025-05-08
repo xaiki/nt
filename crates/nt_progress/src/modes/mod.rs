@@ -2701,15 +2701,15 @@ mod tests {
             let mut window = Window::new(10, 3).unwrap();
             
             // Default paused state should be false
-            assert_eq!(window.is_paused(), false);
+            assert!(!window.is_paused());
             
             // Pause and verify
             window.pause();
-            assert_eq!(window.is_paused(), true);
+            assert!(window.is_paused());
             
             // Resume and verify
             window.resume();
-            assert_eq!(window.is_paused(), false);
+            assert!(!window.is_paused());
         }
         
         // Test with WindowWithTitle mode
@@ -2717,15 +2717,15 @@ mod tests {
             let mut window_with_title = WindowWithTitle::new(10, 3, "Test".to_string()).unwrap();
             
             // Default paused state should be false
-            assert_eq!(window_with_title.is_paused(), false);
+            assert!(!window_with_title.is_paused());
             
             // Pause and verify
             window_with_title.pause();
-            assert_eq!(window_with_title.is_paused(), true);
+            assert!(window_with_title.is_paused());
             
             // Resume and verify
             window_with_title.resume();
-            assert_eq!(window_with_title.is_paused(), false);
+            assert!(!window_with_title.is_paused());
         }
         
         // Test with Limited mode
@@ -2733,15 +2733,15 @@ mod tests {
             let mut limited = Limited::new(10);
             
             // Default paused state should be false
-            assert_eq!(limited.is_paused(), false);
+            assert!(!limited.is_paused());
             
             // Pause and verify
             limited.pause();
-            assert_eq!(limited.is_paused(), true);
+            assert!(limited.is_paused());
             
             // Resume and verify
             limited.resume();
-            assert_eq!(limited.is_paused(), false);
+            assert!(!limited.is_paused());
         }
         
         // Test with Config wrapper
@@ -2750,15 +2750,15 @@ mod tests {
             let mut config = Config::from(Box::new(window) as Box<dyn ThreadConfig>);
             
             // Default paused state should be false
-            assert_eq!(config.is_paused(), false);
+            assert!(!config.is_paused());
             
             // Pause and verify
             config.pause();
-            assert_eq!(config.is_paused(), true);
+            assert!(config.is_paused());
             
             // Resume and verify
             config.resume();
-            assert_eq!(config.is_paused(), false);
+            assert!(!config.is_paused());
         }
     }
 }

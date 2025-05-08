@@ -201,7 +201,6 @@ mod tests {
             for i in 0..total_jobs {
                 let display_ref = display.clone();
                 let mut task_env = TestEnv::new();
-                let i = i;
                 handles.push(tokio::spawn(async move {
                     let mut task = display_ref.spawn_with_mode(ThreadMode::Window(3), move || format!("task-{}", i)).await?;
                     for j in 0..5 {
@@ -286,76 +285,6 @@ mod tests {
             env.verify();
             Ok::<(), anyhow::Error>(())
         }, 15).await?;
-        
-        // Clean up OUTSIDE timeout
-        display.stop().await?;
-        Ok(())
-    }
-
-    #[tokio::test]
-    #[ignore = "Replaced by direct test"]
-    async fn test_window_mode_line_wrapping() -> Result<()> {
-        // Create display OUTSIDE timeout
-        let display = ProgressDisplay::new().await?;
-        let _env = TestEnv::new_with_size(40, 24); // Set a small width to test wrapping
-        
-        // Run test logic INSIDE timeout
-        let _ = with_timeout(async {
-            let mut task = display.spawn_with_mode(ThreadMode::Window(5), || "wrapping-test").await?;
-            
-            // Configure line wrapping
-            {
-                let mut config = task.thread_config.lock().await;
-                if let Some(window) = config.as_type_mut::<Window>() {
-                    window.set_line_wrapping(true);
-                }
-            }
-            
-            // Test long line that should wrap - use a very long line to ensure wrapping
-            let long_line = "This is an extremely long line that will definitely exceed any reasonable terminal width and force line wrapping to occur. It contains many words and characters to ensure that it will be wrapped into multiple lines by our line wrapping implementation. This should result in several lines of output rather than just one very long line that would extend beyond the edge of the terminal.";
-            task.capture_stdout(long_line.to_string()).await?;
-            
-            // In the wrapped version, this should produce multiple lines
-            display.display().await?;
-            
-            // Get the lines from the window
-            let lines = {
-                let config = task.thread_config.lock().await;
-                config.get_lines()
-            };
-            
-            // Verify we get multiple lines from the single input
-            assert!(lines.len() > 1, "Line wrapping should have created multiple lines");
-            
-            // Check that the full text is preserved across the wrapped lines
-            let combined = lines.join("");
-            assert!(combined.contains("This is an extremely long line"), "Original content should be preserved");
-            
-            // Disable line wrapping and test again
-            {
-                let mut config = task.thread_config.lock().await;
-                if let Some(window) = config.as_type_mut::<Window>() {
-                    window.set_line_wrapping(false);
-                }
-            }
-            
-            // Should now be a single line again
-            let short_line = "Another line that won't be wrapped now";
-            task.capture_stdout(short_line.to_string()).await?;
-            display.display().await?;
-            
-            // Get the lines from the window
-            let lines = {
-                let config = task.thread_config.lock().await;
-                config.get_lines()
-            };
-            
-            // This time we should have the text as a single line
-            assert!(lines.contains(&short_line.to_string()), 
-                   "With wrapping disabled, line should be preserved as-is");
-            
-            Ok::<(), anyhow::Error>(())
-        }, 30).await?;
         
         // Clean up OUTSIDE timeout
         display.stop().await?;
