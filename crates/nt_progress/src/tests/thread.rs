@@ -7,6 +7,7 @@ use std::time::Duration;
 use anyhow::Result;
 use tokio::sync::mpsc;
 use crate::ThreadMessage;
+use std::sync::Arc;
 
 #[tokio::test]
 async fn test_thread_pool_basic() -> Result<()> {
@@ -217,6 +218,96 @@ async fn test_task_handle_output_buffer() -> Result<()> {
     for i in 0..150 {
         task_handle.write_line(&format!("line {}", i)).await?;
     }
+    
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_task_handle_pause_resume() -> Result<()> {
+    // Create a message channel
+    let (message_tx, _message_rx) = mpsc::channel::<ThreadMessage>(100);
+    
+    // Create a task handle with a mode that supports pause/resume
+    let config = Config::new(ThreadMode::Window(3), 10)?;
+    let task_handle = TaskHandle::new(1, config, message_tx.clone());
+    
+    // Check initial pause state
+    assert_eq!(task_handle.is_paused().await?, false);
+    
+    // Test pausing
+    task_handle.pause().await?;
+    assert_eq!(task_handle.is_paused().await?, true);
+    
+    // Complete some jobs - should not increment while paused
+    task_handle.set_progress(5).await?;
+    assert_eq!(task_handle.get_completed_jobs().await?, 5);
+    assert_eq!(task_handle.update_progress().await?, 50.0); // Should stay at 50% (5/10)
+    assert_eq!(task_handle.get_completed_jobs().await?, 5); // Still 5 due to being paused
+    
+    // Test resuming
+    task_handle.resume().await?;
+    assert_eq!(task_handle.is_paused().await?, false);
+    
+    // Now progress updates should work
+    assert_eq!(task_handle.update_progress().await?, 60.0); // 6/10 = 60%
+    assert_eq!(task_handle.get_completed_jobs().await?, 6);
+    
+    Ok(())
+}
+
+#[tokio::test]
+async fn test_progress_manager_pause_resume() -> Result<()> {
+    // Create a message channel
+    let (message_tx, _message_rx) = mpsc::channel::<ThreadMessage>(100);
+    
+    // Create a mode factory
+    let factory = crate::modes::factory::ModeFactory::new();
+    
+    // Create a progress manager
+    let manager = crate::progress_manager::ProgressManager::new(
+        Arc::new(factory), 
+        message_tx.clone()
+    );
+    
+    // Create some tasks
+    let task1 = manager.create_task(ThreadMode::Window(3), 10).await?;
+    let task2 = manager.create_task(ThreadMode::Limited, 5).await?;
+    let task3 = manager.create_task(ThreadMode::WindowWithTitle(2), 8).await?;
+    
+    // Verify initial states
+    assert_eq!(manager.is_thread_paused(task1.thread_id()).await?, false);
+    assert_eq!(manager.is_thread_paused(task2.thread_id()).await?, false);
+    assert_eq!(manager.is_thread_paused(task3.thread_id()).await?, false);
+    
+    // Pause a single thread
+    manager.pause_thread(task1.thread_id()).await?;
+    assert_eq!(manager.is_thread_paused(task1.thread_id()).await?, true);
+    assert_eq!(manager.is_thread_paused(task2.thread_id()).await?, false);
+    assert_eq!(manager.is_thread_paused(task3.thread_id()).await?, false);
+    
+    // Resume the paused thread
+    manager.resume_thread(task1.thread_id()).await?;
+    assert_eq!(manager.is_thread_paused(task1.thread_id()).await?, false);
+    
+    // Pause all threads
+    manager.pause_all().await?;
+    assert_eq!(manager.is_thread_paused(task1.thread_id()).await?, true);
+    assert_eq!(manager.is_thread_paused(task2.thread_id()).await?, true);
+    assert_eq!(manager.is_thread_paused(task3.thread_id()).await?, true);
+    
+    // Test thread state - should all be in Paused state
+    let thread_states = manager.thread_manager().get_threads_by_state(ThreadState::Paused).await;
+    assert_eq!(thread_states.len(), 3);
+    
+    // Resume all threads
+    manager.resume_all().await?;
+    assert_eq!(manager.is_thread_paused(task1.thread_id()).await?, false);
+    assert_eq!(manager.is_thread_paused(task2.thread_id()).await?, false);
+    assert_eq!(manager.is_thread_paused(task3.thread_id()).await?, false);
+    
+    // Test thread state - should all be in Running state
+    let thread_states = manager.thread_manager().get_threads_by_state(ThreadState::Running).await;
+    assert_eq!(thread_states.len(), 3);
     
     Ok(())
 } 

@@ -2,6 +2,17 @@
 
 This file contains completed tasks and improvements moved from the TODO.md file.
 
+## v0.1.28 (2024-05-28)
+
+### Added
+- Added public API for pause/resume functionality
+  - Added `pause()`, `resume()`, and `is_paused()` methods to TaskHandle
+  - Added `pause_thread()`, `resume_thread()`, and `is_thread_paused()` methods to ProgressManager
+  - Added `pause_all()` and `resume_all()` methods to ProgressManager
+  - Added `pause_thread()`, `resume_thread()`, `is_thread_paused()`, `pause_all()`, and `resume_all()` methods to ProgressDisplay
+  - Added proper error handling for all pause/resume operations
+  - Added comprehensive tests for pause/resume functionality
+
 ## v0.1.27 (2024-05-20)
 
 ### Added

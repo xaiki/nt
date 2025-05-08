@@ -4,7 +4,7 @@ use tokio::sync::Mutex;
 use anyhow::Result;
 
 use crate::errors::{ErrorContext, ProgressError};
-use crate::thread::{ThreadManager, TaskHandle};
+use crate::thread::{ThreadManager, TaskHandle, ThreadState};
 use crate::modes::Config;
 use crate::modes::ThreadMode;
 use crate::modes::factory::ModeFactory;
@@ -527,5 +527,110 @@ impl ProgressManager {
                 .into_context(ctx);
             Err(anyhow::anyhow!(error))
         }
+    }
+    
+    /// Pause a specific thread.
+    ///
+    /// # Parameters
+    /// * `thread_id` - The ID of the thread to pause
+    ///
+    /// # Returns
+    /// A Result indicating success or an error
+    pub async fn pause_thread(&self, thread_id: usize) -> Result<()> {
+        if let Some(handle) = self.thread_manager.get_task(thread_id).await {
+            // Update the thread state
+            self.thread_manager.update_thread_state(thread_id, ThreadState::Paused).await?;
+            // Pause the task itself
+            handle.pause().await
+        } else {
+            let ctx = ErrorContext::new("pausing thread", "ProgressManager")
+                .with_thread_id(thread_id)
+                .with_details("Thread not found");
+            
+            let error_msg = format!("Thread {} not found", thread_id);
+            let error = ProgressError::TaskOperation(error_msg).into_context(ctx);
+            Err(anyhow::anyhow!(error))
+        }
+    }
+    
+    /// Resume a specific thread.
+    ///
+    /// # Parameters
+    /// * `thread_id` - The ID of the thread to resume
+    ///
+    /// # Returns
+    /// A Result indicating success or an error
+    pub async fn resume_thread(&self, thread_id: usize) -> Result<()> {
+        if let Some(handle) = self.thread_manager.get_task(thread_id).await {
+            // Update the thread state
+            self.thread_manager.update_thread_state(thread_id, ThreadState::Running).await?;
+            // Resume the task itself
+            handle.resume().await
+        } else {
+            let ctx = ErrorContext::new("resuming thread", "ProgressManager")
+                .with_thread_id(thread_id)
+                .with_details("Thread not found");
+            
+            let error_msg = format!("Thread {} not found", thread_id);
+            let error = ProgressError::TaskOperation(error_msg).into_context(ctx);
+            Err(anyhow::anyhow!(error))
+        }
+    }
+    
+    /// Check if a specific thread is paused.
+    ///
+    /// # Parameters
+    /// * `thread_id` - The ID of the thread to check
+    ///
+    /// # Returns
+    /// A Result containing a boolean indicating whether the thread is paused
+    pub async fn is_thread_paused(&self, thread_id: usize) -> Result<bool> {
+        if let Some(handle) = self.thread_manager.get_task(thread_id).await {
+            handle.is_paused().await
+        } else {
+            let ctx = ErrorContext::new("checking thread pause state", "ProgressManager")
+                .with_thread_id(thread_id)
+                .with_details("Thread not found");
+            
+            let error_msg = format!("Thread {} not found", thread_id);
+            let error = ProgressError::TaskOperation(error_msg).into_context(ctx);
+            Err(anyhow::anyhow!(error))
+        }
+    }
+    
+    /// Pause all threads.
+    ///
+    /// # Returns
+    /// A Result indicating success or an error
+    pub async fn pause_all(&self) -> Result<()> {
+        // Get all active threads
+        let active_threads = self.thread_manager.get_active_threads().await;
+        
+        // Pause each thread
+        for thread_id in active_threads {
+            if let Err(e) = self.pause_thread(thread_id).await {
+                eprintln!("Warning: Failed to pause thread {}: {}", thread_id, e);
+            }
+        }
+        
+        Ok(())
+    }
+    
+    /// Resume all threads.
+    ///
+    /// # Returns
+    /// A Result indicating success or an error
+    pub async fn resume_all(&self) -> Result<()> {
+        // Get all paused threads
+        let paused_threads = self.thread_manager.get_threads_by_state(ThreadState::Paused).await;
+        
+        // Resume each thread
+        for thread_id in paused_threads {
+            if let Err(e) = self.resume_thread(thread_id).await {
+                eprintln!("Warning: Failed to resume thread {}: {}", thread_id, e);
+            }
+        }
+        
+        Ok(())
     }
 } 

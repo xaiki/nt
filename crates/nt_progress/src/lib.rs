@@ -434,6 +434,60 @@ impl ProgressDisplay {
         let title = f().into();
         self.progress_manager.create_child_task_with_title(parent_id, mode, title, total_jobs).await
     }
+
+    /// Pause a specific thread.
+    ///
+    /// When a thread is paused, it will stop incrementing its progress counter
+    /// until it is resumed.
+    ///
+    /// # Parameters
+    /// * `thread_id` - The ID of the thread to pause
+    ///
+    /// # Returns
+    /// A Result indicating success or an error
+    pub async fn pause_thread(&self, thread_id: usize) -> Result<()> {
+        self.progress_manager.pause_thread(thread_id).await
+    }
+    
+    /// Resume a specific thread.
+    ///
+    /// When a thread is resumed, it will start incrementing its progress counter again.
+    ///
+    /// # Parameters
+    /// * `thread_id` - The ID of the thread to resume
+    ///
+    /// # Returns
+    /// A Result indicating success or an error
+    pub async fn resume_thread(&self, thread_id: usize) -> Result<()> {
+        self.progress_manager.resume_thread(thread_id).await
+    }
+    
+    /// Check if a specific thread is paused.
+    ///
+    /// # Parameters
+    /// * `thread_id` - The ID of the thread to check
+    ///
+    /// # Returns
+    /// A Result containing a boolean indicating whether the thread is paused
+    pub async fn is_thread_paused(&self, thread_id: usize) -> Result<bool> {
+        self.progress_manager.is_thread_paused(thread_id).await
+    }
+    
+    /// Pause all threads.
+    ///
+    /// # Returns
+    /// A Result indicating success or an error
+    pub async fn pause_all(&self) -> Result<()> {
+        self.progress_manager.pause_all().await
+    }
+    
+    /// Resume all threads.
+    ///
+    /// # Returns
+    /// A Result indicating success or an error
+    pub async fn resume_all(&self) -> Result<()> {
+        self.progress_manager.resume_all().await
+    }
 }
 
 impl Drop for ProgressDisplay {
