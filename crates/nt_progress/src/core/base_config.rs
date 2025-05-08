@@ -5,6 +5,33 @@ use std::sync::Mutex;
 
 use super::job_traits::HasBaseConfig;
 
+/// Represents the current status of a job.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum JobStatus {
+    /// Job is waiting to be started
+    Pending,
+    /// Job is currently running
+    Running,
+    /// Job has completed successfully
+    Completed,
+    /// Job has failed
+    Failed,
+    /// Job is being retried after a failure
+    Retry,
+}
+
+impl std::fmt::Display for JobStatus {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            JobStatus::Pending => write!(f, "Pending"),
+            JobStatus::Running => write!(f, "Running"),
+            JobStatus::Completed => write!(f, "Completed"),
+            JobStatus::Failed => write!(f, "Failed"),
+            JobStatus::Retry => write!(f, "Retry"),
+        }
+    }
+}
+
 /// Base configuration for progress tracking shared across different display modes.
 ///
 /// This struct provides core functionality for tracking job progress
@@ -27,6 +54,16 @@ pub struct BaseConfig {
     priority: Arc<AtomicU32>,
     /// Job IDs that this job depends on
     dependencies: Arc<Mutex<Vec<usize>>>,
+    /// Number of times this job has failed
+    failure_count: Arc<AtomicUsize>,
+    /// Most recent error message
+    error_message: Arc<Mutex<Option<String>>>,
+    /// Number of retries performed
+    retry_count: Arc<AtomicUsize>,
+    /// Maximum number of retries allowed
+    max_retries: Arc<AtomicUsize>,
+    /// Current status of the job
+    status: Arc<Mutex<JobStatus>>,
 }
 
 impl BaseConfig {
@@ -47,6 +84,11 @@ impl BaseConfig {
             paused: Arc::new(AtomicBool::new(false)),
             priority: Arc::new(AtomicU32::new(0)),
             dependencies: Arc::new(Mutex::new(Vec::new())),
+            failure_count: Arc::new(AtomicUsize::new(0)),
+            error_message: Arc::new(Mutex::new(None)),
+            retry_count: Arc::new(AtomicUsize::new(0)),
+            max_retries: Arc::new(AtomicUsize::new(3)), // Default to 3 retries
+            status: Arc::new(Mutex::new(JobStatus::Pending)),
         }
     }
     
@@ -279,6 +321,182 @@ impl BaseConfig {
         let deps = self.dependencies.lock().unwrap();
         !deps.contains(&job_id) || is_completed
     }
+    
+    /// Get the current status of the job.
+    ///
+    /// # Returns
+    /// The current job status
+    pub fn get_status(&self) -> JobStatus {
+        *self.status.lock().unwrap()
+    }
+    
+    /// Set the job status.
+    ///
+    /// # Parameters
+    /// * `status` - The new job status
+    pub fn set_status(&mut self, status: JobStatus) {
+        *self.status.lock().unwrap() = status;
+    }
+    
+    /// Mark the job as running.
+    ///
+    /// This sets the status to Running.
+    pub fn mark_running(&mut self) {
+        self.set_status(JobStatus::Running);
+    }
+    
+    /// Mark the job as completed.
+    ///
+    /// This sets the status to Completed and calls mark_succeeded().
+    pub fn mark_completed(&mut self) {
+        self.set_status(JobStatus::Completed);
+        self.mark_succeeded();
+    }
+    
+    /// Mark the job as failed.
+    ///
+    /// This sets the status to Failed, increments the failure count, and stores the error message.
+    ///
+    /// # Parameters
+    /// * `error` - The error message describing the failure
+    ///
+    /// # Returns
+    /// The current number of failures for this job
+    pub fn mark_failed(&mut self, error: &str) -> usize {
+        self.set_status(JobStatus::Failed);
+        let count = self.failure_count.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
+        *self.error_message.lock().unwrap() = Some(error.to_string());
+        count
+    }
+    
+    /// Retry the job.
+    ///
+    /// This sets the status to Retry, clears the error message, and increments the retry count.
+    ///
+    /// # Returns
+    /// The current retry count
+    pub fn retry(&mut self) -> usize {
+        self.set_status(JobStatus::Retry);
+        
+        // Clear the error message but keep failure count for history
+        *self.error_message.lock().unwrap() = None;
+        
+        // Increment retry count
+        let count = self.retry_count.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
+        count
+    }
+    
+    /// Check if the job is in the specified status.
+    ///
+    /// # Parameters
+    /// * `status` - The status to check against
+    ///
+    /// # Returns
+    /// `true` if the job is in the specified status, `false` otherwise
+    pub fn is_in_status(&self, status: JobStatus) -> bool {
+        self.get_status() == status
+    }
+    
+    /// Check if the job is pending.
+    ///
+    /// # Returns
+    /// `true` if the job is pending, `false` otherwise
+    pub fn is_pending(&self) -> bool {
+        self.is_in_status(JobStatus::Pending)
+    }
+    
+    /// Check if the job is running.
+    ///
+    /// # Returns
+    /// `true` if the job is running, `false` otherwise
+    pub fn is_running(&self) -> bool {
+        self.is_in_status(JobStatus::Running)
+    }
+    
+    /// Check if the job is completed.
+    ///
+    /// # Returns
+    /// `true` if the job is completed, `false` otherwise
+    pub fn is_completed(&self) -> bool {
+        self.is_in_status(JobStatus::Completed)
+    }
+    
+    /// Check if the job is in retry state.
+    ///
+    /// # Returns
+    /// `true` if the job is in retry state, `false` otherwise
+    pub fn is_retrying(&self) -> bool {
+        self.is_in_status(JobStatus::Retry)
+    }
+    
+    /// Mark the job as succeeded.
+    ///
+    /// This resets the failure count, retry count, and clears any error messages.
+    /// If the job is not already in Completed status, it will be set to Running.
+    pub fn mark_succeeded(&mut self) {
+        if !self.is_completed() {
+            self.set_status(JobStatus::Running);
+        }
+        self.failure_count.store(0, std::sync::atomic::Ordering::SeqCst);
+        self.retry_count.store(0, std::sync::atomic::Ordering::SeqCst);
+        *self.error_message.lock().unwrap() = None;
+    }
+    
+    /// Get the number of times this job has failed.
+    ///
+    /// # Returns
+    /// The number of failures
+    pub fn get_failure_count(&self) -> usize {
+        self.failure_count.load(std::sync::atomic::Ordering::SeqCst)
+    }
+    
+    /// Get the most recent error message, if any.
+    ///
+    /// # Returns
+    /// The most recent error message, or None if the job hasn't failed
+    pub fn get_error_message(&self) -> Option<String> {
+        self.error_message.lock().unwrap().clone()
+    }
+    
+    /// Check if the job has failed.
+    ///
+    /// # Returns
+    /// `true` if the job has failed, `false` otherwise
+    pub fn has_failed(&self) -> bool {
+        self.get_failure_count() > 0 && self.error_message.lock().unwrap().is_some()
+    }
+    
+    /// Get the number of times this job has been retried.
+    ///
+    /// # Returns
+    /// The number of retries
+    pub fn get_retry_count(&self) -> usize {
+        self.retry_count.load(std::sync::atomic::Ordering::SeqCst)
+    }
+    
+    /// Set the maximum number of retries allowed for this job.
+    ///
+    /// # Parameters
+    /// * `max_retries` - The maximum number of retries allowed
+    pub fn set_max_retries(&mut self, max_retries: usize) {
+        self.max_retries.store(max_retries, std::sync::atomic::Ordering::SeqCst);
+    }
+    
+    /// Get the maximum number of retries allowed for this job.
+    ///
+    /// # Returns
+    /// The maximum number of retries allowed
+    pub fn get_max_retries(&self) -> usize {
+        self.max_retries.load(std::sync::atomic::Ordering::SeqCst)
+    }
+    
+    /// Check if the job has reached its maximum retry limit.
+    ///
+    /// # Returns
+    /// `true` if the job has reached its retry limit, `false` otherwise
+    pub fn has_reached_retry_limit(&self) -> bool {
+        self.get_retry_count() >= self.get_max_retries()
+    }
 }
 
 impl HasBaseConfig for BaseConfig {
@@ -384,5 +602,106 @@ mod tests {
         assert!(base.is_dependency_satisfied(2, true));
         assert!(!base.is_dependency_satisfied(2, false));
         assert!(base.is_dependency_satisfied(3, false)); // Not a dependency
+    }
+    
+    #[test]
+    fn test_base_config_failure() {
+        let mut base = BaseConfig::new(10);
+        assert_eq!(base.get_failure_count(), 0);
+        
+        base.mark_failed("Test error");
+        assert_eq!(base.get_failure_count(), 1);
+        
+        base.mark_succeeded();
+        assert_eq!(base.get_failure_count(), 0);
+        
+        assert!(!base.has_failed());
+        
+        base.mark_failed("Another test error");
+        assert_eq!(base.get_failure_count(), 1);
+        
+        assert!(base.has_failed());
+    }
+    
+    #[test]
+    fn test_base_config_retry() {
+        let mut base = BaseConfig::new(10);
+        assert_eq!(base.get_retry_count(), 0);
+        
+        base.retry();
+        assert_eq!(base.get_retry_count(), 1);
+        
+        base.retry();
+        assert_eq!(base.get_retry_count(), 2);
+    }
+    
+    #[test]
+    fn test_base_config_max_retries() {
+        let mut base = BaseConfig::new(10);
+        assert_eq!(base.get_max_retries(), 3);
+        
+        base.set_max_retries(5);
+        assert_eq!(base.get_max_retries(), 5);
+    }
+    
+    #[test]
+    fn test_base_config_retry_limit() {
+        let mut base = BaseConfig::new(10);
+        assert!(!base.has_reached_retry_limit());
+        
+        base.retry();
+        assert!(!base.has_reached_retry_limit());
+        
+        base.retry();
+        assert!(!base.has_reached_retry_limit());
+        
+        base.retry();
+        assert!(base.has_reached_retry_limit());
+    }
+    
+    #[test]
+    fn test_base_config_job_status() {
+        let mut base = BaseConfig::new(10);
+        
+        // Test initial status
+        assert_eq!(base.get_status(), JobStatus::Pending);
+        
+        // Test setting status
+        base.set_status(JobStatus::Running);
+        assert_eq!(base.get_status(), JobStatus::Running);
+        
+        // Test status checks
+        assert!(base.is_in_status(JobStatus::Running));
+        assert!(base.is_running());
+        assert!(!base.is_completed());
+        
+        // Test mark functions
+        base.mark_completed();
+        assert_eq!(base.get_status(), JobStatus::Completed);
+        assert!(base.is_completed());
+        
+        // Test failure status
+        base.mark_failed("Test error");
+        assert_eq!(base.get_status(), JobStatus::Failed);
+        assert!(!base.is_running());
+        assert!(!base.is_completed());
+        
+        // Test retry status
+        base.retry();
+        assert_eq!(base.get_status(), JobStatus::Retry);
+        assert!(base.is_retrying());
+        
+        // Test returning to running state
+        base.mark_running();
+        assert_eq!(base.get_status(), JobStatus::Running);
+    }
+    
+    #[test]
+    fn test_base_config_status_to_string() {
+        assert_eq!(JobStatus::Pending.to_string(), "Pending");
+        assert_eq!(JobStatus::Running.to_string(), "Running");
+        assert_eq!(JobStatus::Completed.to_string(), "Completed");
+        assert_eq!(JobStatus::Failed.to_string(), "Failed");
+        assert_eq!(JobStatus::Retry.to_string(), "Retry");
     }
 } 

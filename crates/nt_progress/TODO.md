@@ -109,7 +109,7 @@ The `nt_progress` library provides a flexible and thread-safe progress display f
   - [x] Job priority and sorting
   - [x] Pause/resume functionality
   - [x] Job dependency tracking (DependentJob trait)
-  - [ ] Failure handling and retry logic
+  - [x] Failure handling and retry logic
   - [ ] Estimated time remaining calculations
   - [ ] Job cancellation
   - [ ] Job statistics and reporting
@@ -121,7 +121,7 @@ The `nt_progress` library provides a flexible and thread-safe progress display f
 
 ### Job tracking capabilities
 - [x] Add job dependency tracking (DependentJob trait)
-- [ ] Add job status tracking (e.g., pending, running, completed, failed)
+- [x] Add job status tracking (e.g., pending, running, completed, failed)
 - [ ] Implement job graphs for visualizing dependencies
 - [ ] Add resource estimation (estimate time/resources required for a job)
 - [ ] Add dependency-based job scheduling/prioritization
@@ -200,6 +200,10 @@ The `nt_progress` library provides a flexible and thread-safe progress display f
   - Added custom progress indicators
   - Added ANSI escape sequence support
   - Added percentage calculation and display for progress tracking
+- Job tracking enhancements
+  - Added failure handling and retry logic
+  - Added comprehensive job status tracking system
+  - Added retry limits and error message tracking
 - Code cleanup and maintenance
   - Fixed dead code and linter warnings
   - Removed unused methods and improved code quality

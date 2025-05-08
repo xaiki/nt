@@ -2,6 +2,31 @@
 
 This file contains completed tasks and improvements moved from the TODO.md file.
 
+## v0.1.34 (2024-06-01)
+
+### Architecture Improvements
+- Implemented HasBaseConfig trait for Config struct
+  - Added proper delegation to underlying mode implementations
+  - Enabled direct use of JobStatusTracker and FailureHandlingJob capabilities with Config
+  - Fixed integration tests for job status monitoring
+  - Improved API consistency across the codebase
+  - Removed need for excessive type casting
+
+## v0.1.33 (2024-06-01)
+
+### Added Features
+- Implemented failure handling and retry logic
+  - Added `FailureHandlingJob` trait for tracking failures and retries
+  - Added methods to mark jobs as failed, get error messages, and handle retries
+  - Added configurable retry limits with `set_max_retries` and `has_reached_retry_limit`
+  - Added comprehensive test coverage for failure handling functionality
+- Added job status tracking capabilities
+  - Created `JobStatus` enum with Pending, Running, Completed, Failed, and Retry states
+  - Added `JobStatusTracker` trait for status tracking and reporting
+  - Implemented methods to check and update job status
+  - Added helpers to query job state (is_running, is_completed, etc.)
+  - Added comprehensive test coverage for status tracking
+
 ## v0.1.32 (2024-05-31)
 
 ### Code Cleanup and Refactoring

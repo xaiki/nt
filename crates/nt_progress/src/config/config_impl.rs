@@ -6,8 +6,10 @@ use crate::modes::window_with_title::WindowWithTitle;
 use crate::modes::limited::Limited;
 use crate::modes::capturing::Capturing;
 use crate::core::job_traits::{
-    JobTracker, PausableJob, HierarchicalJobTracker, PrioritizedJob, DependentJob
+    JobTracker, PausableJob, HierarchicalJobTracker, PrioritizedJob, DependentJob,
+    HasBaseConfig
 };
+use crate::core::base_config::BaseConfig;
 
 // Add an internal incremented counter for tests
 #[cfg(test)]
@@ -771,6 +773,53 @@ impl Default for Config {
 impl From<Box<dyn ThreadConfig>> for Config {
     fn from(config: Box<dyn ThreadConfig>) -> Self {
         Self { config }
+    }
+}
+
+impl HasBaseConfig for Config {
+    fn base_config(&self) -> &BaseConfig {
+        // Try each known type that implements HasBaseConfig
+        if let Some(window) = self.config.as_any().downcast_ref::<WindowWithTitle>() {
+            window.base_config()
+        } else if let Some(window) = self.config.as_any().downcast_ref::<Window>() {
+            window.base_config()
+        } else if let Some(limited) = self.config.as_any().downcast_ref::<Limited>() {
+            limited.base_config()
+        } else if let Some(capturing) = self.config.as_any().downcast_ref::<Capturing>() {
+            capturing.base_config()
+        } else {
+            // This should never happen with the current implementation
+            panic!("Unsupported ThreadConfig type for HasBaseConfig");
+        }
+    }
+    
+    fn base_config_mut(&mut self) -> &mut BaseConfig {
+        let type_id = self.config.as_any().type_id();
+        let any_mut = self.config.as_any_mut();
+        
+        match () {
+            _ if type_id == std::any::TypeId::of::<WindowWithTitle>() => {
+                any_mut.downcast_mut::<WindowWithTitle>()
+                    .map(|w| w.base_config_mut())
+                    .unwrap()
+            }
+            _ if type_id == std::any::TypeId::of::<Window>() => {
+                any_mut.downcast_mut::<Window>()
+                    .map(|w| w.base_config_mut())
+                    .unwrap()
+            }
+            _ if type_id == std::any::TypeId::of::<Limited>() => {
+                any_mut.downcast_mut::<Limited>()
+                    .map(|l| l.base_config_mut())
+                    .unwrap()
+            }
+            _ if type_id == std::any::TypeId::of::<Capturing>() => {
+                any_mut.downcast_mut::<Capturing>()
+                    .map(|c| c.base_config_mut())
+                    .unwrap()
+            }
+            _ => panic!("Unsupported ThreadConfig type for HasBaseConfig"),
+        }
     }
 }
 
