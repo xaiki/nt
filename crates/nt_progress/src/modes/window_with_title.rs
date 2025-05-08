@@ -1,9 +1,10 @@
 use super::{ThreadConfig, WindowBase, HasBaseConfig, WithCustomSize, StandardWindow};
-use super::capabilities::{WithTitle, WithEmoji, WithTitleAndEmoji, WithWrappedText};
+use super::capabilities::{WithTitle, WithEmoji, WithTitleAndEmoji, WithWrappedText, WithProgress};
 use std::any::Any;
 use crate::errors::ModeCreationError;
 use std::fmt::Debug;
 use anyhow::Result;
+use super::job_traits::JobTracker;
 
 /// Configuration for WindowWithTitle mode
 /// 
@@ -337,6 +338,30 @@ impl WithWrappedText for WindowWithTitle {
     
     fn has_line_wrapping(&self) -> bool {
         self.window_base.has_line_wrapping()
+    }
+}
+
+impl WithProgress for WindowWithTitle {
+    fn get_completed_jobs(&self) -> usize {
+        self.base_config().get_completed_jobs()
+    }
+    
+    fn set_progress_format(&mut self, format: &str) {
+        self.base_config_mut().set_progress_format(format);
+    }
+    
+    fn get_progress_format(&self) -> &str {
+        self.base_config().get_progress_format()
+    }
+    
+    fn update_progress(&mut self) -> f64 {
+        let completed = self.base_config().increment_completed_jobs();
+        ((completed as f64) / (self.get_total_jobs() as f64) * 100.0).min(100.0)
+    }
+    
+    fn set_progress(&mut self, completed: usize) -> f64 {
+        self.base_config_mut().set_completed_jobs(completed);
+        ((completed as f64) / (self.get_total_jobs() as f64) * 100.0).min(100.0)
     }
 }
 
