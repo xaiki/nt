@@ -1,8 +1,10 @@
-use std::sync::Arc;
-use std::sync::atomic::AtomicUsize;
 use std::fmt::Debug;
 use std::collections::{VecDeque, HashSet, HashMap};
 use std::any::{Any, TypeId};
+use std::sync::Arc;
+use std::sync::atomic::AtomicUsize;
+use std::sync::Mutex;
+
 use crate::errors::ModeCreationError;
 use crate::io::ProgressWriter;
 
@@ -120,6 +122,54 @@ pub trait JobTracker: Send + Sync + Debug {
     /// # Parameters
     /// * `total` - The new total number of jobs
     fn set_total_jobs(&mut self, total: usize);
+}
+
+/// Trait for tracking hierarchical job progress.
+///
+/// This trait extends JobTracker to support parent-child relationships
+/// between jobs, enabling hierarchical job tracking.
+pub trait HierarchicalJobTracker: JobTracker {
+    /// Add a child job to this tracker.
+    ///
+    /// # Parameters
+    /// * `child_id` - The ID of the child job
+    ///
+    /// # Returns
+    /// `true` if the child was successfully added, `false` otherwise
+    fn add_child_job(&mut self, child_id: usize) -> bool;
+    
+    /// Remove a child job from this tracker.
+    ///
+    /// # Parameters
+    /// * `child_id` - The ID of the child job to remove
+    ///
+    /// # Returns
+    /// `true` if the child was successfully removed, `false` otherwise
+    fn remove_child_job(&mut self, child_id: usize) -> bool;
+    
+    /// Get the parent job ID if this job has a parent.
+    ///
+    /// # Returns
+    /// The parent job ID, or `None` if this job has no parent
+    fn get_parent_job_id(&self) -> Option<usize>;
+    
+    /// Set the parent job ID for this job.
+    ///
+    /// # Parameters
+    /// * `parent_id` - The ID of the parent job
+    fn set_parent_job_id(&mut self, parent_id: usize);
+    
+    /// Get the list of child job IDs associated with this job.
+    ///
+    /// # Returns
+    /// A vector of child job IDs
+    fn get_child_job_ids(&self) -> Vec<usize>;
+    
+    /// Calculate the cumulative progress including child jobs.
+    ///
+    /// # Returns
+    /// A float between 0.0 and 1.0 representing the progress across all child jobs
+    fn get_cumulative_progress(&self) -> f64;
 }
 
 /// Trait for types that contain a BaseConfig, either directly or through composition.
@@ -1237,6 +1287,151 @@ impl Config {
             0.0
         }
     }
+
+    /// Check if this config supports hierarchical job tracking.
+    ///
+    /// # Returns
+    /// `true` if the config supports hierarchical job tracking
+    pub fn supports_hierarchical_jobs(&self) -> bool {
+        let _type_id = self.config.as_any().type_id();
+        // All of our modes support hierarchical job tracking because of the blanket implementation
+        true
+    }
+    
+    /// Get the parent job ID if this job has a parent.
+    ///
+    /// # Returns
+    /// The parent job ID, or `None` if this job has no parent
+    pub fn get_parent_job_id(&self) -> Option<usize> {
+        // All of our modes support HierarchicalJobTracker via blanket implementation
+        let _type_id = self.config.as_any().type_id();
+        let any = self.config.as_any();
+        
+        macro_rules! try_as_hierarchical {
+            ($type:ty) => {
+                if let Some(config) = any.downcast_ref::<$type>() {
+                    return config.get_parent_job_id();
+                }
+            };
+        }
+        
+        try_as_hierarchical!(Window);
+        try_as_hierarchical!(WindowWithTitle);
+        try_as_hierarchical!(Limited);
+        try_as_hierarchical!(Capturing);
+        
+        None
+    }
+    
+    /// Set the parent job ID for this job.
+    ///
+    /// # Parameters
+    /// * `parent_id` - The ID of the parent job
+    pub fn set_parent_job_id(&mut self, parent_id: usize) {
+        let _type_id = self.config.as_any().type_id();
+        let any_mut = self.config.as_any_mut();
+        
+        macro_rules! try_as_hierarchical_mut {
+            ($type:ty) => {
+                if let Some(config) = any_mut.downcast_mut::<$type>() {
+                    config.set_parent_job_id(parent_id);
+                    return;
+                }
+            };
+        }
+        
+        try_as_hierarchical_mut!(Window);
+        try_as_hierarchical_mut!(WindowWithTitle);
+        try_as_hierarchical_mut!(Limited);
+        try_as_hierarchical_mut!(Capturing);
+        
+        // If we get here, we couldn't set the parent ID
+        eprintln!("Warning: Could not set parent job ID. Unknown mode type.");
+    }
+    
+    /// Add a child job to this job.
+    ///
+    /// # Parameters
+    /// * `child_id` - The ID of the child job to add
+    ///
+    /// # Returns
+    /// `true` if the child was successfully added, `false` otherwise
+    pub fn add_child_job(&mut self, child_id: usize) -> bool {
+        let _type_id = self.config.as_any().type_id();
+        let any_mut = self.config.as_any_mut();
+        
+        macro_rules! try_add_child {
+            ($type:ty) => {
+                if let Some(config) = any_mut.downcast_mut::<$type>() {
+                    return config.add_child_job(child_id);
+                }
+            };
+        }
+        
+        try_add_child!(Window);
+        try_add_child!(WindowWithTitle);
+        try_add_child!(Limited);
+        try_add_child!(Capturing);
+        
+        // If we get here, we couldn't add the child
+        eprintln!("Warning: Could not add child job. Unknown mode type.");
+        false
+    }
+    
+    /// Remove a child job from this job.
+    ///
+    /// # Parameters
+    /// * `child_id` - The ID of the child job to remove
+    ///
+    /// # Returns
+    /// `true` if the child was successfully removed, `false` otherwise
+    pub fn remove_child_job(&mut self, child_id: usize) -> bool {
+        let _type_id = self.config.as_any().type_id();
+        let any_mut = self.config.as_any_mut();
+        
+        macro_rules! try_remove_child {
+            ($type:ty) => {
+                if let Some(config) = any_mut.downcast_mut::<$type>() {
+                    return config.remove_child_job(child_id);
+                }
+            };
+        }
+        
+        try_remove_child!(Window);
+        try_remove_child!(WindowWithTitle);
+        try_remove_child!(Limited);
+        try_remove_child!(Capturing);
+        
+        // If we get here, we couldn't remove the child
+        eprintln!("Warning: Could not remove child job. Unknown mode type.");
+        false
+    }
+    
+    /// Get the list of child job IDs associated with this job.
+    ///
+    /// # Returns
+    /// A vector of child job IDs
+    pub fn get_child_job_ids(&self) -> Vec<usize> {
+        let _type_id = self.config.as_any().type_id();
+        let any = self.config.as_any();
+        
+        macro_rules! try_get_children {
+            ($type:ty) => {
+                if let Some(config) = any.downcast_ref::<$type>() {
+                    return config.get_child_job_ids();
+                }
+            };
+        }
+        
+        try_get_children!(Window);
+        try_get_children!(WindowWithTitle);
+        try_get_children!(Limited);
+        try_get_children!(Capturing);
+        
+        // If we get here, we couldn't get the children
+        eprintln!("Warning: Could not get child job IDs. Unknown mode type.");
+        Vec::new()
+    }
 }
 
 impl Default for Config {
@@ -1518,15 +1713,22 @@ impl ModeParameters {
     }
 }
 
-/// Common configuration shared across all modes.
+/// Base configuration for thread handling.
 ///
-/// BaseConfig provides basic job tracking functionality that
-/// can be reused by different mode implementations.
+/// This struct is used as a base for different display modes and provides
+/// common functionality like job tracking, progress formatting, etc.
 #[derive(Debug, Clone)]
 pub struct BaseConfig {
+    /// Total number of jobs
     total_jobs: usize,
+    /// Counter for completed jobs
     completed_jobs: Arc<AtomicUsize>,
+    /// Format string for displaying progress
     progress_format: String,
+    /// Parent job ID if this job is a child
+    parent_job_id: Option<usize>,
+    /// Child job IDs if this job has children
+    child_job_ids: Arc<Mutex<Vec<usize>>>,
 }
 
 impl BaseConfig {
@@ -1542,6 +1744,8 @@ impl BaseConfig {
             total_jobs,
             completed_jobs: Arc::new(AtomicUsize::new(0)),
             progress_format: "{current}/{total} ({percent}%)".to_string(),
+            parent_job_id: None,
+            child_job_ids: Arc::new(Mutex::new(Vec::new())),
         }
     }
 
@@ -1603,6 +1807,65 @@ impl BaseConfig {
     /// * `format` - The new progress format string
     pub fn set_progress_format(&mut self, format: &str) {
         self.progress_format = format.to_string();
+    }
+    
+    /// Add a child job to this job.
+    ///
+    /// # Parameters
+    /// * `child_id` - The ID of the child job
+    ///
+    /// # Returns
+    /// `true` if the child was successfully added, `false` otherwise
+    pub fn add_child_job(&mut self, child_id: usize) -> bool {
+        let mut children = self.child_job_ids.lock().unwrap();
+        if !children.contains(&child_id) {
+            children.push(child_id);
+            true
+        } else {
+            false
+        }
+    }
+    
+    /// Remove a child job from this job.
+    ///
+    /// # Parameters
+    /// * `child_id` - The ID of the child job to remove
+    ///
+    /// # Returns
+    /// `true` if the child was successfully removed, `false` otherwise
+    pub fn remove_child_job(&mut self, child_id: usize) -> bool {
+        let mut children = self.child_job_ids.lock().unwrap();
+        if let Some(pos) = children.iter().position(|id| *id == child_id) {
+            children.remove(pos);
+            true
+        } else {
+            false
+        }
+    }
+    
+    /// Get the parent job ID if this job has a parent.
+    ///
+    /// # Returns
+    /// The parent job ID, or `None` if this job has no parent
+    pub fn get_parent_job_id(&self) -> Option<usize> {
+        self.parent_job_id
+    }
+    
+    /// Set the parent job ID for this job.
+    ///
+    /// # Parameters
+    /// * `parent_id` - The ID of the parent job
+    pub fn set_parent_job_id(&mut self, parent_id: usize) {
+        self.parent_job_id = Some(parent_id);
+    }
+    
+    /// Get the list of child job IDs associated with this job.
+    ///
+    /// # Returns
+    /// A vector of child job IDs
+    pub fn get_child_job_ids(&self) -> Vec<usize> {
+        let children = self.child_job_ids.lock().unwrap();
+        children.clone()
     }
 }
 
@@ -1701,6 +1964,36 @@ impl capabilities::WithProgress for WindowWithTitle {
     fn update_progress(&mut self) -> f64 {
         self.increment_completed_jobs();
         self.get_progress_percentage()
+    }
+}
+
+// Blanket implementation of HierarchicalJobTracker for any type that implements HasBaseConfig
+impl<T: HasBaseConfig + Send + Sync + Debug> HierarchicalJobTracker for T {
+    fn add_child_job(&mut self, child_id: usize) -> bool {
+        self.base_config_mut().add_child_job(child_id)
+    }
+    
+    fn remove_child_job(&mut self, child_id: usize) -> bool {
+        self.base_config_mut().remove_child_job(child_id)
+    }
+    
+    fn get_parent_job_id(&self) -> Option<usize> {
+        self.base_config().get_parent_job_id()
+    }
+    
+    fn set_parent_job_id(&mut self, parent_id: usize) {
+        self.base_config_mut().set_parent_job_id(parent_id)
+    }
+    
+    fn get_child_job_ids(&self) -> Vec<usize> {
+        self.base_config().get_child_job_ids()
+    }
+    
+    fn get_cumulative_progress(&self) -> f64 {
+        // This is a placeholder - in a real implementation, we would 
+        // need access to all other tasks to calculate cumulative progress
+        // We'll implement this in the ProgressManager
+        0.0
     }
 }
 
