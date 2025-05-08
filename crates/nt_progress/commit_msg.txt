@@ -1,0 +1,10 @@
+fix(core): Remove unnecessary let binding in BaseConfig::retry
+
+- Fix Clippy warning by directly returning the result of fetch_add
+- Improve code readability with simpler control flow
+- Update documentation for the retry method
+- Simplify atomic counter operation
+- Bump version from 0.1.34 to 0.1.35
+- Update CHANGELOG.md with the changes
+
+This change addresses a Clippy warning about an unnecessary let binding in the BaseConfig::retry method. The updated implementation now directly returns the result of the atomic fetch_add operation, making the code more concise and easier to understand.

@@ -369,9 +369,9 @@ impl BaseConfig {
         count
     }
     
-    /// Retry the job.
+    /// Increment retry counter and mark the job for retry.
     ///
-    /// This sets the status to Retry, clears the error message, and increments the retry count.
+    /// This will set the job status to Retry and return the new retry count.
     ///
     /// # Returns
     /// The current retry count
@@ -382,8 +382,7 @@ impl BaseConfig {
         *self.error_message.lock().unwrap() = None;
         
         // Increment retry count
-        let count = self.retry_count.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
-        count
+        self.retry_count.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1
     }
     
     /// Check if the job is in the specified status.

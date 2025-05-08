@@ -2,6 +2,15 @@
 
 This file contains completed tasks and improvements moved from the TODO.md file.
 
+## v0.1.35 (2024-06-02)
+
+### Code Cleanup and Refactoring
+- Fixed Clippy warning in BaseConfig implementation
+  - Removed unnecessary let binding in `retry()` method
+  - Improved code readability with direct return
+  - Simplified control flow in retry handling
+  - Fixed all Clippy warnings in the codebase
+
 ## v0.1.34 (2024-06-01)
 
 ### Architecture Improvements
