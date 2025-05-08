@@ -2,6 +2,17 @@
 
 This file contains completed tasks and improvements moved from the TODO.md file.
 
+## v0.1.37 (2025-05-08)
+
+### Benchmark and Code Cleanup
+- Fixed ThreadMode import path in benchmark file
+  - Updated benches/terminal.rs to use the correct ThreadMode import from config module
+  - Refactored benchmark code to use current Criterion API for async benchmarks
+  - Eliminated compilation errors in the benchmark code
+  - Removed references to deprecated APIs and methods
+- Verified all tests are passing and no dead code remains
+- Ensured proper error handling in all benchmarks
+
 ## v0.1.36 (2024-06-02)
 
 ### Bug Fixes and Code Cleanup
