@@ -368,24 +368,6 @@ impl Config {
         }
     }
     
-    /// Helper method to get this config as a JobTracker.
-    ///
-    /// # Returns
-    /// A reference to the JobTracker, or None if the job tracker is not available
-    fn as_job_tracker(&self) -> Option<&dyn JobTracker> {
-        if let Some(tracker) = self.config.as_any().downcast_ref::<WindowWithTitle>() {
-            Some(tracker as &dyn JobTracker)
-        } else if let Some(tracker) = self.config.as_any().downcast_ref::<Window>() {
-            Some(tracker as &dyn JobTracker)
-        } else if let Some(tracker) = self.config.as_any().downcast_ref::<Limited>() {
-            Some(tracker as &dyn JobTracker)
-        } else if let Some(tracker) = self.config.as_any().downcast_ref::<Capturing>() {
-            Some(tracker as &dyn JobTracker)
-        } else {
-            None
-        }
-    }
-    
     /// Helper method to get this config as a mutable JobTracker.
     ///
     /// # Returns
