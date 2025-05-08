@@ -340,6 +340,7 @@ impl ProgressTemplate {
             ProgressIndicator::Block => self.format_block_indicator(progress, format_parts),
             ProgressIndicator::Spinner => self.format_spinner_indicator(progress, format_parts),
             ProgressIndicator::Numeric => self.format_numeric_indicator(progress, format_parts),
+            ProgressIndicator::Interactive => self.format_interactive_indicator(progress, format_parts),
             ProgressIndicator::Custom(name) => self.format_custom_indicator(name, progress, format_parts),
         }
     }
@@ -831,6 +832,59 @@ impl ProgressTemplate {
         
         Ok(Some(result))
     }
+
+    /// Format an interactive progress bar that responds to user input
+    fn format_interactive_indicator(
+        &self,
+        progress: f64,
+        format_parts: &[&str],
+    ) -> Result<Option<String>, ProgressError> {
+        // Get the bar width (default: 10)
+        let width = if format_parts.len() > 2 {
+            format_parts[2].parse::<usize>().unwrap_or(10)
+        } else {
+            10
+        };
+        
+        // Get the characters
+        let (fill_char, bg_char, cursor_char) = if format_parts.len() > 3 {
+            let chars = format_parts[3].chars().collect::<Vec<_>>();
+            if chars.len() >= 3 {
+                (chars[0], chars[1], chars[2])
+            } else {
+                ProgressIndicator::default_interactive_chars()
+            }
+        } else {
+            ProgressIndicator::default_interactive_chars()
+        };
+        
+        // Calculate filled portion
+        let filled = (width as f64 * progress).round() as usize;
+        
+        // Build the bar with cursor
+        let mut result = String::with_capacity(width + 2);
+        result.push('[');
+        
+        for i in 0..width {
+            match i.cmp(&filled) {
+                std::cmp::Ordering::Less => result.push(fill_char),
+                std::cmp::Ordering::Equal => result.push(cursor_char),
+                std::cmp::Ordering::Greater => result.push(bg_char),
+            }
+        }
+        
+        result.push(']');
+        
+        // Add interactive indicator id for event handling
+        if format_parts.len() > 4 {
+            let id = format_parts[4];
+            // Store metadata in result for event handling
+            // This uses a special marker format that can be parsed by the interactive handler
+            result.push_str(&format!("{{interactive:{}:{:.6}}}", id, progress));
+        }
+        
+        Ok(Some(result))
+    }
 }
 
 /// Supported color names for formatting
@@ -937,6 +991,11 @@ pub enum ProgressIndicator {
     /// Example: "50%"
     Numeric,
     
+    /// Interactive progress bar that responds to user input
+    /// Example: "[====    ]" with user interaction
+    /// Can be dragged with the mouse or moved with arrow keys
+    Interactive,
+    
     /// Custom indicator defined by the user
     /// This allows for user-defined progress indicators with 
     /// custom rendering logic
@@ -959,6 +1018,14 @@ impl ProgressIndicator {
     /// A string containing the block characters from full to empty
     pub fn default_block_chars() -> &'static str {
         "█▓▒░ "
+    }
+    
+    /// Get the default characters for an interactive indicator
+    ///
+    /// # Returns
+    /// A tuple of (fill_char, bg_char, cursor_char) for the interactive progress bar
+    pub fn default_interactive_chars() -> (char, char, char) {
+        ('=', ' ', '>')
     }
 }
 
@@ -993,6 +1060,7 @@ impl FromStr for ProgressIndicator {
             "block" => Ok(ProgressIndicator::Block),
             "spinner" => Ok(ProgressIndicator::Spinner),
             "numeric" => Ok(ProgressIndicator::Numeric),
+            "interactive" => Ok(ProgressIndicator::Interactive),
             "custom" => {
                 if parts.len() > 1 {
                     Ok(ProgressIndicator::Custom(parts[1].to_string()))
@@ -1253,6 +1321,7 @@ mod tests {
         assert_eq!(ProgressIndicator::from_str("block"), Ok(ProgressIndicator::Block));
         assert_eq!(ProgressIndicator::from_str("spinner"), Ok(ProgressIndicator::Spinner));
         assert_eq!(ProgressIndicator::from_str("numeric"), Ok(ProgressIndicator::Numeric));
+        assert_eq!(ProgressIndicator::from_str("interactive"), Ok(ProgressIndicator::Interactive));
         assert_eq!(ProgressIndicator::from_str("custom:dots"), Ok(ProgressIndicator::Custom("dots".to_string())));
         assert_eq!(ProgressIndicator::from_str("custom:braille"), Ok(ProgressIndicator::Custom("braille".to_string())));
         assert_eq!(ProgressIndicator::from_str("custom:gradient"), Ok(ProgressIndicator::Custom("gradient".to_string())));

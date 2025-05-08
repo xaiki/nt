@@ -16,6 +16,8 @@ pub struct TextWrapper {
     word_separators: Vec<char>,
     /// String to use at the end of truncated lines
     truncation_marker: String,
+    /// Whether to strip ANSI escape sequences when calculating visual width
+    strip_ansi: bool,
 }
 
 impl TextWrapper {
@@ -32,6 +34,7 @@ impl TextWrapper {
             break_long_words: true,
             word_separators: vec![' ', '\t', '-', '_', ',', ';', ':', '!', '?', '.'],
             truncation_marker: "…".to_string(),
+            strip_ansi: true,
         }
     }
 
@@ -68,6 +71,18 @@ impl TextWrapper {
     /// Self for method chaining
     pub fn truncation_marker(mut self, marker: impl Into<String>) -> Self {
         self.truncation_marker = marker.into();
+        self
+    }
+
+    /// Sets whether to strip ANSI escape sequences when calculating visual width
+    ///
+    /// # Parameters
+    /// * `strip_ansi` - If true, ANSI escape sequences will be ignored in width calculations
+    ///
+    /// # Returns
+    /// Self for method chaining
+    pub fn strip_ansi(mut self, strip_ansi: bool) -> Self {
+        self.strip_ansi = strip_ansi;
         self
     }
 
@@ -254,6 +269,7 @@ impl TextWrapper {
     }
 
     /// Calculates the visual width of a string, accounting for wide characters
+    /// and optionally ignoring ANSI escape sequences
     ///
     /// # Parameters
     /// * `text` - The text to measure
@@ -262,15 +278,31 @@ impl TextWrapper {
     /// The visual width of the text
     fn visual_width(&self, text: &str) -> usize {
         let mut width = 0;
-        for grapheme in UnicodeSegmentation::graphemes(text, true) {
-            // Count wide characters (like CJK characters) as 2 columns
-            let ch = grapheme.chars().next().unwrap_or(' ');
-            if is_wide_char(ch) {
-                width += 2;
-            } else {
-                width += 1;
+        
+        // Handle based on whether we should strip ANSI sequences
+        if self.strip_ansi {
+            // Strip ANSI sequences and then measure
+            let clean_text = strip_ansi_sequences(text);
+            for grapheme in UnicodeSegmentation::graphemes(clean_text.as_str(), true) {
+                let ch = grapheme.chars().next().unwrap_or(' ');
+                if is_wide_char(ch) {
+                    width += 2;
+                } else {
+                    width += 1;
+                }
+            }
+        } else {
+            // Measure directly without stripping
+            for grapheme in UnicodeSegmentation::graphemes(text, true) {
+                let ch = grapheme.chars().next().unwrap_or(' ');
+                if is_wide_char(ch) {
+                    width += 2;
+                } else {
+                    width += 1;
+                }
             }
         }
+        
         width
     }
 }
@@ -295,6 +327,71 @@ fn is_wide_char(ch: char) -> bool {
         '\u{FF00}'..='\u{FF60}' |   // Fullwidth ASCII Variants
         '\u{FFE0}'..='\u{FFE6}'     // Fullwidth Symbol Variants
     )
+}
+
+/// Strips ANSI escape sequences from a string
+///
+/// # Parameters
+/// * `text` - The text containing ANSI escape sequences
+///
+/// # Returns
+/// The text with ANSI escape sequences removed
+fn strip_ansi_sequences(text: &str) -> String {
+    let mut result = String::with_capacity(text.len());
+    let mut chars = text.chars().peekable();
+    
+    while let Some(c) = chars.next() {
+        if c == '\x1B' {
+            // Check for the ESC [ sequence (CSI - Control Sequence Introducer)
+            if let Some(&next_char) = chars.peek() {
+                match next_char {
+                    '[' => {
+                        // Skip the '['
+                        chars.next();
+                        
+                        // Skip until we find a terminator character (ASCII 64-126)
+                        loop {
+                            match chars.next() {
+                                Some(ch) if ('@'..='~').contains(&ch) => break, // Terminator found
+                                Some(_) => continue, // Keep skipping
+                                None => break, // End of string
+                            }
+                        }
+                    },
+                    ']' => {
+                        // OSC - Operating System Command
+                        // Skip the ']'
+                        chars.next();
+                        
+                        // Skip until we find ST (String Terminator) or BEL
+                        loop {
+                            match chars.next() {
+                                Some('\x07') => break, // BEL terminator
+                                Some('\x1B') => {
+                                    if let Some('\\') = chars.peek() {
+                                        chars.next(); // Skip the '\'
+                                        break; // Found ESC \ (ST) terminator
+                                    }
+                                },
+                                Some(_) => continue, // Keep skipping
+                                None => break, // End of string
+                            }
+                        }
+                    },
+                    // Could add other escape sequence types here if needed
+                    _ => {
+                        // Unknown escape sequence, skip just this ESC
+                        result.push(c);
+                    }
+                }
+            }
+        } else {
+            // Normal character, add to result
+            result.push(c);
+        }
+    }
+    
+    result
 }
 
 #[cfg(test)]
@@ -371,5 +468,45 @@ mod tests {
         
         // Mixed text
         assert_eq!(wrapper.visual_width("Hi 你好"), 7);
+    }
+    
+    #[test]
+    fn test_ansi_escape_sequences() {
+        let wrapper = TextWrapper::new(10);
+        
+        // Text with ANSI color escape sequences
+        let colored_text = "\x1B[31mRed Text\x1B[0m";
+        assert_eq!(wrapper.visual_width(colored_text), 8); // "Red Text" = 8 characters
+        
+        // Text with multiple ANSI sequences
+        let multi_colored = "\x1B[31mRed\x1B[32mGreen\x1B[0m";
+        assert_eq!(wrapper.visual_width(multi_colored), 8); // "RedGreen" = 8 characters (not 7)
+        
+        // Disable ANSI stripping
+        let raw_wrapper = wrapper.strip_ansi(false);
+        assert_ne!(raw_wrapper.visual_width(colored_text), 8); // Should include escape sequences
+    }
+    
+    #[test]
+    fn test_strip_ansi_sequences() {
+        // Simple color
+        let input = "\x1B[31mRed Text\x1B[0m";
+        assert_eq!(strip_ansi_sequences(input), "Red Text");
+        
+        // Multiple sequences
+        let input = "\x1B[1;31mBold Red\x1B[0m \x1B[32mGreen\x1B[0m";
+        assert_eq!(strip_ansi_sequences(input), "Bold Red Green");
+        
+        // Cursor movements and other CSI sequences
+        let input = "Hello\x1B[3GWorld"; // Move cursor to column 3
+        assert_eq!(strip_ansi_sequences(input), "HelloWorld");
+        
+        // OSC sequences
+        let input = "Hello\x1B]0;Window Title\x07World";
+        assert_eq!(strip_ansi_sequences(input), "HelloWorld");
+        
+        // No sequences
+        let input = "Normal text";
+        assert_eq!(strip_ansi_sequences(input), "Normal text");
     }
 } 

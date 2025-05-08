@@ -2,6 +2,16 @@
 
 This file contains completed tasks and improvements moved from the TODO.md file.
 
+## v0.1.24 (2024-05-17)
+
+### Feature Enhancements
+- Added ANSI escape sequence support
+  - Implemented ANSI escape sequence stripping for text width calculations
+  - Added support for CSI and OSC sequence detection and handling
+  - Enhanced TextWrapper to account for ANSI escape sequences in line wrapping
+  - Fixed visual width calculations to properly handle styled text
+  - Added comprehensive tests for ANSI sequence handling
+
 ## v0.1.23 (2024-05-16)
 
 ### Code Cleanup and Refactoring

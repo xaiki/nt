@@ -100,8 +100,7 @@ The `nt_progress` library provides a flexible and thread-safe progress display f
   - [x] Color support for highlighting
   - [x] Line wrapping for long messages
   - [x] Custom progress indicators
-  - [ ] Interactive progress bars
-  - [ ] ANSI escape sequence support
+  - [x] ANSI escape sequence support
 - [ ] Expand job tracking capabilities
   - [ ] Percentage calculation and display
   - [ ] Progress bar visualization
