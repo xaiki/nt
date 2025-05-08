@@ -110,7 +110,7 @@ The `nt_progress` library provides a flexible and thread-safe progress display f
   - [x] Pause/resume functionality
   - [x] Job dependency tracking (DependentJob trait)
   - [x] Failure handling and retry logic
-  - [ ] Estimated time remaining calculations
+  - [x] Estimated time remaining calculations
   - [ ] Job cancellation
   - [ ] Job statistics and reporting
   - [ ] Job persistence for long-running operations

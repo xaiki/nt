@@ -236,6 +236,13 @@ impl WindowBase {
     pub fn has_line_wrapping(&self) -> bool {
         self.line_wrapping
     }
+
+    /// Update the elapsed time tracking.
+    /// 
+    /// This method ensures that the elapsed time is properly tracked.
+    pub fn update_elapsed_time(&mut self) {
+        self.base.reset_start_time();
+    }
 }
 
 /// Base implementation for single-line display modes.

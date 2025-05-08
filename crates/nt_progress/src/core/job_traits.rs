@@ -549,6 +549,7 @@ impl<T: HasBaseConfig + Send + Sync + Debug> TimeTrackingJob for T {
 mod tests {
     use super::*;
     use super::super::base_config::{BaseConfig, JobStatus};
+    use std::time::Duration;
     
     // Simple test struct that implements HasBaseConfig
     #[derive(Debug)]
@@ -712,5 +713,66 @@ mod tests {
         tracker.retry();
         assert_eq!(tracker.get_status(), JobStatus::Retry);
         assert!(tracker.is_retrying());
+    }
+    
+    #[test]
+    fn test_time_tracking_job_impl() {
+        let mut tracker = TestTracker::new(10);
+        
+        // Test elapsed time
+        let elapsed = tracker.get_elapsed_time();
+        assert!(elapsed.as_secs() < 1, "Elapsed time should be < 1 second at the start");
+        
+        // Initially, no estimates are available
+        assert!(tracker.get_estimated_time_remaining().is_none(), "Initial ETA should be None");
+        assert!(tracker.get_progress_speed().is_none(), "Initial speed should be None");
+        
+        // Simulate progress over time
+        for i in 1..=5 {
+            // Sleep to simulate work
+            std::thread::sleep(Duration::from_millis(50));
+            
+            // Update progress
+            tracker.base_config_mut().set_completed_jobs(i);
+            let progress = tracker.update_time_estimates();
+            
+            // Verify progress percentage
+            let expected_progress = (i as f64) / 10.0 * 100.0;
+            assert!((progress - expected_progress).abs() < 0.01, 
+                    "Expected progress: {}, got: {}", expected_progress, progress);
+            
+            // After several updates, we should have estimates
+            if i >= 3 {
+                // We should now have speed and ETA
+                let speed = tracker.get_progress_speed();
+                let eta = tracker.get_estimated_time_remaining();
+                
+                println!("Progress: {}/10, ETA: {:?}, Speed: {:?}", i, eta, speed);
+                
+                // After a few updates, we should get some estimates
+                if let Some(speed_value) = speed {
+                    assert!(speed_value > 0.0, "Speed should be positive: {}", speed_value);
+                }
+                
+                if let Some(eta_duration) = eta {
+                    // Ensure ETA is reasonable for this small test
+                    assert!(eta_duration.as_secs() < 10, 
+                           "ETA should be reasonable: {:?}", eta_duration);
+                }
+            }
+        }
+        
+        // Complete the job
+        tracker.base_config_mut().set_completed_jobs(10);
+        tracker.update_time_estimates();
+        
+        // After completion, elapsed time should be larger
+        let final_elapsed = tracker.get_elapsed_time();
+        assert!(final_elapsed > elapsed, "Elapsed time should increase");
+        
+        // ETA should be None or very small after completion
+        if let Some(time) = tracker.get_estimated_time_remaining() {
+            assert!(time.as_secs() < 1, "ETA should be very small after completion");
+        }
     }
 } 

@@ -2,6 +2,16 @@
 
 This file contains completed tasks and improvements moved from the TODO.md file.
 
+## v0.1.38 (2025-05-09)
+
+### Time Tracking Enhancement
+- Fixed time tracking in progress display
+  - Added `reset_start_time` method to BaseConfig for better time tracking
+  - Implemented Window mode's `get_elapsed_time` to use BaseConfig directly
+  - Ensured elapsed time is properly tracked from the first progress update
+  - Added comprehensive unit tests for time estimation functionality
+  - Fixed integration tests to handle elapsed time correctly
+
 ## v0.1.37 (2025-05-08)
 
 ### Benchmark and Code Cleanup

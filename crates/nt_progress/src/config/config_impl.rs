@@ -332,14 +332,21 @@ impl Config {
         }
     }
     
-    /// Set the progress for this config.
+    /// Set the progress to the specified completed count.
     ///
     /// # Parameters
     /// * `completed` - The number of completed jobs
     ///
     /// # Returns
-    /// The new progress percentage
+    /// The progress percentage
     pub fn set_progress(&mut self, completed: usize) -> f64 {
+        // If this is the first progress update (completed is 0),
+        // reset the start time to properly begin time tracking
+        if completed == 0 {
+            // Reset the start time using the HasBaseConfig implementation
+            self.base_config_mut().reset_start_time();
+        }
+
         if let Some(progress) = self.config.as_progress_mut() {
             progress.set_progress(completed)
         } else {

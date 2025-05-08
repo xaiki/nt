@@ -155,8 +155,30 @@ impl WithProgress for Window {
     }
     
     fn set_progress(&mut self, completed: usize) -> f64 {
+        // If this is the first progress update (completed is 0),
+        // update the elapsed time to start tracking time properly
+        if completed == 0 {
+            self.window_base.update_elapsed_time();
+        }
+        
         self.base_config_mut().set_completed_jobs(completed);
         ((completed as f64) / (self.get_total_jobs() as f64) * 100.0).min(100.0)
+    }
+    
+    fn get_elapsed_time(&self) -> std::time::Duration {
+        self.base_config().get_elapsed_time()
+    }
+    
+    fn get_estimated_time_remaining(&self) -> Option<std::time::Duration> {
+        self.base_config().get_estimated_time_remaining()
+    }
+    
+    fn get_progress_speed(&self) -> Option<f64> {
+        self.base_config().get_progress_speed()
+    }
+    
+    fn update_time_estimates(&mut self) -> f64 {
+        self.base_config_mut().update_time_estimates()
     }
 }
 

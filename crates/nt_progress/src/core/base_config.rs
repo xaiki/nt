@@ -1,8 +1,7 @@
-use std::fmt::Debug;
-use std::sync::Arc;
-use std::sync::atomic::{AtomicUsize, AtomicBool, AtomicU32};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicUsize};
 use std::time::{Duration, Instant};
+use std::fmt::Debug;
 
 use super::job_traits::HasBaseConfig;
 
@@ -569,6 +568,15 @@ impl BaseConfig {
         self.get_retry_count() >= self.get_max_retries()
     }
     
+    /// Reset the start time to the current time.
+    ///
+    /// This method should be called when tracking starts or when 
+    /// the timer needs to be reset for any reason.
+    pub fn reset_start_time(&mut self) {
+        let mut start = self.start_time.lock().unwrap();
+        *start = std::time::Instant::now();
+    }
+    
     /// Get the elapsed time since the job started.
     ///
     /// # Returns
@@ -663,6 +671,7 @@ impl HasBaseConfig for BaseConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::thread::sleep;
     
     #[test]
     fn test_base_config_creation() {
@@ -854,5 +863,35 @@ mod tests {
         assert_eq!(JobStatus::Completed.to_string(), "Completed");
         assert_eq!(JobStatus::Failed.to_string(), "Failed");
         assert_eq!(JobStatus::Retry.to_string(), "Retry");
+    }
+    
+    #[test]
+    fn test_base_config_elapsed_time() {
+        let mut base = BaseConfig::new(10);
+        
+        // Reset start time to clear any initialization delay
+        base.reset_start_time();
+        
+        // Initial elapsed time should be very small
+        let initial = base.get_elapsed_time();
+        assert!(initial.as_millis() < 100, "Initial elapsed time should be small");
+        
+        // Sleep for a bit
+        sleep(Duration::from_millis(50));
+        
+        // Elapsed time should have increased
+        let after_sleep = base.get_elapsed_time();
+        assert!(after_sleep > initial, 
+                "Elapsed time should increase from {:?} to > {:?}", 
+                initial, after_sleep);
+        
+        // Reset the start time
+        base.reset_start_time();
+        
+        // Elapsed time should be small again
+        let after_reset = base.get_elapsed_time();
+        assert!(after_reset.as_millis() < 10, 
+                "After reset, elapsed time should be small again, got: {:?}", 
+                after_reset);
     }
 } 
