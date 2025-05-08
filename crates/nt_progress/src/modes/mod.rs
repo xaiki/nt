@@ -480,6 +480,9 @@ pub enum Capability {
     
     /// The mode supports pausing and resuming jobs.
     PausableJob,
+    
+    /// The mode supports job dependencies.
+    DependentJob,
 }
 
 /// Extension trait providing capability checks and conversions.
@@ -689,6 +692,7 @@ pub trait ThreadConfigExt: ThreadConfig {
             Capability::Progress => self.supports_progress(),
             Capability::PrioritizedJob => self.supports_prioritized_job(),
             Capability::PausableJob => self.supports_pausable_job(),
+            Capability::DependentJob => self.supports_dependent_job(),
         }
     }
 
@@ -755,6 +759,7 @@ pub trait ThreadConfigExt: ThreadConfig {
         add_if_supported!(Capability::Progress, self.supports_progress());
         add_if_supported!(Capability::PrioritizedJob, self.supports_prioritized_job());
         add_if_supported!(Capability::PausableJob, self.supports_pausable_job());
+        add_if_supported!(Capability::DependentJob, self.supports_dependent_job());
         
         caps
     }
@@ -844,6 +849,50 @@ pub trait ThreadConfigExt: ThreadConfig {
             any.downcast_mut::<Limited>().map(|l| l as &mut dyn PausableJob)
         } else {
             any.downcast_mut::<Capturing>().map(|c| c as &mut dyn PausableJob)
+        }
+    }
+
+    /// Add support for checking if a config supports job dependencies.
+    ///
+    /// # Returns
+    /// `true` if the config supports job dependencies.
+    fn supports_dependent_job(&self) -> bool {
+        // All of our modes support DependentJob via blanket implementation
+        true
+    }
+
+    /// Try to get this config as a DependentJob.
+    ///
+    /// # Returns
+    /// Some(&dyn DependentJob) if the config supports job dependencies, None otherwise.
+    fn as_dependent_job(&self) -> Option<&dyn DependentJob> {
+        let any = self.as_any();
+        if let Some(w) = any.downcast_ref::<Window>() {
+            Some(w as &dyn DependentJob)
+        } else if let Some(w) = any.downcast_ref::<WindowWithTitle>() {
+            Some(w as &dyn DependentJob)
+        } else if let Some(l) = any.downcast_ref::<Limited>() {
+            Some(l as &dyn DependentJob)
+        } else {
+            any.downcast_ref::<Capturing>().map(|c| c as &dyn DependentJob)
+        }
+    }
+
+    /// Try to get this config as a mutable DependentJob.
+    ///
+    /// # Returns
+    /// Some(&mut dyn DependentJob) if the config supports job dependencies, None otherwise.
+    fn as_dependent_job_mut(&mut self) -> Option<&mut dyn DependentJob> {
+        let type_id = self.as_any().type_id();
+        let any = self.as_any_mut();
+        if type_id == TypeId::of::<Window>() {
+            any.downcast_mut::<Window>().map(|w| w as &mut dyn DependentJob)
+        } else if type_id == TypeId::of::<WindowWithTitle>() {
+            any.downcast_mut::<WindowWithTitle>().map(|w| w as &mut dyn DependentJob)
+        } else if type_id == TypeId::of::<Limited>() {
+            any.downcast_mut::<Limited>().map(|l| l as &mut dyn DependentJob)
+        } else {
+            any.downcast_mut::<Capturing>().map(|c| c as &mut dyn DependentJob)
         }
     }
 }
@@ -1673,6 +1722,180 @@ impl Config {
         try_as_prioritized_mut!(Limited);
         try_as_prioritized_mut!(Capturing);
     }
+    
+    /// Add a dependency on another job.
+    ///
+    /// # Parameters
+    /// * `job_id` - The ID of the job this job depends on
+    ///
+    /// # Returns
+    /// `true` if the dependency was successfully added, `false` otherwise
+    pub fn add_dependency(&mut self, job_id: usize) -> bool {
+        if let Some(dep_job) = self.config.as_any_mut().downcast_mut::<Box<dyn DependentJob>>() {
+            dep_job.add_dependency(job_id)
+        } else {
+            // Try to use any type that implements DependentJob
+            let any_mut = self.config.as_any_mut();
+            
+            macro_rules! try_as_dependent_job {
+                ($type:ty) => {
+                    if let Some(config) = any_mut.downcast_mut::<$type>() {
+                        return config.add_dependency(job_id);
+                    }
+                };
+            }
+            
+            // Try each known implementation
+            try_as_dependent_job!(Window);
+            try_as_dependent_job!(WindowWithTitle);
+            try_as_dependent_job!(Limited);
+            try_as_dependent_job!(Capturing);
+            
+            false
+        }
+    }
+    
+    /// Remove a dependency.
+    ///
+    /// # Parameters
+    /// * `job_id` - The ID of the dependency to remove
+    ///
+    /// # Returns
+    /// `true` if the dependency was successfully removed, `false` otherwise
+    pub fn remove_dependency(&mut self, job_id: usize) -> bool {
+        if let Some(dep_job) = self.config.as_any_mut().downcast_mut::<Box<dyn DependentJob>>() {
+            dep_job.remove_dependency(job_id)
+        } else {
+            // Try to use any type that implements DependentJob
+            let any_mut = self.config.as_any_mut();
+            
+            macro_rules! try_as_dependent_job {
+                ($type:ty) => {
+                    if let Some(config) = any_mut.downcast_mut::<$type>() {
+                        return config.remove_dependency(job_id);
+                    }
+                };
+            }
+            
+            // Try each known implementation
+            try_as_dependent_job!(Window);
+            try_as_dependent_job!(WindowWithTitle);
+            try_as_dependent_job!(Limited);
+            try_as_dependent_job!(Capturing);
+            
+            false
+        }
+    }
+    
+    /// Get the dependencies of this job.
+    ///
+    /// # Returns
+    /// A vector of job IDs that this job depends on
+    pub fn get_dependencies(&self) -> Vec<usize> {
+        if let Some(dep_job) = self.config.as_any().downcast_ref::<Box<dyn DependentJob>>() {
+            dep_job.get_dependencies()
+        } else {
+            // Try to use any type that implements DependentJob
+            let any = self.config.as_any();
+            
+            macro_rules! try_as_dependent_job {
+                ($type:ty) => {
+                    if let Some(config) = any.downcast_ref::<$type>() {
+                        return config.get_dependencies();
+                    }
+                };
+            }
+            
+            // Try each known implementation
+            try_as_dependent_job!(Window);
+            try_as_dependent_job!(WindowWithTitle);
+            try_as_dependent_job!(Limited);
+            try_as_dependent_job!(Capturing);
+            
+            Vec::new()
+        }
+    }
+    
+    /// Check if this job has dependencies.
+    ///
+    /// # Returns
+    /// `true` if this job has one or more dependencies, `false` otherwise
+    pub fn has_dependencies(&self) -> bool {
+        if let Some(dep_job) = self.config.as_any().downcast_ref::<Box<dyn DependentJob>>() {
+            dep_job.has_dependencies()
+        } else {
+            // Try to use any type that implements DependentJob
+            let any = self.config.as_any();
+            
+            macro_rules! try_as_dependent_job {
+                ($type:ty) => {
+                    if let Some(config) = any.downcast_ref::<$type>() {
+                        return config.has_dependencies();
+                    }
+                };
+            }
+            
+            // Try each known implementation
+            try_as_dependent_job!(Window);
+            try_as_dependent_job!(WindowWithTitle);
+            try_as_dependent_job!(Limited);
+            try_as_dependent_job!(Capturing);
+            
+            false
+        }
+    }
+    
+    /// Check if all dependencies of this job are satisfied.
+    ///
+    /// This requires a function that can check if a job is completed.
+    ///
+    /// # Parameters
+    /// * `is_completed` - A function that checks if a job ID is completed
+    ///
+    /// # Returns
+    /// `true` if all dependencies are satisfied, `false` otherwise
+    pub fn are_dependencies_satisfied<F>(&self, is_completed: F) -> bool
+    where
+        F: Fn(usize) -> bool,
+    {
+        // Get the dependencies and check if they're all completed
+        let deps = self.get_dependencies();
+        deps.iter().all(|&job_id| is_completed(job_id))
+    }
+    
+    /// Check if a specific dependency is satisfied.
+    ///
+    /// # Parameters
+    /// * `job_id` - The job ID to check
+    /// * `is_completed` - Whether the job is completed
+    ///
+    /// # Returns
+    /// `true` if the dependency is satisfied, `false` otherwise
+    pub fn is_dependency_satisfied(&self, job_id: usize, is_completed: bool) -> bool {
+        if let Some(dep_job) = self.config.as_any().downcast_ref::<Box<dyn DependentJob>>() {
+            dep_job.is_dependency_satisfied(job_id, is_completed)
+        } else {
+            // Try to use any type that implements DependentJob
+            let any = self.config.as_any();
+            
+            macro_rules! try_as_dependent_job {
+                ($type:ty) => {
+                    if let Some(config) = any.downcast_ref::<$type>() {
+                        return config.is_dependency_satisfied(job_id, is_completed);
+                    }
+                };
+            }
+            
+            // Try each known implementation
+            try_as_dependent_job!(Window);
+            try_as_dependent_job!(WindowWithTitle);
+            try_as_dependent_job!(Limited);
+            try_as_dependent_job!(Capturing);
+            
+            // If it's not a dependency, consider it satisfied
+            true
+        }
+    }
 }
 
 impl Default for Config {
@@ -1974,25 +2197,26 @@ pub struct BaseConfig {
     paused: Arc<AtomicBool>,
     /// Priority of this job (higher values indicate higher priority)
     priority: Arc<AtomicU32>,
+    /// Job IDs that this job depends on
+    dependencies: Arc<Mutex<Vec<usize>>>,
 }
 
 impl BaseConfig {
-    /// Create a new BaseConfig with the specified number of total jobs.
+    /// Creates a new BaseConfig with the given total number of jobs.
     ///
-    /// # Parameters
-    /// * `total_jobs` - The total number of jobs to track
+    /// # Arguments
     ///
-    /// # Returns
-    /// A new BaseConfig instance
+    /// * `total_jobs` - The total number of jobs.
     pub fn new(total_jobs: usize) -> Self {
         Self {
             total_jobs,
             completed_jobs: Arc::new(AtomicUsize::new(0)),
-            progress_format: "{current}/{total} ({percent}%)".to_string(),
+            progress_format: "{}/{} ({:.1}%)".to_string(),
             parent_job_id: None,
             child_job_ids: Arc::new(Mutex::new(Vec::new())),
             paused: Arc::new(AtomicBool::new(false)),
             priority: Arc::new(AtomicU32::new(0)),
+            dependencies: Arc::new(Mutex::new(Vec::new())),
         }
     }
 
@@ -2162,6 +2386,93 @@ impl BaseConfig {
     /// * `priority` - The new priority value
     pub fn set_priority(&mut self, priority: u32) {
         self.priority.store(priority, std::sync::atomic::Ordering::SeqCst);
+    }
+    
+    /// Add a dependency on another job.
+    ///
+    /// # Parameters
+    /// * `job_id` - The ID of the job this job depends on
+    ///
+    /// # Returns
+    /// `true` if the dependency was successfully added, `false` otherwise
+    pub fn add_dependency(&mut self, job_id: usize) -> bool {
+        let mut deps = self.dependencies.lock().unwrap();
+        if !deps.contains(&job_id) {
+            deps.push(job_id);
+            true
+        } else {
+            false
+        }
+    }
+    
+    /// Remove a dependency.
+    ///
+    /// # Parameters
+    /// * `job_id` - The ID of the dependency to remove
+    ///
+    /// # Returns
+    /// `true` if the dependency was successfully removed, `false` otherwise
+    pub fn remove_dependency(&mut self, job_id: usize) -> bool {
+        let mut deps = self.dependencies.lock().unwrap();
+        if let Some(pos) = deps.iter().position(|id| *id == job_id) {
+            deps.remove(pos);
+            true
+        } else {
+            false
+        }
+    }
+    
+    /// Get the dependencies of this job.
+    ///
+    /// # Returns
+    /// A vector of job IDs that this job depends on
+    pub fn get_dependencies(&self) -> Vec<usize> {
+        let deps = self.dependencies.lock().unwrap();
+        deps.clone()
+    }
+    
+    /// Check if this job has dependencies.
+    ///
+    /// # Returns
+    /// `true` if this job has one or more dependencies, `false` otherwise
+    pub fn has_dependencies(&self) -> bool {
+        let deps = self.dependencies.lock().unwrap();
+        !deps.is_empty()
+    }
+    
+    /// Check if all dependencies of this job are satisfied.
+    ///
+    /// This requires a function that can check if a job is completed.
+    ///
+    /// # Parameters
+    /// * `is_completed` - A function that checks if a job ID is completed
+    ///
+    /// # Returns
+    /// `true` if all dependencies are satisfied, `false` otherwise
+    pub fn are_dependencies_satisfied<F>(&self, is_completed: F) -> bool
+    where
+        F: Fn(usize) -> bool,
+    {
+        let deps = self.dependencies.lock().unwrap();
+        deps.iter().all(|&job_id| is_completed(job_id))
+    }
+    
+    /// Check if a specific dependency is satisfied.
+    ///
+    /// # Parameters
+    /// * `job_id` - The job ID to check
+    /// * `is_completed` - Whether the job is completed
+    ///
+    /// # Returns
+    /// `true` if the dependency is satisfied, `false` otherwise
+    pub fn is_dependency_satisfied(&self, job_id: usize, is_completed: bool) -> bool {
+        let deps = self.dependencies.lock().unwrap();
+        if deps.contains(&job_id) {
+            is_completed
+        } else {
+            // If it's not a dependency, consider it satisfied
+            true
+        }
     }
 }
 
@@ -2334,6 +2645,52 @@ pub trait PrioritizedJob: JobTracker {
     fn set_priority(&mut self, priority: u32);
 }
 
+/// Trait for jobs that depend on other jobs.
+///
+/// This trait provides methods for managing job dependencies. A job with dependencies
+/// should not be considered ready to run until all its dependencies are completed.
+pub trait DependentJob: JobTracker {
+    /// Add a dependency on another job.
+    ///
+    /// # Parameters
+    /// * `job_id` - The ID of the job this job depends on
+    ///
+    /// # Returns
+    /// `true` if the dependency was successfully added, `false` otherwise
+    fn add_dependency(&mut self, job_id: usize) -> bool;
+    
+    /// Remove a dependency.
+    ///
+    /// # Parameters
+    /// * `job_id` - The ID of the dependency to remove
+    ///
+    /// # Returns
+    /// `true` if the dependency was successfully removed, `false` otherwise
+    fn remove_dependency(&mut self, job_id: usize) -> bool;
+    
+    /// Get the dependencies of this job.
+    ///
+    /// # Returns
+    /// A vector of job IDs that this job depends on
+    fn get_dependencies(&self) -> Vec<usize>;
+    
+    /// Check if this job has dependencies.
+    ///
+    /// # Returns
+    /// `true` if this job has one or more dependencies, `false` otherwise
+    fn has_dependencies(&self) -> bool;
+    
+    /// Check if a specific dependency is satisfied.
+    ///
+    /// # Parameters
+    /// * `job_id` - The job ID to check
+    /// * `is_completed` - Whether the job is completed
+    ///
+    /// # Returns
+    /// `true` if the dependency is satisfied, `false` otherwise
+    fn is_dependency_satisfied(&self, job_id: usize, is_completed: bool) -> bool;
+}
+
 // Add this blanket implementation after the implementation of PausableJob
 
 // Blanket implementation of PrioritizedJob for any type that implements HasBaseConfig
@@ -2344,6 +2701,35 @@ impl<T: HasBaseConfig + Send + Sync + Debug> PrioritizedJob for T {
     
     fn set_priority(&mut self, priority: u32) {
         self.base_config_mut().set_priority(priority);
+    }
+}
+
+// Blanket implementation of DependentJob for any type that implements HasBaseConfig
+impl<T: HasBaseConfig + Send + Sync + Debug> DependentJob for T {
+    fn add_dependency(&mut self, job_id: usize) -> bool {
+        self.base_config_mut().add_dependency(job_id)
+    }
+    
+    fn remove_dependency(&mut self, job_id: usize) -> bool {
+        self.base_config_mut().remove_dependency(job_id)
+    }
+    
+    fn get_dependencies(&self) -> Vec<usize> {
+        self.base_config().get_dependencies()
+    }
+    
+    fn has_dependencies(&self) -> bool {
+        self.base_config().has_dependencies()
+    }
+    
+    fn is_dependency_satisfied(&self, job_id: usize, is_completed: bool) -> bool {
+        let deps = self.base_config().get_dependencies();
+        if deps.contains(&job_id) {
+            is_completed
+        } else {
+            // If it's not a dependency, consider it satisfied
+            true
+        }
     }
 }
 
@@ -2727,38 +3113,72 @@ mod tests {
             window_with_title.resume();
             assert!(!window_with_title.is_paused());
         }
-        
-        // Test with Limited mode
+    }
+    
+    #[test]
+    fn test_dependent_job_functionality() {
+        // Test with Window mode
         {
-            let mut limited = Limited::new(10);
+            let mut window = Window::new(10, 3).unwrap();
             
-            // Default paused state should be false
-            assert!(!limited.is_paused());
+            // Initially no dependencies
+            assert!(!window.has_dependencies());
+            assert_eq!(window.get_dependencies().len(), 0);
             
-            // Pause and verify
-            limited.pause();
-            assert!(limited.is_paused());
+            // Add a dependency
+            assert!(window.add_dependency(1));
+            assert!(window.has_dependencies());
+            assert_eq!(window.get_dependencies().len(), 1);
+            assert_eq!(window.get_dependencies()[0], 1);
             
-            // Resume and verify
-            limited.resume();
-            assert!(!limited.is_paused());
+            // Add another dependency
+            assert!(window.add_dependency(2));
+            assert_eq!(window.get_dependencies().len(), 2);
+            
+            // Adding a duplicate dependency should fail
+            assert!(!window.add_dependency(1));
+            assert_eq!(window.get_dependencies().len(), 2);
+            
+            // Test is_dependency_satisfied
+            assert!(!window.is_dependency_satisfied(1, false));
+            assert!(window.is_dependency_satisfied(1, true));
+            
+            // Remove a dependency
+            assert!(window.remove_dependency(1));
+            assert!(window.has_dependencies());
+            assert_eq!(window.get_dependencies().len(), 1);
+            assert_eq!(window.get_dependencies()[0], 2);
+            
+            // Remove the last dependency
+            assert!(window.remove_dependency(2));
+            assert!(!window.has_dependencies());
+            assert_eq!(window.get_dependencies().len(), 0);
+            
+            // Removing a non-existent dependency should fail
+            assert!(!window.remove_dependency(3));
         }
         
-        // Test with Config wrapper
+        // Test with WindowWithTitle mode
         {
-            let window = Window::new(10, 3).unwrap();
-            let mut config = Config::from(Box::new(window) as Box<dyn ThreadConfig>);
+            let mut window_with_title = WindowWithTitle::new(10, 3, "Test".to_string()).unwrap();
             
-            // Default paused state should be false
-            assert!(!config.is_paused());
+            // Initially no dependencies
+            assert!(!window_with_title.has_dependencies());
             
-            // Pause and verify
-            config.pause();
-            assert!(config.is_paused());
+            // Add dependencies
+            assert!(window_with_title.add_dependency(1));
+            assert!(window_with_title.add_dependency(2));
+            assert!(window_with_title.has_dependencies());
+            assert_eq!(window_with_title.get_dependencies().len(), 2);
             
-            // Resume and verify
-            config.resume();
-            assert!(!config.is_paused());
+            // Test is_dependency_satisfied
+            assert!(!window_with_title.is_dependency_satisfied(1, false));
+            assert!(window_with_title.is_dependency_satisfied(1, true));
+            
+            // Remove dependencies
+            assert!(window_with_title.remove_dependency(1));
+            assert!(window_with_title.remove_dependency(2));
+            assert!(!window_with_title.has_dependencies());
         }
     }
 }

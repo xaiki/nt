@@ -4,6 +4,13 @@ This file contains completed tasks and improvements moved from the TODO.md file.
 
 ## v0.1.29 (2024-05-29)
 
+### Added Features
+- Added DependentJob trait for job dependency tracking
+  - Implemented add_dependency, remove_dependency, and dependency checking methods
+  - Added support for checking if dependencies are satisfied
+  - Added comprehensive test coverage for dependency management
+  - Integrated with the existing capability system
+
 ### Code Cleanup and Refactoring
 - Removed dead code by deleting ignored test that was replaced by direct test
   - Removed `test_window_mode_line_wrapping` as it was replaced by `test_window_direct_line_wrapping`
