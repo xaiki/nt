@@ -2,6 +2,16 @@
 
 This file contains completed tasks and improvements moved from the TODO.md file.
 
+## v0.1.23 (2024-05-16)
+
+### Code Cleanup and Refactoring
+- Fixed Clippy warning in CustomIndicatorType implementation
+  - Replaced custom from_str method with standard FromStr trait implementation
+  - Added proper error type for string parsing failures
+  - Improved error handling in format_custom_indicator method
+  - Enhanced code consistency with Rust conventions
+  - Updated documentation for the FromStr implementation
+
 ## v0.1.22 (2024-05-15)
 
 ### Feature Enhancements
@@ -346,4 +356,3 @@ This file contains completed tasks and improvements moved from the TODO.md file.
 - Fixed validation error messages for better clarity
 
 ## [v0.1.7] - 2024-03-20
-// ... existing code ... 

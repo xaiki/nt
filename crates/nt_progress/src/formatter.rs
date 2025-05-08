@@ -635,7 +635,7 @@ impl ProgressTemplate {
         format_parts: &[&str],
     ) -> Result<Option<String>, ProgressError> {
         // Parse the indicator type
-        let indicator_type = CustomIndicatorType::from_str(&name).ok_or_else(|| {
+        let indicator_type = name.parse::<CustomIndicatorType>().map_err(|_| {
             ProgressError::DisplayOperation(format!(
                 "Unknown custom indicator: {}. Valid options are: {}",
                 name,
@@ -1016,20 +1016,35 @@ pub enum CustomIndicatorType {
     Gradient,
 }
 
+/// Error that can occur when parsing a custom indicator type from a string
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CustomIndicatorTypeError;
+
+impl std::fmt::Display for CustomIndicatorTypeError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Unknown custom indicator type")
+    }
+}
+
+impl std::error::Error for CustomIndicatorTypeError {}
+
+impl std::str::FromStr for CustomIndicatorType {
+    type Err = CustomIndicatorTypeError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_lowercase().as_str() {
+            "dots" => Ok(CustomIndicatorType::Dots),
+            "braille" => Ok(CustomIndicatorType::Braille),
+            "gradient" => Ok(CustomIndicatorType::Gradient),
+            _ => Err(CustomIndicatorTypeError),
+        }
+    }
+}
+
 impl CustomIndicatorType {
     /// Get a list of all available custom indicator types
     pub fn variants() -> &'static [&'static str] {
         &["dots", "braille", "gradient"]
-    }
-    
-    /// Parse a string into a CustomIndicatorType
-    pub fn from_str(s: &str) -> Option<Self> {
-        match s.to_lowercase().as_str() {
-            "dots" => Some(CustomIndicatorType::Dots),
-            "braille" => Some(CustomIndicatorType::Braille),
-            "gradient" => Some(CustomIndicatorType::Gradient),
-            _ => None,
-        }
     }
 }
 
