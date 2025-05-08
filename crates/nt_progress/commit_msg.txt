@@ -1,16 +1,8 @@
-fix(terminal): Fix needless lifetime in TextWrapper implementation
+feat(progress): Implement percentage calculation and display
 
-- Fixed Clippy warning about needless lifetime in TextWrapper
-  - Removed explicit lifetime annotation in get_next_word method
-  - Ensured method still functions correctly after lifetime elision
-  - Verified all tests pass with the updated implementation
-
-- Enhanced code quality and maintainability
-  - Simplified code by following Rust best practices
-  - Improved readability by removing unnecessary annotations
-  - Added proper documentation for method parameters
-
-- Code cleanup and preparation
-  - Incremented version from 0.1.19 to 0.1.20
-  - Added entry in CHANGELOG.md for the new version
-  - Fixed all Clippy warnings in the codebase
+- Add WithProgress capability trait for supporting progress tracking
+- Add implementation for Window and WindowWithTitle modes
+- Fix unicode character issues in test_progress_bar_display
+- Update CHANGELOG.md with feature details
+- Mark feature as completed in TODO.md
+- Bump version to 0.1.25

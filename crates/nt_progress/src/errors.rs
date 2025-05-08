@@ -238,6 +238,13 @@ pub enum ModeCreationError {
         /// Optional reason why emojis are not supported
         reason: Option<String>,
     },
+    /// Operation attempted on a mode that does not support progress tracking
+    ProgressNotSupported {
+        /// The mode that was being used
+        mode_name: String,
+        /// Optional reason why progress tracking is not supported
+        reason: Option<String>,
+    },
     /// The mode is not registered in the factory
     ModeNotRegistered {
         /// The name of the mode that was requested
@@ -305,6 +312,13 @@ impl fmt::Display for ModeCreationError {
             },
             ModeCreationError::EmojiNotSupported { mode_name, reason } => {
                 write!(f, "Operation attempted on {} mode which does not support emojis", mode_name)?;
+                if let Some(reason) = reason {
+                    write!(f, " - {}", reason)?;
+                }
+                Ok(())
+            },
+            ModeCreationError::ProgressNotSupported { mode_name, reason } => {
+                write!(f, "Operation attempted on {} mode which does not support progress tracking", mode_name)?;
                 if let Some(reason) = reason {
                     write!(f, " - {}", reason)?;
                 }

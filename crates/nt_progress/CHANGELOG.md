@@ -2,6 +2,23 @@
 
 This file contains completed tasks and improvements moved from the TODO.md file.
 
+## v0.1.25 (2024-05-18)
+
+### Added
+- Implemented percentage calculation and display for progress tracking
+- Added WithProgress capability trait for supporting progress tracking in display modes
+- Added methods to TaskHandle for tracking and displaying progress percentages
+- Added comprehensive test suite for progress tracking functionality
+
+### Enhanced
+- Extended BaseConfig with progress tracking methods
+- Added progress formatting customization
+- Improved progress bar display with percentage indicators
+- Added support for incremental progress updates
+
+### Fixed
+- Fixed an issue with progress calculation for edge cases
+
 ## v0.1.24 (2024-05-17)
 
 ### Feature Enhancements

@@ -148,29 +148,131 @@ impl ProgressManager {
         }
     }
     
+    /// Update the progress for a specific thread
+    ///
+    /// # Parameters
+    /// * `thread_id` - The ID of the thread to update progress for
+    ///
+    /// # Returns
+    /// The updated progress percentage between 0.0 and 100.0
+    pub async fn update_progress(&self, thread_id: usize) -> Result<f64> {
+        if let Some(handle) = self.thread_manager.get_task(thread_id).await {
+            handle.update_progress().await
+        } else {
+            let ctx = ErrorContext::new("updating progress", "ProgressManager")
+                .with_thread_id(thread_id)
+                .with_details("Thread not found");
+            
+            let error_msg = format!("Thread {} not found", thread_id);
+            let error = ProgressError::TaskOperation(error_msg).into_context(ctx);
+            Err(anyhow::anyhow!(error))
+        }
+    }
+    
+    /// Set the progress for a specific thread
+    ///
+    /// # Parameters
+    /// * `thread_id` - The ID of the thread to set progress for
+    /// * `completed` - The number of completed jobs
+    ///
+    /// # Returns
+    /// The updated progress percentage between 0.0 and 100.0
+    pub async fn set_progress(&self, thread_id: usize, completed: usize) -> Result<f64> {
+        if let Some(handle) = self.thread_manager.get_task(thread_id).await {
+            handle.set_progress(completed).await
+        } else {
+            let ctx = ErrorContext::new("setting progress", "ProgressManager")
+                .with_thread_id(thread_id)
+                .with_details("Thread not found");
+            
+            let error_msg = format!("Thread {} not found", thread_id);
+            let error = ProgressError::TaskOperation(error_msg).into_context(ctx);
+            Err(anyhow::anyhow!(error))
+        }
+    }
+    
+    /// Get the current progress percentage for a specific thread
+    ///
+    /// # Parameters
+    /// * `thread_id` - The ID of the thread to get progress for
+    ///
+    /// # Returns
+    /// The current progress percentage between 0.0 and 100.0
+    pub async fn get_progress_percentage(&self, thread_id: usize) -> Result<f64> {
+        if let Some(handle) = self.thread_manager.get_task(thread_id).await {
+            handle.get_progress_percentage().await
+        } else {
+            let ctx = ErrorContext::new("getting progress", "ProgressManager")
+                .with_thread_id(thread_id)
+                .with_details("Thread not found");
+            
+            let error_msg = format!("Thread {} not found", thread_id);
+            let error = ProgressError::TaskOperation(error_msg).into_context(ctx);
+            Err(anyhow::anyhow!(error))
+        }
+    }
+    
+    /// Set the progress format for a specific thread
+    ///
+    /// # Parameters
+    /// * `thread_id` - The ID of the thread to set the format for
+    /// * `format` - The format string for progress display
+    pub async fn set_progress_format(&self, thread_id: usize, format: &str) -> Result<()> {
+        if let Some(handle) = self.thread_manager.get_task(thread_id).await {
+            handle.set_progress_format(format).await
+        } else {
+            let ctx = ErrorContext::new("setting progress format", "ProgressManager")
+                .with_thread_id(thread_id)
+                .with_details("Thread not found");
+            
+            let error_msg = format!("Thread {} not found", thread_id);
+            let error = ProgressError::TaskOperation(error_msg).into_context(ctx);
+            Err(anyhow::anyhow!(error))
+        }
+    }
+    
     /// Update the progress bar for a specific thread
-    pub async fn update_progress(&self, thread_id: usize, current: usize, total: usize, prefix: &str) -> Result<()> {
+    ///
+    /// This is a convenience method that combines setting progress and generating a
+    /// formatted progress bar message.
+    ///
+    /// # Parameters
+    /// * `thread_id` - The ID of the thread to update
+    /// * `current` - The current number of completed items
+    /// * `total` - The total number of items
+    /// * `prefix` - A prefix to display before the progress bar
+    ///
+    /// # Returns
+    /// Result with () if successful
+    pub async fn update_progress_bar(&self, thread_id: usize, current: usize, total: usize, prefix: &str) -> Result<()> {
         if total == 0 {
             return Err(ProgressError::DisplayOperation("Total jobs cannot be zero".to_string()).into());
         }
         
-        let progress_percent = ((current * 100) / total).min(100);
-        let bar_width = 50;
-        let filled = (progress_percent * bar_width) / 100;
-        let bar = "▉".repeat(filled) + &"▏".repeat(bar_width - filled);
-        let message = format!("{:<12} {}%|{}| {}/{}", prefix, progress_percent, bar, current, total);
-        
-        let mut outputs = self.outputs.lock().await;
-        if let Some(lines) = outputs.get_mut(&thread_id) {
-            if lines.is_empty() {
-                lines.push(message);
-            } else {
-                lines[0] = message;
-            }
+        // Set the total jobs and current progress
+        if let Some(mut handle) = self.thread_manager.get_task(thread_id).await {
+            handle.set_total_jobs(total).await?;
+            handle.set_progress(current).await?;
+            
+            // Generate a progress bar display
+            let progress_percent = ((current * 100) / total).min(100);
+            let bar_width = 50;
+            let filled = (progress_percent * bar_width) / 100;
+            let bar = "▉".repeat(filled) + &"▏".repeat(bar_width - filled);
+            let message = format!("{:<12} {}%|{}| {}/{}", prefix, progress_percent, bar, current, total);
+            
+            // Update the display
+            handle.capture_stdout(message).await?;
+            Ok(())
         } else {
-            outputs.insert(thread_id, vec![message]);
+            let ctx = ErrorContext::new("updating progress bar", "ProgressManager")
+                .with_thread_id(thread_id)
+                .with_details("Thread not found");
+            
+            let error_msg = format!("Thread {} not found", thread_id);
+            let error = ProgressError::TaskOperation(error_msg).into_context(ctx);
+            Err(anyhow::anyhow!(error))
         }
-        Ok(())
     }
     
     /// Handle a message from a thread

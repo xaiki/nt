@@ -451,6 +451,27 @@ async fn test_progress_display_custom_indicators() -> Result<()> {
     ctx.set("progress", 0.5);
     task.capture_stdout(template.render(&ctx)?).await?;
     
+    // New custom indicators
+    task.capture_stdout("New custom indicators:".to_string()).await?;
+    
+    // Dots indicator
+    let template = ProgressTemplate::new("Dots indicator: {progress:bar:custom:dots:10}");
+    let mut ctx = TemplateContext::new();
+    ctx.set("progress", 0.5);
+    task.capture_stdout(template.render(&ctx)?).await?;
+    
+    // Braille indicator
+    let template = ProgressTemplate::new("Braille indicator: {progress:bar:custom:braille:10}");
+    let mut ctx = TemplateContext::new();
+    ctx.set("progress", 0.5);
+    task.capture_stdout(template.render(&ctx)?).await?;
+    
+    // Gradient indicator
+    let template = ProgressTemplate::new("Gradient indicator: {progress:bar:custom:gradient:10:blue:cyan}");
+    let mut ctx = TemplateContext::new();
+    ctx.set("progress", 0.5);
+    task.capture_stdout(template.render(&ctx)?).await?;
+    
     // Display and verify output
     display.display().await?;
     env.verify();

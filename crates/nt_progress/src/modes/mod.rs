@@ -309,6 +309,68 @@ pub mod capabilities {
         /// true if line wrapping is enabled, false otherwise
         fn has_line_wrapping(&self) -> bool;
     }
+
+    /// Capability for modes that can track and display progress percentages.
+    ///
+    /// This trait provides methods for calculating and displaying progress
+    /// as a percentage of completed jobs vs total jobs.
+    ///
+    /// # Examples
+    /// ```rust
+    /// # use nt_progress::modes::{Window, WithProgress};
+    /// let mut mode = Window::new(10, 5)?;
+    /// mode.set_progress_format("{current}/{total} ({percent}%)");
+    /// assert_eq!(mode.get_progress_percentage(), 0.0);
+    /// # Ok::<(), ModeCreationError>(())
+    /// ```
+    pub trait WithProgress: JobTracker + Send + Sync {
+        /// Calculate the current progress as a percentage.
+        ///
+        /// # Returns
+        /// A float between 0.0 and 100.0 representing the progress percentage
+        fn get_progress_percentage(&self) -> f64 {
+            let total = self.get_total_jobs();
+            if total == 0 {
+                return 0.0;
+            }
+            
+            let completed = self.get_completed_jobs();
+            ((completed as f64) / (total as f64) * 100.0).min(100.0)
+        }
+        
+        /// Get the number of completed jobs.
+        ///
+        /// # Returns
+        /// The number of completed jobs
+        fn get_completed_jobs(&self) -> usize;
+        
+        /// Set the progress display format.
+        ///
+        /// # Parameters
+        /// * `format` - The format string for progress display
+        fn set_progress_format(&mut self, format: &str);
+        
+        /// Get the current progress display format.
+        ///
+        /// # Returns
+        /// The current progress format string
+        fn get_progress_format(&self) -> &str;
+        
+        /// Update the progress by incrementing the completed jobs counter.
+        ///
+        /// # Returns
+        /// The updated progress percentage
+        fn update_progress(&mut self) -> f64;
+        
+        /// Update the progress to a specific number of completed jobs.
+        ///
+        /// # Parameters
+        /// * `completed` - The number of completed jobs
+        ///
+        /// # Returns
+        /// The updated progress percentage
+        fn set_progress(&mut self, completed: usize) -> f64;
+    }
 }
 
 pub use capabilities::*;
@@ -336,6 +398,9 @@ pub enum Capability {
 
     /// The mode supports line wrapping for long text.
     WrappedText,
+    
+    /// The mode supports progress tracking and percentage display.
+    Progress,
 }
 
 /// Extension trait providing capability checks and conversions.
@@ -530,6 +595,60 @@ pub trait ThreadConfigExt: ThreadConfig {
         }
     }
 
+    /// Check if this config supports a specific capability.
+    ///
+    /// # Returns
+    /// `true` if the config supports the specified capability.
+    fn supports_capability(&self, capability: Capability) -> bool {
+        match capability {
+            Capability::Title => self.supports_title(),
+            Capability::CustomSize => self.supports_custom_size(),
+            Capability::Emoji => self.supports_emoji(),
+            Capability::TitleAndEmoji => self.supports_title_and_emoji(),
+            Capability::StandardWindow => self.supports_standard_window(),
+            Capability::WrappedText => self.supports_wrapped_text(),
+            Capability::Progress => self.supports_progress(),
+        }
+    }
+
+    /// Add support for checking if a config supports progress tracking.
+    ///
+    /// # Returns
+    /// `true` if the config supports progress tracking and display.
+    fn supports_progress(&self) -> bool {
+        let type_id = self.as_any().type_id();
+        matches!(type_id, t if t == TypeId::of::<Window>() || t == TypeId::of::<WindowWithTitle>())
+    }
+    
+    /// Try to get this config as a WithProgress.
+    ///
+    /// # Returns
+    /// Some(&dyn WithProgress) if the config supports progress tracking, None otherwise.
+    fn as_progress(&self) -> Option<&dyn WithProgress> {
+        let any = self.as_any();
+        if let Some(w) = any.downcast_ref::<Window>() {
+            Some(w as &dyn WithProgress)
+        } else {
+            any.downcast_ref::<WindowWithTitle>().map(|w| w as &dyn WithProgress)
+        }
+    }
+    
+    /// Try to get this config as a mutable WithProgress.
+    ///
+    /// # Returns
+    /// Some(&mut dyn WithProgress) if the config supports progress tracking, None otherwise.
+    fn as_progress_mut(&mut self) -> Option<&mut dyn WithProgress> {
+        let type_id = self.as_any().type_id();
+        let any = self.as_any_mut();
+        if type_id == TypeId::of::<Window>() {
+            any.downcast_mut::<Window>().map(|w| w as &mut dyn WithProgress)
+        } else if type_id == TypeId::of::<WindowWithTitle>() {
+            any.downcast_mut::<WindowWithTitle>().map(|w| w as &mut dyn WithProgress)
+        } else {
+            None
+        }
+    }
+
     /// Get a set of all capabilities supported by this config.
     ///
     /// # Returns
@@ -552,23 +671,9 @@ pub trait ThreadConfigExt: ThreadConfig {
         add_if_supported!(Capability::TitleAndEmoji, self.supports_title_and_emoji());
         add_if_supported!(Capability::StandardWindow, self.supports_standard_window());
         add_if_supported!(Capability::WrappedText, self.supports_wrapped_text());
+        add_if_supported!(Capability::Progress, self.supports_progress());
         
         caps
-    }
-    
-    /// Check if this config supports a specific capability.
-    ///
-    /// # Returns
-    /// `true` if the config supports the specified capability.
-    fn supports_capability(&self, capability: Capability) -> bool {
-        match capability {
-            Capability::Title => self.supports_title(),
-            Capability::CustomSize => self.supports_custom_size(),
-            Capability::Emoji => self.supports_emoji(),
-            Capability::TitleAndEmoji => self.supports_title_and_emoji(),
-            Capability::StandardWindow => self.supports_standard_window(),
-            Capability::WrappedText => self.supports_wrapped_text(),
-        }
     }
 }
 
@@ -1046,18 +1151,91 @@ impl Config {
     
     /// Add an emoji to the display if the config supports emojis
     pub fn add_emoji(&mut self, emoji: &str) -> Result<(), ModeCreationError> {
-        if let Some(with_emoji) = self.config.as_emoji_mut() {
-            with_emoji.add_emoji(emoji)
+        if let Some(emoji_config) = self.config.as_emoji_mut() {
+            emoji_config.add_emoji(emoji)?;
+            Ok(())
         } else {
-            Err(ModeCreationError::Implementation(
-                "Config does not support emojis".to_string()
-            ))
+            Err(ModeCreationError::EmojiNotSupported {
+                mode_name: "unknown".to_string(),
+                reason: Some("Current mode does not support emoji".to_string()),
+            })
         }
     }
     
     /// Get the emojis for this config if it supports emojis
     pub fn get_emojis(&self) -> Option<Vec<String>> {
         self.config.as_emoji().map(|e| e.get_emojis())
+    }
+
+    /// Check if this config supports progress tracking.
+    pub fn supports_progress(&self) -> bool {
+        self.config.supports_progress()
+    }
+    
+    /// Get the current progress percentage.
+    ///
+    /// # Returns
+    /// The current progress percentage between 0.0 and 100.0, or 0.0 if progress tracking is not supported.
+    pub fn get_progress_percentage(&self) -> f64 {
+        if let Some(progress) = self.config.as_progress() {
+            progress.get_progress_percentage()
+        } else {
+            0.0
+        }
+    }
+    
+    /// Set the progress display format.
+    ///
+    /// # Parameters
+    /// * `format` - The format string for progress display
+    ///
+    /// # Returns
+    /// Ok if the format was set successfully, or an error if progress tracking is not supported.
+    pub fn set_progress_format(&mut self, format: &str) -> Result<(), ModeCreationError> {
+        if let Some(progress) = self.config.as_progress_mut() {
+            progress.set_progress_format(format);
+            Ok(())
+        } else {
+            Err(ModeCreationError::ProgressNotSupported {
+                mode_name: "unknown".to_string(),
+                reason: Some("Current mode does not support progress tracking".to_string()),
+            })
+        }
+    }
+    
+    /// Get the current progress display format.
+    ///
+    /// # Returns
+    /// The current progress format string, or None if progress tracking is not supported.
+    pub fn get_progress_format(&self) -> Option<&str> {
+        self.config.as_progress().map(|p| p.get_progress_format())
+    }
+    
+    /// Update the progress by incrementing the completed jobs counter.
+    ///
+    /// # Returns
+    /// The updated progress percentage, or 0.0 if progress tracking is not supported.
+    pub fn update_progress(&mut self) -> f64 {
+        if let Some(progress) = self.config.as_progress_mut() {
+            progress.update_progress()
+        } else {
+            0.0
+        }
+    }
+    
+    /// Update the progress to a specific number of completed jobs.
+    ///
+    /// # Parameters
+    /// * `completed` - The number of completed jobs
+    ///
+    /// # Returns
+    /// The updated progress percentage
+    pub fn set_progress(&mut self, completed: usize) -> f64 {
+        if let Some(progress) = self.config.as_progress_mut() {
+            progress.set_progress(completed)
+        } else {
+            0.0
+        }
     }
 }
 
@@ -1348,6 +1526,7 @@ impl ModeParameters {
 pub struct BaseConfig {
     total_jobs: usize,
     completed_jobs: Arc<AtomicUsize>,
+    progress_format: String,
 }
 
 impl BaseConfig {
@@ -1362,6 +1541,7 @@ impl BaseConfig {
         Self {
             total_jobs,
             completed_jobs: Arc::new(AtomicUsize::new(0)),
+            progress_format: "{current}/{total} ({percent}%)".to_string(),
         }
     }
 
@@ -1387,6 +1567,42 @@ impl BaseConfig {
     /// * `total` - The new total number of jobs
     pub fn set_total_jobs(&mut self, total: usize) {
         self.total_jobs = total;
+    }
+
+    /// Get the current number of completed jobs.
+    ///
+    /// # Returns
+    /// The current number of completed jobs
+    pub fn get_completed_jobs(&self) -> usize {
+        self.completed_jobs.load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    /// Set the number of completed jobs.
+    ///
+    /// # Parameters
+    /// * `completed` - The new count of completed jobs
+    ///
+    /// # Returns
+    /// The new count of completed jobs
+    pub fn set_completed_jobs(&mut self, completed: usize) -> usize {
+        self.completed_jobs.store(completed, std::sync::atomic::Ordering::SeqCst);
+        completed
+    }
+
+    /// Get the progress format string.
+    ///
+    /// # Returns
+    /// The current progress format string
+    pub fn get_progress_format(&self) -> &str {
+        &self.progress_format
+    }
+    
+    /// Set the progress format string.
+    ///
+    /// # Parameters
+    /// * `format` - The new progress format string
+    pub fn set_progress_format(&mut self, format: &str) {
+        self.progress_format = format.to_string();
     }
 }
 
@@ -1435,6 +1651,56 @@ impl<T: HasBaseConfig + Send + Sync + Debug> JobTracker for T {
     
     fn set_total_jobs(&mut self, total: usize) {
         self.base_config_mut().set_total_jobs(total);
+    }
+}
+
+// Implement WithProgress for Window
+impl capabilities::WithProgress for Window {
+    fn get_completed_jobs(&self) -> usize {
+        self.base_config().get_completed_jobs()
+    }
+    
+    fn set_progress_format(&mut self, format: &str) {
+        self.base_config_mut().set_progress_format(format);
+    }
+    
+    fn get_progress_format(&self) -> &str {
+        self.base_config().get_progress_format()
+    }
+    
+    fn set_progress(&mut self, completed: usize) -> f64 {
+        self.base_config_mut().set_completed_jobs(completed);
+        self.get_progress_percentage()
+    }
+    
+    fn update_progress(&mut self) -> f64 {
+        self.increment_completed_jobs();
+        self.get_progress_percentage()
+    }
+}
+
+// Implement WithProgress for WindowWithTitle
+impl capabilities::WithProgress for WindowWithTitle {
+    fn get_completed_jobs(&self) -> usize {
+        self.base_config().get_completed_jobs()
+    }
+    
+    fn set_progress_format(&mut self, format: &str) {
+        self.base_config_mut().set_progress_format(format);
+    }
+    
+    fn get_progress_format(&self) -> &str {
+        self.base_config().get_progress_format()
+    }
+    
+    fn set_progress(&mut self, completed: usize) -> f64 {
+        self.base_config_mut().set_completed_jobs(completed);
+        self.get_progress_percentage()
+    }
+    
+    fn update_progress(&mut self) -> f64 {
+        self.increment_completed_jobs();
+        self.get_progress_percentage()
     }
 }
 

@@ -35,7 +35,7 @@ pub mod tests;
 
 pub use modes::{ModeRegistry, ModeCreator, ThreadMode};
 pub use errors::ModeCreationError;
-pub use formatter::{ProgressTemplate, TemplateContext, TemplateVar, TemplatePreset, ColorName};
+pub use formatter::{ProgressTemplate, TemplateContext, TemplateVar, TemplatePreset, ColorName, ProgressIndicator};
 pub use io::{ProgressWriter, OutputBuffer, TeeWriter};
 pub use io::custom::{CustomWriter, WriterCapabilities, WriterRegistry};
 
@@ -258,9 +258,9 @@ impl ProgressDisplay {
         self.progress_manager.set_total_jobs(thread_id, total).await
     }
 
-    /// Update the progress bar for a specific thread
-    pub async fn update_progress(&self, thread_id: usize, current: usize, total: usize, prefix: &str) -> Result<()> {
-        self.progress_manager.update_progress(thread_id, current, total, prefix).await
+    /// Update the progress for a specific thread
+    pub async fn update_progress(&self, thread_id: usize) -> Result<f64> {
+        self.progress_manager.update_progress(thread_id).await
     }
 
     /// Join all tasks to ensure they're properly cleaned up
@@ -283,6 +283,11 @@ impl ProgressDisplay {
         self.progress_manager.get_task(thread_id).await
     }
 
+    /// Get access to the progress manager
+    pub fn progress_manager(&self) -> &Arc<ProgressManager> {
+        &self.progress_manager
+    }
+    
     /// Background thread that receives messages and processes them
     async fn start_display_thread(&self) {
         let mut rx = self.message_rx.lock().await;

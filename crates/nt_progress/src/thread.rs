@@ -513,6 +513,75 @@ impl TaskHandle {
         Ok(())
     }
 
+    /// Get the current progress percentage.
+    ///
+    /// # Returns
+    /// The current progress percentage as a value between 0.0 and 100.0.
+    pub async fn get_progress_percentage(&self) -> Result<f64> {
+        let config = self.thread_config.lock().await;
+        Ok(config.get_progress_percentage())
+    }
+    
+    /// Update the progress by incrementing the completed jobs counter.
+    ///
+    /// # Returns
+    /// The updated progress percentage as a value between 0.0 and 100.0.
+    pub async fn update_progress(&self) -> Result<f64> {
+        let mut config = self.thread_config.lock().await;
+        Ok(config.update_progress())
+    }
+    
+    /// Set the progress to a specific number of completed jobs.
+    ///
+    /// # Parameters
+    /// * `completed` - The number of completed jobs
+    ///
+    /// # Returns
+    /// The updated progress percentage as a value between 0.0 and 100.0.
+    pub async fn set_progress(&self, completed: usize) -> Result<f64> {
+        let mut config = self.thread_config.lock().await;
+        Ok(config.set_progress(completed))
+    }
+    
+    /// Set the progress display format.
+    ///
+    /// The format string can include the following placeholders:
+    /// - `{current}` - The current number of completed jobs
+    /// - `{total}` - The total number of jobs
+    /// - `{percent}` - The progress percentage
+    ///
+    /// # Parameters
+    /// * `format` - The format string for progress display
+    ///
+    /// # Returns
+    /// Ok if the format was set successfully, or an error if progress tracking is not supported.
+    pub async fn set_progress_format(&self, format: &str) -> Result<()> {
+        let mut config = self.thread_config.lock().await;
+        
+        if !config.supports_progress() {
+            let ctx = ErrorContext::new("setting progress format", "TaskHandle")
+                .with_thread_id(self.thread_id)
+                .with_details("Current mode does not support progress tracking");
+            
+            let error = ProgressError::TaskOperation(
+                "Task is not in a mode that supports progress tracking".to_string()
+            ).into_context(ctx);
+            return Err(anyhow::anyhow!(error));
+        }
+        
+        config.set_progress_format(format)
+            .map_err(|e| {
+                let ctx = ErrorContext::new("setting progress format", "TaskHandle")
+                    .with_thread_id(self.thread_id)
+                    .with_details(e.to_string());
+                
+                let error = ProgressError::TaskOperation(
+                    format!("Failed to set progress format: {}", e)
+                ).into_context(ctx);
+                anyhow::anyhow!(error)
+            })
+    }
+
     /// Join this task and wait for its completion.
     pub async fn join(self) -> Result<()> {
         if let Some(handle) = self.join_handle.lock().await.take() {

@@ -329,7 +329,7 @@ impl TestBuilder {
                 self.env.writeln(&message);
             }
             
-            display.update_progress(thread_id, job + 1, total_jobs, "Progress").await?;
+            display.progress_manager().update_progress_bar(thread_id, job + 1, total_jobs, "Progress").await?;
         }
         
         task.join().await?;
