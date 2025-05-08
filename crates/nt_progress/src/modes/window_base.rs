@@ -67,7 +67,7 @@ impl WindowBase {
             let thread_id = message[1..end_idx].to_string();
             let content = message[end_idx + 1..].trim().to_string();
             
-            let buffer = self.thread_buffers.entry(thread_id).or_insert_with(VecDeque::new);
+            let buffer = self.thread_buffers.entry(thread_id).or_default();
             buffer.push_back(content);
             
             self.is_threaded_mode = true;

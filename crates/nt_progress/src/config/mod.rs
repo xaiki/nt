@@ -3,7 +3,7 @@
 
 pub mod capabilities;
 pub mod mode_parameters;
-pub mod config;
+pub mod config_impl;
 
 // Re-export key components
 pub use capabilities::{
@@ -11,4 +11,4 @@ pub use capabilities::{
     StandardWindow, WithWrappedText, WithProgress
 };
 pub use mode_parameters::{ThreadMode, ModeParameters};
-pub use config::Config; 
+pub use config_impl::Config; 

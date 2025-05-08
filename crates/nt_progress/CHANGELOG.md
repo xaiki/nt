@@ -2,6 +2,15 @@
 
 This file contains completed tasks and improvements moved from the TODO.md file.
 
+## v0.1.32 (2024-05-31)
+
+### Code Cleanup and Refactoring
+- Fixed Clippy warnings throughout the codebase
+  - Replaced `or_insert_with(VecDeque::new)` with `or_default()` in window_base.rs
+  - Fixed module inception issue by renaming `config` module to `config_impl`
+  - Removed unnecessary `mut` variables in tests
+  - Improved code quality and maintainability
+
 ## v0.1.31 (2024-05-30)
 
 ### Code Cleanup and Refactoring

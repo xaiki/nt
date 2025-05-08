@@ -806,12 +806,18 @@ mod tests {
     
     #[test]
     fn test_config_capabilities() {
-        let mut config = Config::new(ThreadMode::Window(5), 10).unwrap();
+        // Create window config and verify capabilities
+        let config = Config::new(ThreadMode::Window(5), 10).unwrap();
+        
+        // Window should support custom size but not title or emoji
         assert!(config.supports_custom_size());
         assert!(!config.supports_title());
         assert!(!config.supports_emoji());
+
+        // Create window with title config and verify capabilities
+        let config = Config::new(ThreadMode::WindowWithTitle(5), 10).unwrap();
         
-        let mut config = Config::new(ThreadMode::WindowWithTitle(5), 10).unwrap();
+        // WindowWithTitle should support custom size, title, and emoji
         assert!(config.supports_custom_size());
         assert!(config.supports_title());
         assert!(config.supports_emoji());
