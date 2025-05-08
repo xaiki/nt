@@ -347,6 +347,42 @@ impl Config {
         }
     }
     
+    /// Get the estimated time remaining until completion.
+    ///
+    /// # Returns
+    /// Some(Duration) with the estimated time remaining, or None if an estimate cannot be made.
+    pub fn get_estimated_time_remaining(&self) -> Option<std::time::Duration> {
+        if let Some(progress) = self.config.as_progress() {
+            progress.get_estimated_time_remaining()
+        } else {
+            None
+        }
+    }
+    
+    /// Get the current progress speed in units per second.
+    ///
+    /// # Returns
+    /// Some(f64) with the speed in units per second, or None if the speed cannot be calculated.
+    pub fn get_progress_speed(&self) -> Option<f64> {
+        if let Some(progress) = self.config.as_progress() {
+            progress.get_progress_speed()
+        } else {
+            None
+        }
+    }
+    
+    /// Get the elapsed time since the progress tracking began.
+    ///
+    /// # Returns
+    /// The duration since progress tracking began.
+    pub fn get_elapsed_time(&self) -> std::time::Duration {
+        if let Some(progress) = self.config.as_progress() {
+            progress.get_elapsed_time()
+        } else {
+            std::time::Duration::from_secs(0)
+        }
+    }
+    
     // HierarchicalJobTracker delegation methods
     
     /// Check if this config supports hierarchical jobs.

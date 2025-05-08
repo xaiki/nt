@@ -1,7 +1,7 @@
-use crate::errors::ModeCreationError;
 use crate::core::job_traits::JobTracker;
+use crate::errors::ModeCreationError;
 
-/// Capability for modes that can have a title.
+/// Capability for modes that support setting and retrieving a title.
 ///
 /// # Examples
 /// ```rust
@@ -207,18 +207,78 @@ pub trait WithProgress: JobTracker + Send + Sync {
     
     /// Update the progress by incrementing the completed jobs counter.
     ///
+    /// This also updates time estimates.
+    ///
     /// # Returns
     /// The updated progress percentage
-    fn update_progress(&mut self) -> f64;
+    fn update_progress(&mut self) -> f64 {
+        let _ = self.increment_completed_jobs();
+        self.update_time_estimates()
+    }
     
     /// Update the progress to a specific number of completed jobs.
+    ///
+    /// This also updates time estimates.
     ///
     /// # Parameters
     /// * `completed` - The number of completed jobs
     ///
     /// # Returns
     /// The updated progress percentage
-    fn set_progress(&mut self, completed: usize) -> f64;
+    fn set_progress(&mut self, completed: usize) -> f64 {
+        // The default implementation can be overridden by specific modes
+        let previous = self.get_completed_jobs();
+        
+        if completed > previous {
+            // We need to update our completion count
+            // For each step, call update_progress which will
+            // update our time estimates
+            for _ in 0..(completed - previous) {
+                self.increment_completed_jobs();
+            }
+        }
+        
+        self.update_time_estimates()
+    }
+    
+    /// Get the estimated time remaining until completion.
+    ///
+    /// This method calculates the estimated time remaining based on the current progress
+    /// and the rate of progress. If the progress data is insufficient to make a reliable
+    /// estimate, this method returns None.
+    ///
+    /// # Returns
+    /// Some(Duration) with the estimated time remaining, or None if an estimate cannot be made.
+    fn get_estimated_time_remaining(&self) -> Option<std::time::Duration> {
+        None
+    }
+    
+    /// Get the current progress speed in units per second.
+    ///
+    /// This method calculates the speed of progress based on recent updates.
+    /// If there is insufficient data to calculate a speed, this method returns None.
+    ///
+    /// # Returns
+    /// Some(f64) with the speed in units per second, or None if the speed cannot be calculated.
+    fn get_progress_speed(&self) -> Option<f64> {
+        None
+    }
+    
+    /// Get the elapsed time since the progress tracking began.
+    ///
+    /// # Returns
+    /// The duration since progress tracking began.
+    fn get_elapsed_time(&self) -> std::time::Duration {
+        std::time::Duration::from_secs(0)
+    }
+    
+    /// Update time estimates based on current progress.
+    ///
+    /// # Returns
+    /// The current progress percentage
+    fn update_time_estimates(&mut self) -> f64 {
+        self.get_progress_percentage()
+    }
 }
 
 /// Enum of available capabilities that display modes can support.

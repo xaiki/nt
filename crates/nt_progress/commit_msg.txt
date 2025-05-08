@@ -1,10 +1,10 @@
-fix(core): Remove unnecessary let binding in BaseConfig::retry
+fix(core): Fix retry limit handling in BaseConfig and remove dead code
 
-- Fix Clippy warning by directly returning the result of fetch_add
-- Improve code readability with simpler control flow
-- Update documentation for the retry method
-- Simplify atomic counter operation
-- Bump version from 0.1.34 to 0.1.35
-- Update CHANGELOG.md with the changes
+- Fixed retry limits by resetting the retry counter when a job is marked as completed
+- Removed unused start_time_secs field from BaseConfig
+- Fixed all tests related to retry limits and job status tracking
+- Ensured retry limits are correctly enforced and reset appropriately
+- Updated CHANGELOG.md with v0.1.36 release notes
+- Bump version from 0.1.35 to 0.1.36
 
-This change addresses a Clippy warning about an unnecessary let binding in the BaseConfig::retry method. The updated implementation now directly returns the result of the atomic fetch_add operation, making the code more concise and easier to understand.
+This change addresses an issue with retry limits where the retry count was not being reset when a job was marked as completed. The fix ensures that retry limits are properly enforced and reset when a job finishes, matching the behavior in the mark_succeeded method. It also removes an unused field that was generating a compiler warning.

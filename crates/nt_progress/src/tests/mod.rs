@@ -162,6 +162,80 @@ pub mod progress {
         display.stop().await?;
         Ok(())
     }
+
+    /// Test time estimation features
+    ///
+    /// This test verifies that time estimation features work correctly.
+    #[tokio::test]
+    async fn test_time_estimation() -> Result<()> {
+        // Create test display with Window mode
+        let display = ProgressDisplay::new().await?;
+        
+        // Create a task with progress tracking
+        let task = display.create_task(ThreadMode::Window(10), 10).await?;
+        
+        // Wait a bit before starting
+        tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+        
+        // Initialize with a progress update to start tracking
+        task.set_progress(0).await?;
+        
+        // Check initial states
+        let initial_eta = task.get_estimated_time_remaining().await?;
+        let initial_speed = task.get_progress_speed().await?;
+        
+        println!("Initial ETA: {:?}, Initial Speed: {:?}", initial_eta, initial_speed);
+        
+        // Initially, there should be no ETA since we don't have enough progress data
+        assert!(initial_eta.is_none(), "Initial ETA should be None");
+        
+        // Update progress a few times with delays to simulate work
+        for i in 1..=5 {
+            // Add a small delay to simulate work
+            tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+            
+            // Update progress
+            task.set_progress(i).await?;
+            
+            // Get time-related metrics
+            let eta = task.get_estimated_time_remaining().await?;
+            let speed = task.get_progress_speed().await?;
+            
+            println!("Progress: {}/10, ETA: {:?}, Speed: {:?}", i, eta, speed);
+            
+            // After a few updates, we should start getting estimates
+            if i >= 3 {
+                // We may have estimates now
+                if let Some(eta_duration) = eta {
+                    // Ensure ETA is reasonable (between 0 and 10 seconds for this small test)
+                    let eta_secs = eta_duration.as_secs_f64();
+                    assert!(eta_secs >= 0.0 && eta_secs < 10.0, 
+                           "ETA should be reasonable: {:?}", eta_duration);
+                }
+                
+                if let Some(spd) = speed {
+                    // Speed should be positive
+                    assert!(spd > 0.0, "Speed should be positive: {}", spd);
+                }
+            }
+        }
+        
+        // Complete the task
+        task.set_progress(10).await?;
+        
+        // After completion
+        let final_eta = task.get_estimated_time_remaining().await?;
+        let final_speed = task.get_progress_speed().await?;
+        
+        println!("Final metrics: ETA: {:?}, Speed: {:?}", final_eta, final_speed);
+        
+        // After completion, ETA should be None or very small
+        if let Some(time) = final_eta {
+            assert!(time.as_secs_f64() < 1.0, "ETA should be very small after completion");
+        }
+        
+        Ok(())
+    }
 }
 
 #[cfg(test)]

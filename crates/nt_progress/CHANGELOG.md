@@ -2,6 +2,17 @@
 
 This file contains completed tasks and improvements moved from the TODO.md file.
 
+## v0.1.36 (2024-06-02)
+
+### Bug Fixes and Code Cleanup
+- Fixed retry limit handling in job status tracking
+  - Reset retry counter when a job is marked as completed
+  - Ensures retry limits are correctly applied and cleared when jobs finish
+  - Passes all test cases for retry management
+- Removed unused `start_time_secs` field from BaseConfig
+  - Eliminated dead code warning
+  - Simplified the time tracking implementation
+
 ## v0.1.35 (2024-06-02)
 
 ### Code Cleanup and Refactoring

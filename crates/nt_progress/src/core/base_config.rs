@@ -2,6 +2,7 @@ use std::fmt::Debug;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, AtomicBool, AtomicU32};
 use std::sync::Mutex;
+use std::time::{Duration, Instant};
 
 use super::job_traits::HasBaseConfig;
 
@@ -64,6 +65,14 @@ pub struct BaseConfig {
     max_retries: Arc<AtomicUsize>,
     /// Current status of the job
     status: Arc<Mutex<JobStatus>>,
+    /// Time of the last progress update
+    last_update_time: Arc<Mutex<Instant>>,
+    /// Current progress speed (units per second)
+    progress_speed: Arc<Mutex<Option<f64>>>,
+    /// Estimated time to completion
+    estimated_time_remaining: Arc<Mutex<Option<Duration>>>,
+    /// Time when the progress tracking started
+    start_time: Arc<Mutex<Instant>>,
 }
 
 impl BaseConfig {
@@ -89,6 +98,10 @@ impl BaseConfig {
             retry_count: Arc::new(AtomicUsize::new(0)),
             max_retries: Arc::new(AtomicUsize::new(3)), // Default to 3 retries
             status: Arc::new(Mutex::new(JobStatus::Pending)),
+            last_update_time: Arc::new(Mutex::new(Instant::now())),
+            progress_speed: Arc::new(Mutex::new(None)),
+            estimated_time_remaining: Arc::new(Mutex::new(None)),
+            start_time: Arc::new(Mutex::new(Instant::now())),
         }
     }
     
@@ -100,12 +113,58 @@ impl BaseConfig {
         self.total_jobs
     }
     
-    /// Increment the completed jobs counter and return the new value.
+    /// Increment the number of completed jobs and return the new count.
     ///
     /// # Returns
     /// The new count of completed jobs
     pub fn increment_completed_jobs(&self) -> usize {
-        self.completed_jobs.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1
+        let count = self.completed_jobs.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
+        
+        // If we've completed all jobs, mark as completed
+        if count >= self.total_jobs {
+            *self.status.lock().unwrap() = JobStatus::Completed;
+        }
+        
+        // Update time estimates
+        let total = self.total_jobs;
+        if total > 0 {
+            let now = std::time::Instant::now();
+            
+            // Calculate speed and ETA
+            {
+                let mut last_update = self.last_update_time.lock().unwrap();
+                let delta_time = now.duration_since(*last_update);
+                let mut speed = self.progress_speed.lock().unwrap();
+                let mut eta = self.estimated_time_remaining.lock().unwrap();
+                
+                // Only update if some time has passed since the last update
+                if !delta_time.is_zero() && count > 0 {
+                    // Calculate jobs per second
+                    let jobs_per_second = 1.0 / delta_time.as_secs_f64();
+                    
+                    // Update the speed using exponential moving average
+                    *speed = Some(match *speed {
+                        Some(current_speed) => current_speed * 0.7 + jobs_per_second * 0.3,
+                        None => jobs_per_second,
+                    });
+                    
+                    // Calculate estimated time remaining
+                    if let Some(current_speed) = *speed {
+                        let remaining_jobs = total.saturating_sub(count);
+                        if remaining_jobs > 0 && current_speed > 0.0 {
+                            let remaining_seconds = (remaining_jobs as f64) / current_speed;
+                            *eta = Some(std::time::Duration::from_secs_f64(remaining_seconds.max(0.0)));
+                        } else {
+                            *eta = None; // No remaining jobs or zero speed
+                        }
+                    }
+                }
+                
+                *last_update = now;
+            }
+        }
+        
+        count
     }
     
     /// Set the total number of jobs.
@@ -345,12 +404,25 @@ impl BaseConfig {
         self.set_status(JobStatus::Running);
     }
     
-    /// Mark the job as completed.
+    /// Mark the current job as completed.
     ///
-    /// This sets the status to Completed and calls mark_succeeded().
+    /// This will set the job status to Completed and update time estimates.
     pub fn mark_completed(&mut self) {
         self.set_status(JobStatus::Completed);
-        self.mark_succeeded();
+        
+        // Reset the retry count when a job is completed
+        self.retry_count.store(0, std::sync::atomic::Ordering::SeqCst);
+        
+        // Ensure time estimates are updated
+        let total = self.total_jobs;
+        if total > 0 {
+            // Set completion time
+            let now = std::time::Instant::now();
+            *self.last_update_time.lock().unwrap() = now;
+            
+            // Clear ETA since job is complete
+            *self.estimated_time_remaining.lock().unwrap() = None;
+        }
     }
     
     /// Mark the job as failed.
@@ -495,6 +567,86 @@ impl BaseConfig {
     /// `true` if the job has reached its retry limit, `false` otherwise
     pub fn has_reached_retry_limit(&self) -> bool {
         self.get_retry_count() >= self.get_max_retries()
+    }
+    
+    /// Get the elapsed time since the job started.
+    ///
+    /// # Returns
+    /// The duration since the job started
+    pub fn get_elapsed_time(&self) -> Duration {
+        let start = *self.start_time.lock().unwrap();
+        start.elapsed()
+    }
+    
+    /// Get the estimated time remaining until the job completes.
+    ///
+    /// This calculation is based on the progress speed and the remaining work.
+    ///
+    /// # Returns
+    /// Some(Duration) with the estimated time remaining, or None if an estimate cannot be made
+    pub fn get_estimated_time_remaining(&self) -> Option<Duration> {
+        *self.estimated_time_remaining.lock().unwrap()
+    }
+    
+    /// Get the current progress speed in units per second.
+    ///
+    /// # Returns
+    /// Some(f64) with the speed in units per second, or None if the speed cannot be calculated
+    pub fn get_progress_speed(&self) -> Option<f64> {
+        *self.progress_speed.lock().unwrap()
+    }
+    
+    /// Update the progress speed and estimated time remaining.
+    ///
+    /// This method should be called whenever progress is updated.
+    ///
+    /// # Returns
+    /// The updated progress percentage
+    pub fn update_time_estimates(&mut self) -> f64 {
+        let now = std::time::Instant::now();
+        let total = self.get_total_jobs();
+        let completed = self.get_completed_jobs();
+        
+        if total == 0 {
+            return 0.0;
+        }
+        
+        let progress = (completed as f64) / (total as f64);
+        
+        // Calculate speed and ETA
+        {
+            let mut last_update = self.last_update_time.lock().unwrap();
+            let delta_time = now.duration_since(*last_update);
+            let mut speed = self.progress_speed.lock().unwrap();
+            let mut eta = self.estimated_time_remaining.lock().unwrap();
+            
+            // Only update if some time has passed since the last update
+            if !delta_time.is_zero() && completed > 0 {
+                // Calculate progress per second
+                let progress_per_second = 1.0 / delta_time.as_secs_f64();
+                
+                // Update the speed using exponential moving average
+                *speed = Some(match *speed {
+                    Some(current_speed) => current_speed * 0.7 + progress_per_second * 0.3,
+                    None => progress_per_second,
+                });
+                
+                // Calculate estimated time remaining
+                if let Some(current_speed) = *speed {
+                    let remaining_jobs = total - completed;
+                    if remaining_jobs > 0 && current_speed > 0.0 {
+                        let remaining_seconds = (remaining_jobs as f64) / (current_speed * delta_time.as_secs_f64());
+                        *eta = Some(Duration::from_secs_f64(remaining_seconds.max(0.0)));
+                    } else {
+                        *eta = None;
+                    }
+                }
+            }
+            
+            *last_update = now;
+        }
+        
+        progress * 100.0
     }
 }
 

@@ -11,6 +11,7 @@ use crate::config::{Config, ThreadMode};
 use tokio::sync::mpsc;
 use std::io::Write;
 use crate::io::{ProgressWriter, OutputBuffer};
+use std::time::Duration;
 
 /// Represents the state of a thread in the system
 #[derive(Debug, Clone, PartialEq)]
@@ -551,7 +552,7 @@ impl TaskHandle {
     /// - `{percent}` - The progress percentage
     ///
     /// # Parameters
-    /// * `format` - The format string for progress display
+    /// * `format` - The format string to use
     ///
     /// # Returns
     /// Ok if the format was set successfully, or an error if progress tracking is not supported.
@@ -569,20 +570,96 @@ impl TaskHandle {
             return Err(anyhow::anyhow!(error));
         }
         
-        config.set_progress_format(format)
-            .map_err(|e| {
-                let ctx = ErrorContext::new("setting progress format", "TaskHandle")
-                    .with_thread_id(self.thread_id)
-                    .with_details(e.to_string());
-                
-                let error = ProgressError::TaskOperation(
-                    format!("Failed to set progress format: {}", e)
-                ).into_context(ctx);
-                anyhow::anyhow!(error)
-            })
+        // Set the format using the underlying config
+        if let Err(e) = config.set_progress_format(format) {
+            let ctx = ErrorContext::new("setting progress format", "TaskHandle")
+                .with_thread_id(self.thread_id)
+                .with_details(e.to_string());
+            
+            let error = ProgressError::TaskOperation(
+                format!("Failed to set progress format: {}", e)
+            ).into_context(ctx);
+            return Err(anyhow::anyhow!(error));
+        }
+        Ok(())
     }
 
-    /// Join this task and wait for its completion.
+    /// Get the estimated time remaining until completion.
+    ///
+    /// This method calculates the estimated time remaining based on the current progress
+    /// and the rate of progress. If the progress data is insufficient to make a reliable
+    /// estimate, this method returns None.
+    ///
+    /// # Returns
+    /// Some(Duration) with the estimated time remaining, or None if an estimate cannot be made.
+    pub async fn get_estimated_time_remaining(&self) -> Result<Option<Duration>> {
+        let config = self.thread_config.lock().await;
+        
+        if !config.supports_progress() {
+            let ctx = ErrorContext::new("getting estimated time remaining", "TaskHandle")
+                .with_thread_id(self.thread_id)
+                .with_details("Current mode does not support progress tracking");
+            
+            let error = ProgressError::TaskOperation(
+                "Task is not in a mode that supports progress tracking".to_string()
+            ).into_context(ctx);
+            return Err(anyhow::anyhow!(error));
+        }
+        
+        Ok(config.get_estimated_time_remaining())
+    }
+    
+    /// Get the current progress speed in units per second.
+    ///
+    /// This method calculates the speed of progress based on recent updates.
+    /// If there is insufficient data to calculate a speed, this method returns None.
+    ///
+    /// # Returns
+    /// Some(f64) with the speed in units per second, or None if the speed cannot be calculated.
+    pub async fn get_progress_speed(&self) -> Result<Option<f64>> {
+        let config = self.thread_config.lock().await;
+        
+        if !config.supports_progress() {
+            let ctx = ErrorContext::new("getting progress speed", "TaskHandle")
+                .with_thread_id(self.thread_id)
+                .with_details("Current mode does not support progress tracking");
+            
+            let error = ProgressError::TaskOperation(
+                "Task is not in a mode that supports progress tracking".to_string()
+            ).into_context(ctx);
+            return Err(anyhow::anyhow!(error));
+        }
+        
+        Ok(config.get_progress_speed())
+    }
+    
+    /// Get the elapsed time since the task was started.
+    ///
+    /// # Returns
+    /// The duration since the task was started.
+    pub async fn get_elapsed_time(&self) -> Result<Duration> {
+        let config = self.thread_config.lock().await;
+        
+        if !config.supports_progress() {
+            let ctx = ErrorContext::new("getting elapsed time", "TaskHandle")
+                .with_thread_id(self.thread_id)
+                .with_details("Current mode does not support progress tracking");
+            
+            let error = ProgressError::TaskOperation(
+                "Task is not in a mode that supports progress tracking".to_string()
+            ).into_context(ctx);
+            return Err(anyhow::anyhow!(error));
+        }
+        
+        Ok(config.get_elapsed_time())
+    }
+
+    /// Join this task, waiting for it to complete.
+    /// 
+    /// This will block the current thread until the task is complete.
+    /// 
+    /// # Returns
+    /// Ok if the task completed successfully, or an error if there was a problem.
     pub async fn join(self) -> Result<()> {
         if let Some(handle) = self.join_handle.lock().await.take() {
             handle.await??;

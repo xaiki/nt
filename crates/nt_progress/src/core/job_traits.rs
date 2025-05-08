@@ -322,6 +322,36 @@ pub trait JobStatusTracker: JobTracker {
     fn is_retrying(&self) -> bool;
 }
 
+/// Trait for jobs that report time-related statistics.
+///
+/// This trait extends JobTracker to support time tracking and estimation,
+/// providing methods to retrieve elapsed time, time remaining, and progress speed.
+pub trait TimeTrackingJob: JobTracker {
+    /// Get the elapsed time since the job started.
+    ///
+    /// # Returns
+    /// The duration since the job started
+    fn get_elapsed_time(&self) -> std::time::Duration;
+    
+    /// Get the estimated time remaining until the job completes.
+    ///
+    /// # Returns
+    /// Some(Duration) with the estimated time remaining, or None if an estimate cannot be made
+    fn get_estimated_time_remaining(&self) -> Option<std::time::Duration>;
+    
+    /// Get the current progress speed in units per second.
+    ///
+    /// # Returns
+    /// Some(f64) with the speed in units per second, or None if the speed cannot be calculated
+    fn get_progress_speed(&self) -> Option<f64>;
+    
+    /// Update the time estimates based on current progress.
+    ///
+    /// # Returns
+    /// The updated progress percentage
+    fn update_time_estimates(&mut self) -> f64;
+}
+
 // Generic implementations for base traits
 
 impl<T: HasBaseConfig + Send + Sync + Debug> JobTracker for T {
@@ -494,6 +524,24 @@ impl<T: HasBaseConfig + Send + Sync + Debug> JobStatusTracker for T {
     
     fn is_retrying(&self) -> bool {
         self.base_config().is_retrying()
+    }
+}
+
+impl<T: HasBaseConfig + Send + Sync + Debug> TimeTrackingJob for T {
+    fn get_elapsed_time(&self) -> std::time::Duration {
+        self.base_config().get_elapsed_time()
+    }
+    
+    fn get_estimated_time_remaining(&self) -> Option<std::time::Duration> {
+        self.base_config().get_estimated_time_remaining()
+    }
+    
+    fn get_progress_speed(&self) -> Option<f64> {
+        self.base_config().get_progress_speed()
+    }
+    
+    fn update_time_estimates(&mut self) -> f64 {
+        self.base_config_mut().update_time_estimates()
     }
 }
 
