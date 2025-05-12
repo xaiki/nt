@@ -12,6 +12,9 @@ use super::capabilities::{
 };
 use super::job_traits::{PrioritizedJob, PausableJob, DependentJob};
 
+// Re-export the ThreadConfig trait from core
+pub use crate::core::thread_config::ThreadConfig;
+
 /// Trait defining the behavior of different display modes.
 ///
 /// This trait is the core interface that all display modes must implement.

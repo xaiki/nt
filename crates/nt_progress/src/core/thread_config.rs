@@ -12,20 +12,12 @@ use crate::config::capabilities::{
 };
 use super::job_traits::{PausableJob, PrioritizedJob, DependentJob};
 
-/// Trait defining the behavior of different display modes.
+/// Core trait for thread configuration in progress display modes.
 ///
-/// This trait is the core interface that all display modes must implement.
-/// It defines how messages are processed and displayed in the terminal.
-///
-/// # Implementing a New Mode
-///
-/// When implementing a new mode, you should:
-/// 1. Create a struct that extends WindowBase or SingleLineBase
-/// 2. Implement this trait for your struct
-/// 3. Add your mode to the ThreadMode enum
-/// 4. Update Config::new to handle your mode
-///
-/// See the README.md file in this directory for a complete example.
+/// This trait defines the interface for thread-specific configuration
+/// in progress display modes. It provides methods for handling messages,
+/// managing display lines, and supporting downcasting for implementation-specific
+/// functionality.
 pub trait ThreadConfig: Send + Sync + Debug {
     /// Returns the number of lines this mode needs to display.
     ///

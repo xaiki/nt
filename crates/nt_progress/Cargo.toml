@@ -1,22 +1,28 @@
 [package]
 name = "nt_progress"
-version = "0.1.42"
+version = "0.1.43"
 edition = "2021"
+authors = ["NT Team"]
+description = "A flexible and thread-safe progress display for Rust applications"
+license = "MIT"
+repository = "https://github.com/nt/nt_progress"
+readme = "README.md"
+keywords = ["progress", "terminal", "display", "thread-safe", "async"]
+categories = ["command-line-interface", "asynchronous", "terminal"]
 
 [dependencies]
-tokio = { version = "1.0", features = ["full"] }
+tokio = { version = "1.36", features = ["full"] }
 anyhow = "1.0"
-crossterm = { version = "0.29", features = ["event-stream"] }
-vt100 = "0.15"
-futures = "0.3"
-rand = "0.8"
-serial_test = "2.0"
-stdio-override = "0.2"
-mio = { version = "0.8", features = ["os-poll"] }
-libc = "0.2"
+thiserror = "1.0"
+chrono = "0.4"
+humantime = "2.1"
+unicode-width = "0.1"
 unicode-segmentation = "1.10"
-serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
+crossterm = "0.27"
+futures = "0.3"
+async-trait = "0.1"
+log = "0.4"
+env_logger = "0.11"
 
 
 [dev-dependencies]

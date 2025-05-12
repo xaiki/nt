@@ -431,3 +431,11 @@ This file contains completed tasks and improvements moved from the TODO.md file.
 
 ### Testing Improvements
 - Added `
+
+## [0.1.43] - 2024-03-21
+
+### Code Quality
+- Removed duplicate `ThreadConfig` trait definition
+- Consolidated thread configuration code in `core` module
+- Improved code organization and reduced duplication
+- Fixed unused variable warnings in formatter module
