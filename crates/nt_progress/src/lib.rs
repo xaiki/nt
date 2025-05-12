@@ -16,7 +16,7 @@ use anyhow::{Result, anyhow};
 use std::fmt::Debug;
 use std::cell::RefCell;
 use crate::modes::factory::ModeFactory;
-use crate::renderer::Renderer;
+use crate::ui::renderer::Renderer;
 use crate::progress_manager::ProgressManager;
 pub mod io;
 
@@ -24,12 +24,10 @@ pub mod modes;
 pub mod core;
 pub mod config;
 pub mod errors;
-pub mod formatter;
+pub mod ui;
 pub mod terminal;
 pub mod thread;
-pub mod renderer;
 pub mod progress_manager;
-pub mod progress_bar;
 #[cfg(test)]
 pub mod tests;
 
@@ -37,13 +35,13 @@ pub use modes::{ModeRegistry, ModeCreator};
 pub use core::ThreadConfig;
 pub use config::{Config, ModeParameters, ThreadMode};
 pub use errors::{ModeCreationError, ProgressError, ErrorContext};
-pub use formatter::{ProgressTemplate, TemplateContext, TemplateVar, TemplatePreset, ColorName, ProgressIndicator};
+pub use ui::formatter::{ProgressTemplate, TemplateContext, TemplateVar, TemplatePreset, ColorName, ProgressIndicator};
 pub use io::{ProgressWriter, OutputBuffer, TeeWriter};
 pub use io::custom::{CustomWriter, WriterCapabilities, WriterRegistry};
 pub use thread::TaskHandle;
 pub use core::job_traits::{JobTracker, HierarchicalJobTracker, JobStatusTracker};
 pub use core::job_traits::{FailureHandlingJob, PausableJob, PrioritizedJob, DependentJob, PersistentJob};
-pub use progress_bar::{ProgressBar, ProgressBarConfig, ProgressBarStyle, MultiProgressBar};
+pub use ui::progress_bar::{ProgressBar, ProgressBarConfig, ProgressBarStyle, MultiProgressBar};
 
 thread_local! {
     static CURRENT_THREAD_ID: AtomicUsize = const { AtomicUsize::new(0) };

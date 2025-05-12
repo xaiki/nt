@@ -240,7 +240,7 @@ pub mod progress {
 
 #[cfg(test)]
 mod progress_bar {
-    use crate::progress_bar::{ProgressBar, ProgressBarConfig, ProgressBarStyle};
+    use crate::ui::progress_bar::{ProgressBar, ProgressBarConfig, ProgressBarStyle};
     use crate::{ProgressDisplay, ThreadMode};
     use anyhow::Result;
     use crate::terminal::TestEnv;

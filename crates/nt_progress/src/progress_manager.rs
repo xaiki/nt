@@ -11,7 +11,7 @@ use crate::modes::factory::ModeFactory;
 use crate::ThreadMessage;
 use tokio::task::JoinHandle;
 use tokio::sync::mpsc;
-use crate::progress_bar::{ProgressBar, ProgressBarConfig, ProgressBarStyle, MultiProgressBar};
+use crate::ui::progress_bar::{ProgressBar, ProgressBarConfig, ProgressBarStyle, MultiProgressBar};
 
 /// Manages progress tracking and state across multiple threads/tasks
 pub struct ProgressManager {
@@ -269,7 +269,7 @@ impl ProgressManager {
             handle.set_progress_format(&template).await?;
             
             // Generate a progress display message
-            let mut ctx = crate::formatter::TemplateContext::new();
+            let mut ctx = crate::ui::formatter::TemplateContext::new();
             ctx.set("progress", progress_bar.progress())
                .set("completed", current)
                .set("total", total)
@@ -280,7 +280,7 @@ impl ProgressManager {
             }
             
             // Create a template for rendering
-            let template = crate::formatter::ProgressTemplate::new(template);
+            let template = crate::ui::formatter::ProgressTemplate::new(template);
             let message = template.render(&ctx)?;
             
             // Update the display

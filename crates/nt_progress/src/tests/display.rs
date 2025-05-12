@@ -5,7 +5,7 @@ use crate::ThreadMode;
 use crate::terminal::TestEnv;
 use crate::tests::common::with_timeout;
 use anyhow::Result;
-use crate::formatter::{ProgressTemplate, TemplateContext};
+use crate::ui::formatter::{ProgressTemplate, TemplateContext};
 use crate::modes::factory::set_error_propagation;
 
 /**
