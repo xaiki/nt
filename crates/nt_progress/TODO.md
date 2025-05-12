@@ -115,8 +115,8 @@ The `nt_progress` library provides a flexible and thread-safe progress display f
   - [x] Job statistics and reporting
   - [x] Job persistence for long-running operations
 - [x] Add support for custom progress indicators
-- [ ] Implement progress bar customization
-- [ ] Add support for multiple progress bars
+- [x] Implement progress bar customization
+- [x] Add support for multiple progress bars
 - [ ] Improve error handling and recovery
 
 ### Job tracking capabilities
@@ -127,9 +127,9 @@ The `nt_progress` library provides a flexible and thread-safe progress display f
 - [ ] Add dependency-based job scheduling/prioritization
 
 ### UI Enhancements
-- [ ] Add customizable job status indicators (emojis, colors, etc.)
+- [x] Add customizable job status indicators (emojis, colors, etc.)
 - [ ] Implement theming engine for consistent styling
-- [ ] Add time estimation for job completion
+- [x] Add time estimation for job completion
 - [ ] Add search/filter capabilities for large job sets
 - [ ] Add visual indicators for job dependencies
 
