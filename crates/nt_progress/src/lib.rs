@@ -28,6 +28,7 @@ pub mod ui;
 pub mod terminal;
 pub mod thread;
 pub mod progress_manager;
+pub mod error_recovery;
 #[cfg(test)]
 pub mod tests;
 

@@ -167,4 +167,86 @@ async fn test_io_error_conversion() {
     
     // Test error message
     assert!(progress_error.to_string().contains("File not found"));
+}
+
+#[tokio::test]
+async fn test_error_recovery_retry() {
+    use crate::error_recovery::{RetryConfig, with_retry};
+    use std::time::Duration;
+
+    let config = RetryConfig {
+        max_retries: 3,
+        retry_delay: Duration::from_millis(100),
+        use_exponential_backoff: false,
+        base_delay: Duration::from_millis(100),
+    };
+
+    let mut attempts = 0;
+    let result = with_retry(&config, || {
+        attempts += 1;
+        if attempts < 3 {
+            Err(ProgressError::TaskOperation("Temporary error".to_string()).into_retryable(3, Duration::from_millis(100)))
+        } else {
+            Ok(())
+        }
+    }).await;
+
+    assert!(result.is_ok());
+    assert_eq!(attempts, 3);
+}
+
+#[tokio::test]
+async fn test_error_recovery_fallback() {
+    use crate::error_recovery::{FallbackConfig, with_fallback};
+
+    let config = FallbackConfig {
+        use_fallback: true,
+        log_fallback: false,
+    };
+
+    let result = with_fallback(
+        &config,
+        || Err(anyhow::anyhow!("Primary operation failed")),
+        |_| Ok("Fallback result"),
+    ).await;
+
+    assert!(result.is_ok());
+    assert_eq!(result.unwrap(), "Fallback result");
+}
+
+#[tokio::test]
+async fn test_error_recovery_strategies() {
+    use crate::error_recovery::ErrorRecovery;
+    use crate::errors::ErrorSeverity;
+
+    let recovery = ErrorRecovery::new();
+
+    // Test low severity error
+    let low_error = ProgressError::DisplayOperation("Minor display issue".to_string())
+        .into_context(ErrorContext::new("test", "test").with_severity(ErrorSeverity::Low));
+    let result = recovery.handle_error(low_error).await;
+    assert!(result.is_ok());
+
+    // Test medium severity error with recovery hint
+    let medium_error = ProgressError::TaskOperation("Task issue".to_string())
+        .into_context(
+            ErrorContext::new("test", "test")
+                .with_severity(ErrorSeverity::Medium)
+                .with_recovery_hint("Try restarting the task")
+        );
+    let result = recovery.handle_error(medium_error).await;
+    assert!(result.is_ok());
+
+    // Test high severity retryable error
+    let high_error = ProgressError::TaskOperation("Retryable error".to_string())
+        .into_context(ErrorContext::new("test", "test").with_severity(ErrorSeverity::High));
+    let result = recovery.handle_error(high_error).await;
+    assert!(result.is_err());
+    assert!(result.unwrap_err().to_string().contains("Retryable error"));
+
+    // Test fatal error
+    let fatal_error = ProgressError::TaskOperation("Fatal error".to_string())
+        .into_context(ErrorContext::new("test", "test").with_severity(ErrorSeverity::Fatal));
+    let result = recovery.handle_error(fatal_error).await;
+    assert!(result.is_err());
 } 

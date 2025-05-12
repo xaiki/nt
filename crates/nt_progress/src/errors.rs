@@ -1,6 +1,8 @@
 use std::fmt;
 use std::error::Error;
 use std::io;
+use std::backtrace::Backtrace;
+use std::time::{Duration, Instant};
 
 /// Errors that can occur when working with the nt_progress library
 #[derive(Debug)]
@@ -17,10 +19,21 @@ pub enum ProgressError {
     Io(io::Error),
     /// Error with context information
     WithContext(Box<ProgressError>, ErrorContext),
+    /// Error that can be retried
+    Retryable {
+        /// The underlying error
+        error: Box<ProgressError>,
+        /// Number of retries attempted
+        retries: u32,
+        /// Maximum number of retries allowed
+        max_retries: u32,
+        /// Time to wait between retries
+        retry_delay: Duration,
+    },
 }
 
 /// Context information for errors
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct ErrorContext {
     /// The operation that failed
     pub operation: String,
@@ -30,6 +43,27 @@ pub struct ErrorContext {
     pub details: Option<String>,
     /// Thread ID if applicable
     pub thread_id: Option<usize>,
+    /// Timestamp when the error occurred
+    pub timestamp: Instant,
+    /// Stack trace for debugging
+    pub backtrace: Option<Backtrace>,
+    /// Suggested recovery action
+    pub recovery_hint: Option<String>,
+    /// Error severity level
+    pub severity: ErrorSeverity,
+}
+
+/// Error severity levels
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ErrorSeverity {
+    /// Error is minor and can be ignored
+    Low,
+    /// Error is significant but not critical
+    Medium,
+    /// Error is critical and requires attention
+    High,
+    /// Error is fatal and cannot be recovered from
+    Fatal,
 }
 
 impl ErrorContext {
@@ -40,6 +74,10 @@ impl ErrorContext {
             component: component.into(),
             details: None,
             thread_id: None,
+            timestamp: Instant::now(),
+            backtrace: Some(Backtrace::capture()),
+            recovery_hint: None,
+            severity: ErrorSeverity::Medium,
         }
     }
 
@@ -52,6 +90,18 @@ impl ErrorContext {
     /// Add thread ID to the context
     pub fn with_thread_id(mut self, thread_id: usize) -> Self {
         self.thread_id = Some(thread_id);
+        self
+    }
+
+    /// Add a recovery hint
+    pub fn with_recovery_hint(mut self, hint: impl Into<String>) -> Self {
+        self.recovery_hint = Some(hint.into());
+        self
+    }
+
+    /// Set the error severity
+    pub fn with_severity(mut self, severity: ErrorSeverity) -> Self {
+        self.severity = severity;
         self
     }
 }
@@ -81,6 +131,7 @@ impl fmt::Display for ProgressError {
             ProgressError::External(err) => write!(f, "External error: {}", err),
             ProgressError::Io(err) => write!(f, "IO error: {}", err),
             ProgressError::WithContext(err, ctx) => write!(f, "{} ({})", err, ctx),
+            ProgressError::Retryable { error, .. } => write!(f, "Retryable error: {}", error),
         }
     }
 }
@@ -92,6 +143,7 @@ impl Error for ProgressError {
             ProgressError::External(err) => Some(err.as_ref()),
             ProgressError::Io(err) => Some(err),
             ProgressError::WithContext(err, _) => Some(err.as_ref()),
+            ProgressError::Retryable { error, .. } => Some(error.as_ref()),
             _ => None,
         }
     }
@@ -423,5 +475,42 @@ impl ProgressError {
     /// Add context to an existing ProgressError
     pub fn into_context(self, ctx: ErrorContext) -> Self {
         ProgressError::WithContext(Box::new(self), ctx)
+    }
+
+    /// Convert an error into a retryable error
+    pub fn into_retryable(self, max_retries: u32, retry_delay: Duration) -> Self {
+        ProgressError::Retryable {
+            error: Box::new(self),
+            retries: 0,
+            max_retries,
+            retry_delay,
+        }
+    }
+
+    /// Get the severity of this error
+    pub fn severity(&self) -> ErrorSeverity {
+        match self {
+            ProgressError::ModeCreation(_) => ErrorSeverity::High,
+            ProgressError::TaskOperation(_) => ErrorSeverity::Medium,
+            ProgressError::DisplayOperation(_) => ErrorSeverity::Low,
+            ProgressError::External(_) => ErrorSeverity::Medium,
+            ProgressError::Io(_) => ErrorSeverity::Medium,
+            ProgressError::WithContext(err, ctx) => ctx.severity,
+            ProgressError::Retryable { error, .. } => error.severity(),
+        }
+    }
+
+    /// Check if this error can be retried
+    pub fn is_retryable(&self) -> bool {
+        matches!(self, ProgressError::Retryable { .. })
+    }
+
+    /// Get the suggested recovery action if available
+    pub fn recovery_hint(&self) -> Option<&str> {
+        match self {
+            ProgressError::WithContext(_, ctx) => ctx.recovery_hint.as_deref(),
+            ProgressError::Retryable { error, .. } => error.recovery_hint(),
+            _ => None,
+        }
     }
 } 
