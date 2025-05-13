@@ -8,6 +8,7 @@ use tracing::info;
 use std::str::FromStr;
 use std::time::Duration;
 use nt_scrappers::ScraperManager;
+use nt_scrappers::scrapers::argentina::ClarinScraper;
 
 const DEFAULT_VECTOR_SIZE: u64 = 768;
 
@@ -221,10 +222,10 @@ async fn main() -> Result<()> {
     
     // Add all available scrapers
     let mut scraper_names = Vec::new();
-    for scraper_type in nt_scrappers::scrapers::argentina::get_scrapers() {
-        let scraper = scraper_type.lock().unwrap();
+    for factory in nt_scrappers::scrapers::get_scraper_factories() {
+        let scraper = factory();
         scraper_names.push(scraper.source_metadata().name);
-        manager.add_scraper(scraper.clone());
+        manager.add_scraper_factory(factory);
     }
     info!("🦗 Scrapers initialized successfully: {}", scraper_names.join(", "));
 

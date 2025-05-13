@@ -47,7 +47,7 @@ impl Scraper for ClarinScraper {
             .unwrap_or_default();
 
         let content = document
-            .select(&Selector::parse("div[data-testid='body-text']").unwrap())
+            .select(&Selector::parse("article p, .article-body p").unwrap())
             .map(|el| el.text().collect::<String>().trim().to_string())
             .collect::<Vec<_>>()
             .join("\n");

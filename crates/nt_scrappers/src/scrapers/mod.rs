@@ -7,6 +7,10 @@ use std::sync::{Arc, Mutex};
 
 pub mod argentina;
 
+type BoxedScraper = Box<dyn Scraper + Send + Sync>;
+
+pub type ScraperFactory = Box<dyn Fn() -> Box<dyn Scraper + Send + Sync> + Send + Sync>;
+
 #[derive(Debug, Clone)]
 pub enum ScraperType {
     Clarin(argentina::ClarinScraper),
@@ -76,11 +80,19 @@ impl ScraperType {
     }
 }
 
-pub fn get_scrapers() -> Vec<Arc<Mutex<ScraperType>>> {
+pub fn get_scrapers() -> Vec<Arc<Mutex<BoxedScraper>>> {
     vec![
-        Arc::new(Mutex::new(ScraperType::Clarin(argentina::ClarinScraper::new()))),
-        Arc::new(Mutex::new(ScraperType::LaNacion(argentina::LaNacionScraper::new()))),
-        Arc::new(Mutex::new(ScraperType::LaVoz(argentina::LaVozScraper::new()))),
+        Arc::new(Mutex::new(Box::new(ScraperType::Clarin(argentina::ClarinScraper::new())))),
+        Arc::new(Mutex::new(Box::new(ScraperType::LaNacion(argentina::LaNacionScraper::new())))),
+        Arc::new(Mutex::new(Box::new(ScraperType::LaVoz(argentina::LaVozScraper::new())))),
+    ]
+}
+
+pub fn get_scraper_factories() -> Vec<ScraperFactory> {
+    vec![
+        Box::new(|| Box::new(crate::scrapers::argentina::ClarinScraper::new())),
+        Box::new(|| Box::new(crate::scrapers::argentina::LaNacionScraper::new())),
+        Box::new(|| Box::new(crate::scrapers::argentina::LaVozScraper::new())),
     ]
 }
 

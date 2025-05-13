@@ -1,6 +1,6 @@
 use std::sync::{Arc, Mutex};
 use async_trait::async_trait;
-use crate::scrapers::{Scraper, ScraperType};
+use crate::scrapers::{Scraper, ScraperType, BoxedScraper};
 use nt_core::RegionMetadata;
 pub mod clarin;
 pub mod lanacion;
@@ -28,19 +28,19 @@ impl ArgentinaScraper for LaNacionScraper {}
 impl ArgentinaScraper for LaVozScraper {}
 
 /// Returns a vector of all available Argentine newspaper scrapers
-pub fn get_scrapers() -> Vec<Arc<Mutex<ScraperType>>> {
+pub fn get_scrapers() -> Vec<Arc<Mutex<BoxedScraper>>> {
     vec![
-        Arc::new(Mutex::new(ScraperType::Clarin(ClarinScraper::new()))),
-        Arc::new(Mutex::new(ScraperType::LaNacion(LaNacionScraper::new()))),
-        Arc::new(Mutex::new(ScraperType::LaVoz(LaVozScraper::new()))),
+        Arc::new(Mutex::new(Box::new(ScraperType::Clarin(ClarinScraper::new())))),
+        Arc::new(Mutex::new(Box::new(ScraperType::LaNacion(LaNacionScraper::new())))),
+        Arc::new(Mutex::new(Box::new(ScraperType::LaVoz(LaVozScraper::new())))),
     ]
 }
 
-pub fn get_all_scrapers() -> Vec<Arc<Mutex<dyn Scraper>>> {
+pub fn get_all_scrapers() -> Vec<Arc<Mutex<BoxedScraper>>> {
     vec![
-        Arc::new(Mutex::new(ClarinScraper::new())),
-        Arc::new(Mutex::new(LaNacionScraper::new())),
-        Arc::new(Mutex::new(LaVozScraper::new())),
+        Arc::new(Mutex::new(Box::new(ClarinScraper::new()))),
+        Arc::new(Mutex::new(Box::new(LaNacionScraper::new()))),
+        Arc::new(Mutex::new(Box::new(LaVozScraper::new()))),
     ]
 }
 

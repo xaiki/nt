@@ -12,17 +12,18 @@ use tokio::task::JoinHandle;
 use std::io::{stderr, IsTerminal};
 use anyhow;
 use std::io::Write;
-use nt_progress::{ProgressDisplay, ThreadLogger, Config, ThreadMode};
+use nt_progress::{ProgressDisplay, ThreadLogger, Config, ThreadMode, TaskHandle};
 use std::time::Duration;
 use tokio::time::sleep;
+use nt_core::ArticleSection;
+use crate::scrapers::{ScraperFactory, get_scraper_factories};
 
-type ScraperType = Box<dyn Scraper + Send + Sync>;
+type BoxedScraper = Box<dyn Scraper + Send + Sync>;
 
-#[derive(Clone)]
 pub struct ScraperManager {
     storage: Arc<dyn ArticleStorage>,
     inference: Arc<dyn InferenceModel>,
-    scrapers: Arc<StdMutex<Vec<Arc<Mutex<ScraperType>>>>>,
+    factories: Vec<ScraperFactory>,
     semaphore: Arc<Semaphore>,
     inference_tasks: Arc<TokioMutex<Vec<JoinHandle<Result<()>>>>>,
 }
@@ -32,51 +33,46 @@ impl ScraperManager {
         Ok(Self {
             storage,
             inference,
-            scrapers: Arc::new(StdMutex::new(Vec::new())),
-            semaphore: Arc::new(Semaphore::new(10)), // Limit concurrent operations to 10
+            factories: get_scraper_factories(),
+            semaphore: Arc::new(Semaphore::new(10)),
             inference_tasks: Arc::new(TokioMutex::new(Vec::new())),
         })
     }
 
-    pub fn add_scraper(&self, scraper: ScraperType) {
-        self.scrapers.lock().unwrap().push(Arc::new(Mutex::new(scraper)));
+    pub fn add_scraper_factory(&mut self, factory: ScraperFactory) {
+        self.factories.push(factory);
     }
 
-    pub fn get_scrapers(&self) -> Vec<Arc<Mutex<ScraperType>>> {
-        self.scrapers.lock().unwrap().clone()
+    pub fn get_scrapers(&self) -> Vec<BoxedScraper> {
+        self.factories.iter().map(|f| f()).collect()
     }
 
-    pub fn get_scraper_for_url(&self, url: &str) -> Result<ScraperType> {
-        for scraper in self.get_scrapers() {
-            let s = scraper.lock().unwrap();
-            if s.can_handle(url) {
-                return Ok(s.clone());
+    pub fn get_scraper_for_url(&self, url: &str) -> Result<BoxedScraper> {
+        for factory in &self.factories {
+            let scraper = factory();
+            if scraper.can_handle(url) {
+                return Ok(scraper);
             }
         }
         Err(nt_core::Error::Scraping(format!("No scraper found for URL: {}", url)))
     }
 
-    pub fn get_scrapers_for_source(&self, source: &str) -> Result<Vec<ScraperType>> {
+    pub fn get_scrapers_for_source(&self, source: &str) -> Result<Vec<BoxedScraper>> {
         let (country, name) = self.parse_source(source)?;
         let mut result = Vec::new();
-        
-        if let Some(name) = name {
-            // Get specific scraper
-            if let Ok(scraper) = self.get_scraper(&country, &name) {
-                result.push(scraper);
-            }
-        } else {
-            // Get all scrapers for country
-            if let Some(scrapers) = self.get_all_scrapers().get(&country) {
-                for scraper in scrapers {
-                    let s = scraper.lock().unwrap();
-                    let cloned = s.clone();
-                    drop(s);
-                    result.push(cloned);
+        for factory in &self.factories {
+            let scraper = factory();
+            let meta = scraper.source_metadata();
+            if meta.region.name == country {
+                if let Some(ref name) = name {
+                    if scraper.cli_names().contains(&name.as_str()) {
+                        result.push(scraper);
+                    }
+                } else {
+                    result.push(scraper);
                 }
             }
         }
-        
         Ok(result)
     }
 
@@ -200,10 +196,11 @@ impl ScraperManager {
 
             // Find similar articles
             let similar_articles = storage.find_similar(&article_embedding, 5).await?;
-            
+            emoji_chain.push_str("🔍");
+
             // Process similar articles in parallel
             let similar_futures: Vec<_> = similar_articles.into_iter()
-                .filter(|a| a.url != article.url)
+                .filter(|a| a.url != article.url) // Exclude self
                 .map(|a| {
                     let inference = inference.clone();
                     let semaphore = semaphore.clone();
@@ -223,193 +220,119 @@ impl ScraperManager {
 
             article.related_articles = join_all(similar_futures).await.into_iter().collect::<Result<Vec<_>>>()?;
             emoji_chain.push_str("🔄");
-            for _ in 0..article.related_articles.len() {
-                emoji_chain.push_str("📊");
-            }
 
             // Store the processed article
             storage.store_article(&article, &article_embedding).await?;
-            emoji_chain.push_str("✨");
-            emoji_chain.push_str("✅");
+            emoji_chain.push_str("💾");
 
-            info!("{} Article processed: {}", emoji_chain, article.title);
-            Ok(())
+            Ok::<_, nt_core::Error>(())
         });
 
-        let mut tasks = self.inference_tasks.lock().await;
-        tasks.push(handle);
+        self.inference_tasks.lock().await.push(handle);
     }
 
     pub async fn scrape_url(&self, url: &str) -> Result<Article> {
         let mut scraper = self.get_scraper_for_url(url)?;
-        let article = scraper.scrape_article(url).await?;
-        self.queue_inference_task(article.clone()).await;
-        Ok(article)
+        scraper.scrape_article(url).await
     }
 
     pub async fn scrape_source(&self, source: Option<&str>) -> Result<Vec<Article>> {
         let mut articles = Vec::new();
-        
-        // If source is specified, get specific scrapers
-        let scrapers = if let Some(target_source) = source {
-            self.get_scrapers_for_source(target_source)?
-        } else {
-            // Convert Arc<Mutex<ScraperType>> to ScraperType
-            self.get_scrapers().into_iter()
-                .map(|s| {
-                    let s = s.lock().unwrap();
-                    s.clone()
-                })
-                .collect()
-        };
-        
-        // Create progress display system
-        let (tx, rx) = mpsc::channel(100);
-        let progress = ProgressDisplay::new().await;
-        
-        // Run all scrapers in parallel using the threadpool
-        let scraper_futures: Vec<_> = scrapers.into_iter().enumerate().map(|(i, scraper)| {
-            let source_name = scraper.source_metadata().name;
-            let tx = tx.clone();
-            let index = i;
-            
-            async move {
-                // Create a simple ThreadLogger with a Config for the window mode
-                let mode_config = Config::new(ThreadMode::Window(3), 10).unwrap();
-                let mut logger = ThreadLogger::new(index, tx, mode_config);
-                
+        let mut progress = None;
+
+        if let Some(source) = source {
+            let scrapers = self.get_scrapers_for_source(source)?;
+            for mut scraper in scrapers {
                 let urls = scraper.get_article_urls().await?;
-                let total = urls.len();
-                let mut scraper_articles = Vec::new();
                 
-                // Process URLs in parallel using the threadpool
-                let url_futures: Vec<_> = urls.into_iter().enumerate().map(|(j, url)| {
-                    let manager = self.clone();
-                    let mut logger = logger.clone();
+                if progress.is_none() {
+                    progress = Some(ProgressDisplay::new_with_mode(ThreadMode::Window(3)).await?);
+                }
+
+                let progress_handle = progress.as_ref().unwrap().clone();
+                let url_futures: Vec<_> = urls.into_iter().enumerate().map(|(_j, url)| {
+                    let progress = progress_handle.clone();
                     async move {
-                        let _permit = manager.semaphore.acquire().await.map_err(|e| Error::External(e.into())).ok()?;
-                        match manager.scrape_url(&url).await {
-                            Ok(article) => {
-                                let output = format!("Scraping {}: {}/{}", source_name, j + 1, total);
-                                logger.log(output).await;
-                                Some(article)
-                            }
-                            Err(e) => {
-                                info!("Failed to scrape {}: {}", url, e);
-                                let output = format!("Scraping {}: {}/{}", source_name, j + 1, total);
-                                logger.log(output).await;
-                                None
-                            }
-                        }
+                        let article = self.scrape_url(&url).await?;
+                        progress.update_progress(0).await?;
+                        Ok::<_, nt_core::Error>(article)
                     }
                 }).collect();
 
-                let results = join_all(url_futures).await;
-                for result in results {
-                    if let Some(article) = result {
-                        scraper_articles.push(article);
+                let mut scraped_articles = join_all(url_futures).await.into_iter().collect::<Result<Vec<_>>>()?;
+                articles.append(&mut scraped_articles);
+            }
+        } else {
+            // Scrape all sources
+            let all_scrapers = self.get_all_scrapers();
+            for (_country, scrapers) in all_scrapers {
+                for mut scraper in scrapers {
+                    let urls = scraper.get_article_urls().await?;
+                    
+                    if progress.is_none() {
+                        progress = Some(ProgressDisplay::new_with_mode(ThreadMode::Window(3)).await?);
                     }
-                }
-                
-                Ok::<_, nt_core::Error>(scraper_articles)
-            }
-        }).collect();
 
-        // Start a background task to display progress
-        let progress_handle = progress.clone();
-        let display_handle = tokio::spawn(async move {
-            loop {
-                if let Err(e) = progress_handle.display().await {
-                    eprintln!("Error displaying progress: {}", e);
-                }
-                tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
-            }
-        });
+                    let progress_handle = progress.as_ref().unwrap().clone();
+                    let url_futures: Vec<_> = urls.into_iter().enumerate().map(|(_j, url)| {
+                        let progress = progress_handle.clone();
+                        async move {
+                            let article = self.scrape_url(&url).await?;
+                            progress.update_progress(0).await?;
+                            Ok::<_, nt_core::Error>(article)
+                        }
+                    }).collect();
 
-        // Collect results from all scrapers
-        let results = join_all(scraper_futures).await;
-        for result in results {
-            if let Ok(scraper_articles) = result {
-                articles.extend(scraper_articles);
-            }
-        }
-
-        // Wait for progress display to finish
-        display_handle.abort();
-
-        // Wait for all inference tasks to complete
-        let mut tasks = self.inference_tasks.lock().await;
-        
-        // Process tasks in chunks to avoid overwhelming the system
-        while !tasks.is_empty() {
-            let mut chunk = Vec::new();
-            for _ in 0..10.min(tasks.len()) {
-                if let Some(task) = tasks.pop() {
-                    chunk.push(task);
-                }
-            }
-            
-            // Wait for current chunk to complete
-            for handle in chunk {
-                if let Err(e) = handle.await {
-                    info!("Inference task failed: {}", e);
+                    let mut scraped_articles = join_all(url_futures).await.into_iter().collect::<Result<Vec<_>>>()?;
+                    articles.append(&mut scraped_articles);
                 }
             }
         }
 
-        eprintln!();
         Ok(articles)
     }
 
     fn parse_source(&self, source: &str) -> Result<(String, Option<String>)> {
         let parts: Vec<&str> = source.split('/').collect();
-        if parts.len() > 2 {
-            return Err(Error::Scraping(
-                "Invalid source format. Expected: country or country/source".to_string(),
-            ));
+        match parts.len() {
+            1 => Ok((parts[0].to_string(), None)),
+            2 => Ok((parts[0].to_string(), Some(parts[1].to_string()))),
+            _ => Err(nt_core::Error::Scraping(format!("Invalid source format: {}", source))),
         }
-        Ok((parts[0].to_string(), parts.get(1).map(|s| s.to_string())))
     }
 
-    fn get_all_scrapers(&self) -> HashMap<String, Vec<Arc<Mutex<ScraperType>>>> {
+    fn get_all_scrapers(&self) -> HashMap<String, Vec<BoxedScraper>> {
         let mut scrapers = HashMap::new();
-        scrapers.insert("argentina".to_string(), crate::scrapers::argentina::get_scrapers());
+        for factory in &self.factories {
+            let scraper = factory();
+            let meta = scraper.source_metadata();
+            scrapers.entry(meta.region.name.to_string()).or_insert_with(Vec::new).push(scraper);
+        }
         scrapers
     }
 
-    fn get_scraper(&self, country: &str, name: &str) -> Result<ScraperType> {
-        let all_scrapers = self.get_all_scrapers();
-        
-        if let Some(scrapers) = all_scrapers.get(country) {
-            for scraper in scrapers {
-                let s = scraper.lock().unwrap();
-                if s.source_metadata().name.to_lowercase().replace('í', "i") == name.to_lowercase().replace('í', "i") 
-                   || s.cli_names().contains(&name) {
-                    let cloned = s.clone();
-                    drop(s);
-                    return Ok(cloned);
-                }
+    fn get_scraper(&self, country: &str, name: &str) -> Result<BoxedScraper> {
+        for factory in &self.factories {
+            let scraper = factory();
+            let meta = scraper.source_metadata();
+            if meta.region.name == country && scraper.cli_names().contains(&name) {
+                return Ok(scraper);
             }
-            
-            Err(Error::Scraping(format!("Scraper not found: {}/{}", country, name)))
-        } else {
-            Err(Error::Scraping(format!(
-                "Country not supported: {}",
-                country
-            )))
         }
+        Err(nt_core::Error::Scraping(format!("No scraper found for {}/{}", country, name)))
     }
 
     pub async fn list_scrapers(&self) -> Result<()> {
-        let mut logger = crate::logging::init_logging();
-        tracing::info!("Available scrapers:");
-        for scraper in self.get_scrapers() {
-            let s = scraper.lock().unwrap();
-            let metadata = s.source_metadata();
-            let prefix = format!("{} {} {}", metadata.region.emoji, metadata.emoji, metadata.name);
-            logger = logger.with_prefix(prefix);
-            logger.info(&metadata.region.name);
+        let all_scrapers = self.get_all_scrapers();
+        
+        for (country, scrapers) in all_scrapers {
+            println!("{}:", country);
+            for scraper in scrapers {
+                let metadata = scraper.source_metadata();
+                println!("  - {} ({})", metadata.name, metadata.region.name);
+            }
         }
+        
         Ok(())
     }
 }
@@ -434,5 +357,82 @@ impl ArticleStorage for ScraperManager {
 
     async fn get_article_embedding(&self, url: &str) -> Result<Vec<f32>> {
         self.storage.get_article_embedding(url).await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::scrapers::argentina::ClarinScraper;
+    use std::sync::Arc;
+
+    struct MockStorage;
+    struct MockInference;
+
+    #[async_trait]
+    impl ArticleStorage for MockStorage {
+        async fn store_article(&self, _article: &Article, _embedding: &[f32]) -> Result<()> {
+            Ok(())
+        }
+
+        async fn find_similar(&self, _embedding: &[f32], _limit: usize) -> Result<Vec<Article>> {
+            Ok(Vec::new())
+        }
+
+        async fn get_by_source(&self, _source: &str) -> Result<Vec<Article>> {
+            Ok(Vec::new())
+        }
+
+        async fn delete_article(&self, _url: &str) -> Result<()> {
+            Ok(())
+        }
+
+        async fn get_article_embedding(&self, _url: &str) -> Result<Vec<f32>> {
+            Ok(Vec::new())
+        }
+    }
+
+    #[async_trait]
+    impl InferenceModel for MockInference {
+        fn name(&self) -> &str {
+            "mock"
+        }
+
+        async fn summarize_article(&self, _article: &Article) -> Result<String> {
+            Ok("Test summary".to_string())
+        }
+
+        async fn summarize_sections(&self, _sections: &[ArticleSection]) -> Result<Vec<String>> {
+            Ok(vec!["Test section summary".to_string()])
+        }
+
+        async fn generate_embeddings(&self, _text: &str) -> Result<Vec<f32>> {
+            Ok(vec![0.0; 384])
+        }
+    }
+
+    #[tokio::test]
+    async fn test_scrape_url() {
+        let storage = Arc::new(MockStorage);
+        let inference = Arc::new(MockInference);
+        let mut manager = ScraperManager::new(storage, inference).await.unwrap();
+        // Add a scraper factory for ClarinScraper
+        manager.add_scraper_factory(Box::new(|| Box::new(ClarinScraper::new())));
+        
+        // Get article URLs
+        let urls = manager.scrape_source(Some("argentina/clarin")).await.unwrap();
+        assert!(!urls.is_empty(), "No articles found");
+        
+        // Try to scrape the first article
+        let article = &urls[0];
+        println!("Scraping article: {}", article.url);
+        
+        let result = manager.scrape_url(&article.url).await;
+        assert!(result.is_ok());
+        
+        let article = result.unwrap();
+        assert!(!article.title.is_empty());
+        assert!(!article.content.is_empty());
+        assert!(!article.sections.is_empty());
     }
 } 
