@@ -1,6 +1,6 @@
 [package]
 name = "nt_progress"
-version = "0.1.43"
+version = "0.2.0"
 edition = "2021"
 authors = ["xaiki <xaiki@evilgiggle.com>"]
 description = "A library for displaying progress bars and managing progress tracking across multiple threads"

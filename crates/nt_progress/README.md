@@ -5,16 +5,22 @@ A flexible and thread-safe progress display library for Rust applications, featu
 ## Features
 
 - 🔄 Thread-safe progress tracking
-- 📊 Multiple display modes
-- 🖥️ Terminal-aware output
-- 🎨 Customizable spinners
-- 📝 Window-based output with titles
-- 🚀 Async/await support
-- 🎯 Progress bar support
-- 🔍 Automatic terminal size detection
+- 📊 Multiple display modes (Capturing, Limited, Window, WindowWithTitle)
+- 🖥️ Terminal-aware output with automatic size detection
+- 🎨 Customizable progress indicators and spinners
+- 📝 Window-based output with titles and emoji support
+- 🚀 Async/await support with tokio integration
+- 🎯 Progress bar visualization with multiple styles
+- 🔍 Automatic terminal size detection and adaptation
 - 🛡️ Robust error handling with context and recovery strategies
-- 📋 Powerful templating system with variable interpolation and formatting
+- 📋 Powerful templating system with variable interpolation
 - 🎭 Conditional rendering for dynamic display
+- 📈 Job tracking with dependencies and priorities
+- ⏯️ Pause/resume functionality for long-running tasks
+- 📊 Job statistics and reporting
+- 💾 Job persistence for long-running operations
+- 🎨 Color support and ANSI escape sequence handling
+- 📏 Smart line wrapping for long messages
 
 ## Installation
 
@@ -22,7 +28,7 @@ Add this to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-nt_progress = "0.1.0"
+nt_progress = "0.2.0"
 ```
 
 ## Usage

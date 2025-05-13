@@ -2,6 +2,43 @@
 
 This file contains completed tasks and improvements moved from the TODO.md file.
 
+## v0.2.0 (2024-06-03)
+
+### Major Release
+This release represents a significant milestone in the development of nt_progress, bringing together all the major features and improvements from the previous versions into a stable, production-ready library.
+
+### Features
+- Comprehensive job tracking system
+  - Job dependency tracking with DependentJob trait
+  - Job status tracking with JobStatusTracker trait
+  - Failure handling and retry logic
+  - Job priority and sorting
+  - Pause/resume functionality
+  - Job statistics and reporting
+  - Job persistence for long-running operations
+- Enhanced display capabilities
+  - Multiple display modes (Capturing, Limited, Window, WindowWithTitle)
+  - Custom progress indicators
+  - Progress bar visualization
+  - ANSI escape sequence support
+  - Color support for highlighting
+  - Line wrapping for long messages
+- Improved architecture
+  - Thread-safe progress tracking
+  - Terminal-aware output
+  - Robust error handling with context and recovery strategies
+  - Clean separation of UI and business logic
+  - Proper abstraction layers
+  - Dependency injection support
+- Performance optimizations
+  - Optimized message processing
+  - Improved memory usage
+  - Enhanced output rendering efficiency
+  - Better thread management
+
+### Breaking Changes
+- None. This release maintains backward compatibility with 0.1.x versions.
+
 ## v0.1.42 (2025-05-12)
 
 ### Features
