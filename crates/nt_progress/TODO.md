@@ -133,20 +133,19 @@ The `nt_progress` library provides a flexible and thread-safe progress display f
 - [ ] Add search/filter capabilities for large job sets
 - [ ] Add visual indicators for job dependencies
 
-### Performance Improvements
-- [ ] Optimize message processing for high-throughput scenarios
-- [ ] Implement batched updates for improved UI performance
-- [ ] Add rate limiting for high-volume output
-- [ ] Profile and optimize memory usage for long-running processes
-- [ ] Implement sampling techniques for extreme output scenarios
-
-## Phase 8: Optimization and Polish
 - [ ] Performance optimizations
-  - [ ] Reduce string duplication
-  - [ ] Optimize memory usage in window handling
-  - [ ] Implement message batching
-  - [ ] Optimize buffer operations
-  - [ ] Consider message compression for high-volume scenarios
+  - [ ] Message processing and throughput
+    - [ ] Optimize message processing for high-throughput scenarios
+    - [ ] Implement batched updates for improved UI performance
+    - [ ] Add rate limiting for high-volume output
+    - [ ] Implement message batching
+    - [ ] Consider message compression for high-volume scenarios
+  - [ ] Memory and resource management
+    - [ ] Profile and optimize memory usage for long-running processes
+    - [ ] Reduce string duplication
+    - [ ] Optimize memory usage in window handling
+    - [ ] Optimize buffer operations
+    - [ ] Implement sampling techniques for extreme output scenarios
 - [ ] Testing improvements
   - [ ] Add more extensive unit tests for each mode
   - [ ] Add integration tests for mode switching
